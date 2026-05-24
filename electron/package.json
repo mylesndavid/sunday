@@ -1,0 +1,31 @@
+{
+  "name": "sunday-desktop",
+  "productName": "Sunday",
+  "version": "0.0.1",
+  "description": "Sunday — a personal AI that knows you.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.0"
+  },
+  "build": {
+    "appId": "com.sunday.desktop",
+    "productName": "Sunday",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "overlay/**/*"
+    ]
+  }
+}

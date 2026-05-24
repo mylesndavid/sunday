@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sunday</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" data-state="connecting"></span>
+      <span class="brand-name">Sunday</span>
+    </div>
+    <div class="status" id="status">connecting…</div>
+  </header>
+
+  <main class="chat" id="chat" aria-live="polite"></main>
+
+  <section class="dropzone" id="dropzone" hidden>
+    <p>drop to attach</p>
+  </section>
+
+  <footer class="composer">
+    <div class="attachments" id="attachments"></div>
+    <div class="composer-row">
+      <button id="attach-btn" class="icon-btn" title="attach files">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49L13.4 1.6a4 4 0 0 1 5.66 5.66L9.41 16.91a2 2 0 0 1-2.83-2.83l8.46-8.46"/></svg>
+      </button>
+      <input id="file-input" type="file" multiple hidden>
+      <textarea id="composer" rows="1" placeholder="message Sunday…"></textarea>
+      <button id="mic-btn" class="icon-btn" title="voice (or say &quot;hey sunday&quot;)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M9 22h6"/></svg>
+      </button>
+      <button id="send-btn" class="primary" title="send">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 14-7-7 14-2-5-5-2z"/></svg>
+      </button>
+    </div>
+    <div class="composer-hint" id="hint">say "hey sunday" or just type</div>
+  </footer>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

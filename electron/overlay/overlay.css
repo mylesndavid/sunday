@@ -1,0 +1,37 @@
+/* Sunday — overlay pill. Always-on-top, tiny, ambient. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: transparent; -webkit-app-region: drag; user-select: none; font-family: system-ui, -apple-system, sans-serif; }
+body { padding: 12px; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(15, 14, 13, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 999px;
+  padding: 8px 16px;
+  color: #f1ece4;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #6e6a62;
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+.pill[data-state="idle"]     .dot { background: #6e6a62; }
+.pill[data-state="online"]   .dot { background: #84d18b; box-shadow: 0 0 0 4px #84d18b22; }
+.pill[data-state="offline"]  .dot { background: #d77a6a; }
+.pill[data-state="listening"] .dot { background: #f3c969; box-shadow: 0 0 0 4px #f3c96944; animation: pulse 1s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1);    opacity: 1;   }
+  50%      { transform: scale(1.35); opacity: 0.7; }
+}
+
+.label { font-weight: 500; }
