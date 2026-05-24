@@ -76,7 +76,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[devices]"
 
 # Credentials (any combo of env vars or stored)
-sunday credential set DEEPSEEK_API_KEY     sk-...   # or use OPENAI_API_KEY
+sunday credential set OPENROUTER_API_KEY   sk-or-...  # default route for the model
+                                                      # (Hermes runtime also uses OpenRouter)
 sunday credential set SENDBLUE_API_KEY_ID  ...      # optional, for Sendblue channel
 sunday credential set SENDBLUE_API_SECRET_KEY ...
 sunday credential set VAPI_API_KEY         ...      # optional, for outbound calls

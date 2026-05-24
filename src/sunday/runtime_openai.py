@@ -24,19 +24,39 @@ class OpenAIRuntime:
 
     def _client(self) -> AsyncOpenAI:
         provider = self.config.model.provider
-        if provider == "deepseek":
-            key = get_credential("DEEPSEEK_API_KEY")
+
+        if provider == "openrouter":
+            key = get_credential("OPENROUTER_API_KEY")
             if not key:
                 raise RuntimeError(
-                    "DEEPSEEK_API_KEY is not set. "
-                    "Run: sunday credential set DEEPSEEK_API_KEY <key>"
+                    "OPENROUTER_API_KEY is not set. "
+                    "Run: sunday credential set OPENROUTER_API_KEY <key>"
                 )
-            return AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
+            return AsyncOpenAI(
+                api_key=key,
+                base_url=self.config.model.base_url,
+                # OpenRouter uses these for attribution + per-app analytics.
+                default_headers={
+                    "HTTP-Referer": "https://sunday.local",
+                    "X-Title": "Sunday",
+                },
+            )
+
         if provider == "openai":
             key = get_credential("OPENAI_API_KEY")
             if not key:
                 raise RuntimeError("OPENAI_API_KEY is not set.")
             return AsyncOpenAI(api_key=key)
+
+        if provider == "deepseek-direct":
+            # Only use this when you specifically want DeepSeek's own API.
+            # The default 'openrouter' provider also lets you call DeepSeek
+            # models — go through it unless you have a reason not to.
+            key = get_credential("DEEPSEEK_API_KEY")
+            if not key:
+                raise RuntimeError("DEEPSEEK_API_KEY is not set.")
+            return AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
+
         raise RuntimeError(f"OpenAIRuntime does not handle provider: {provider}")
 
     async def complete(

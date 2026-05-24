@@ -14,19 +14,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-ProviderName = Literal["deepseek", "openai", "anthropic", "offline"]
+ProviderName = Literal["openrouter", "openai", "anthropic", "deepseek-direct", "offline"]
 
 
 @dataclass
 class ModelConfig:
     """The LLM Sunday speaks with.
 
-    Default is DeepSeek V4 Flash via OpenAI-compatible API — best
-    cost-quality point for a conversational personal AI today.
+    Default is a DeepSeek model accessed *via OpenRouter* — same wire format
+    everything else uses (OpenAI-compatible chat completions), and OpenRouter
+    handles provider routing + failover for us. Override `name` with any
+    OpenRouter slug to swap models without touching code.
+
+    Use 'deepseek-direct' only if you specifically want to hit DeepSeek's
+    own API instead of going through OpenRouter.
     """
-    provider: ProviderName = "deepseek"
-    name: str = "deepseek-v4-flash"
-    base_url: str = "https://api.deepseek.com/v1"
+    provider: ProviderName = "openrouter"
+    name: str = "deepseek/deepseek-chat"
+    base_url: str = "https://openrouter.ai/api/v1"
     # Reasoning costs latency but cleans up multi-step thinking and tool routing.
     # On by default; turn off for ambient conversational replies if it becomes a problem.
     reasoning: bool = True
