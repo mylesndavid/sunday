@@ -38,12 +38,16 @@ async def respond(
     registry: ToolRegistry | None = None,
     runtime: Runtime | None = None,
     attachments: list[dict] | None = None,
+    extras: dict | None = None,
 ) -> str:
     """Take a user message, drive the tool-call loop, return the final reply.
 
     `attachments` is a list of Attachment-shaped dicts (see sunday.attachments)
     that get stored on the user message metadata and forwarded to the model
     via Message.to_llm()'s multipart handling.
+
+    `extras` is forwarded to ToolContext — the daemon uses this to hand tools
+    a broadcast callback (live-view, Electron events, etc.).
     """
     user_meta: dict = {}
     if attachments:
@@ -51,7 +55,7 @@ async def respond(
     chat.append("user", user_text, modality, metadata=user_meta or None)
 
     rt = runtime or build_runtime(config)
-    ctx = ToolContext(chat=chat, config=config, modality=modality)
+    ctx = ToolContext(chat=chat, config=config, modality=modality, extras=extras or {})
     tool_schema = registry.as_openai_schema() if (registry and registry.list_tools()) else None
 
     for iteration in range(MAX_TOOL_ITERATIONS):

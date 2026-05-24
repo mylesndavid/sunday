@@ -43,6 +43,16 @@ class ToolContext:
     modality: str
     extras: dict[str, Any] = field(default_factory=dict)
 
+    async def broadcast(self, event: dict[str, Any]) -> None:
+        """Push an event to any WS clients listening (Electron app, live-view viewers).
+
+        Set up by the daemon when it builds the ToolContext; a no-op when the
+        tool is invoked outside daemon scope (tests, scripts).
+        """
+        callback = self.extras.get("broadcast")
+        if callback is not None:
+            await callback(event)
+
 
 class ToolRegistry:
     def __init__(self) -> None:

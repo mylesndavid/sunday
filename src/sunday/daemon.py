@@ -64,6 +64,7 @@ class Daemon:
         reply = await respond(
             self.chat, text, modality, self.config, self.registry,
             attachments=attachments,
+            extras={"broadcast": self._broadcast},
         )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         return {"reply": reply}
