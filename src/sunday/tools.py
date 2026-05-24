@@ -102,7 +102,8 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
 
     for module_path in (
         "sunday.subagents.hermes",
-        "sunday.channels.imessage",
+        "sunday.channels.messages_local",
+        "sunday.channels.sendblue",
         "sunday.channels.vapi",
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",
