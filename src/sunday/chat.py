@@ -5,7 +5,10 @@ ever. Voice, iMessage, the desktop app, the CLI — all just modalities into
 the same log. Every message lands here, in order, regardless of how it
 arrived. The model sees the same context no matter which interface you used.
 
-Backed by SQLite at ~/.sunday/sunday.db. Append-only.
+Backed by SQLite at ~/.sunday/sunday.db. Append-only. Each message stores
+its role (user/sunday/tool/system), its modality (cli/electron/voice/
+imessage/vapi/system), and free-form metadata (tool calls, model name,
+device id, etc.).
 """
 
 from __future__ import annotations
@@ -41,13 +44,36 @@ class Message:
     created_at: float
     metadata: dict[str, Any] | None
 
-    def to_llm(self) -> dict[str, str]:
+    def to_llm(self) -> dict[str, Any]:
         """OpenAI-compatible chat message dict.
 
-        Sunday's 'sunday' role maps to 'assistant'. 'user' and 'system' pass through.
+        Handles tool-call assistant messages and tool result messages so the
+        model sees a coherent transcript across turns.
         """
+        meta = self.metadata or {}
+
+        if self.role == "tool":
+            return {
+                "role": "tool",
+                "tool_call_id": meta.get("tool_call_id", ""),
+                "content": self.content,
+            }
+
         role = "assistant" if self.role == "sunday" else self.role
-        return {"role": role, "content": self.content}
+        out: dict[str, Any] = {"role": role, "content": self.content or ""}
+
+        tcs = meta.get("tool_calls") if self.role == "sunday" else None
+        if tcs:
+            out["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                }
+                for tc in tcs
+            ]
+            # When tool_calls present, content may be empty — OpenAI accepts that.
+        return out
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -61,11 +87,7 @@ class Message:
 
 
 class Chat:
-    """The append-only chat log.
-
-    One per Sunday instance. Open it at daemon start, append on every turn,
-    read recent N for LLM context.
-    """
+    """The append-only chat log."""
 
     def __init__(self, path: Path | None = None) -> None:
         ensure_home()

@@ -54,12 +54,36 @@ class VoiceConfig:
 
 
 @dataclass
+class ServerConfig:
+    """HTTP + WebSocket server. The daemon binds local-only by default."""
+    host: str = "127.0.0.1"
+    port: int = 8765
+
+
+@dataclass
+class HermesConfig:
+    """Optional Hermes sub-agent runtime for scoped delegation."""
+    binary: str = "hermes"  # PATH lookup; falls back to ~/.hermes/bin/hermes
+    model: str = "deepseek-chat"  # what Hermes itself calls; cheap by default
+
+
+@dataclass
+class CloudflareConfig:
+    """Cloudflare Browser Rendering + Sandboxes."""
+    account_id: str = ""  # CLOUDFLARE_ACCOUNT_ID env var preferred
+    api_base: str = "https://api.cloudflare.com/client/v4"
+
+
+@dataclass
 class SundayConfig:
     """Root config."""
     home: Path = field(default_factory=lambda: Path.home() / ".sunday")
     model: ModelConfig = field(default_factory=ModelConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
+    hermes: HermesConfig = field(default_factory=HermesConfig)
+    cloudflare: CloudflareConfig = field(default_factory=CloudflareConfig)
 
     def ensure_home(self) -> Path:
         self.home.mkdir(parents=True, exist_ok=True)

@@ -88,6 +88,18 @@ def show_log(limit: int = typer.Option(20, "--limit", "-n", help="How many messa
         typer.echo(f"[{ts}] {speaker} ({msg['modality']}): {msg['content']}")
 
 
+@app.command()
+def tools() -> None:
+    """List the tools Sunday currently has wired up."""
+    try:
+        result = _run(call(socket_path(), "tools"))
+    except IpcError as exc:
+        typer.echo(f"daemon not running: {exc}", err=True)
+        raise typer.Exit(code=1)
+    for t in result["tools"]:
+        typer.echo(f"  {t['name']:<28} {t['description']}")
+
+
 @credential_app.command("set")
 def credential_set(name: str = typer.Argument(...), value: str = typer.Argument(...)) -> None:
     """Save an API key to ~/.sunday/credentials.env (mode 0600)."""
