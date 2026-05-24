@@ -62,9 +62,14 @@ class ServerConfig:
 
 @dataclass
 class HermesConfig:
-    """Optional Hermes sub-agent runtime for scoped delegation."""
+    """Hermes runtime. If the binary is available we use it as Sunday's brain
+    (the user wants max leverage from Hermes); otherwise we fall back to a
+    direct OpenAI-compatible call."""
     binary: str = "hermes"  # PATH lookup; falls back to ~/.hermes/bin/hermes
-    model: str = "deepseek-chat"  # what Hermes itself calls; cheap by default
+    provider: str = "openrouter"  # Hermes' own --provider flag
+    model: str = "deepseek/deepseek-chat"  # Hermes' --model flag
+    max_turns: int = 1  # we drive the multi-turn loop ourselves
+    runtime_choice: Literal["auto", "hermes", "openai"] = "auto"
 
 
 @dataclass
