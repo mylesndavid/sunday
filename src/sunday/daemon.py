@@ -55,17 +55,30 @@ class Daemon:
 
     # ─── shared dispatch (used by both Unix-socket and HTTP) ─────────────
 
-    async def _say(self, text: str, modality: str) -> dict[str, Any]:
-        reply = await respond(self.chat, text, modality, self.config, self.registry)
+    async def _say(
+        self,
+        text: str,
+        modality: str,
+        attachments: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        reply = await respond(
+            self.chat, text, modality, self.config, self.registry,
+            attachments=attachments,
+        )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         return {"reply": reply}
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "say":
             text = (params.get("text") or "").strip()
-            if not text:
-                raise IpcError("'text' is required")
-            return await self._say(text, params.get("modality") or "cli")
+            attachments = params.get("attachments")
+            if not text and not attachments:
+                raise IpcError("'text' or 'attachments' is required")
+            return await self._say(
+                text,
+                params.get("modality") or "cli",
+                attachments if isinstance(attachments, list) else None,
+            )
 
         if method == "log":
             limit = int(params.get("limit") or 20)
@@ -138,10 +151,14 @@ class Daemon:
         body = await request.json()
         text = (body.get("text") or "").strip()
         modality = body.get("modality") or "http"
-        if not text:
-            return web.json_response({"error": "'text' is required"}, status=400)
+        attachments = body.get("attachments")
+        if not text and not attachments:
+            return web.json_response({"error": "'text' or 'attachments' is required"}, status=400)
         try:
-            result = await self._say(text, modality)
+            result = await self._say(
+                text, modality,
+                attachments if isinstance(attachments, list) else None,
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("http say failed")
             return web.json_response({"error": str(exc)}, status=500)

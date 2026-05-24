@@ -14,6 +14,7 @@ import typer
 
 from sunday import __version__
 from sunday import daemon as daemon_module
+from sunday.attachments import stash_local_file
 from sunday.credentials import credential_present, set_credential
 from sunday.ipc import IpcError, call
 from sunday.paths import socket_path
@@ -64,10 +65,31 @@ def status() -> None:
 
 
 @app.command()
-def say(text: str = typer.Argument(..., help="What to say to Sunday.")) -> None:
-    """Send a message to Sunday and print her reply."""
+def say(
+    text: str = typer.Argument("", help="What to say to Sunday."),
+    attach: list[str] = typer.Option(
+        None, "--attach", "-a",
+        help="Path to a file/image to send with the message. Repeatable.",
+    ),
+) -> None:
+    """Send a message — and optional attachments — to Sunday and print her reply."""
+    attachments: list[dict] = []
+    if attach:
+        for p in attach:
+            try:
+                att = stash_local_file(p)
+            except FileNotFoundError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(code=1)
+            attachments.append(att.to_dict())
+    payload = {"text": text, "modality": "cli"}
+    if attachments:
+        payload["attachments"] = attachments
+    if not text and not attachments:
+        typer.echo("nothing to send: provide TEXT or at least one --attach", err=True)
+        raise typer.Exit(code=1)
     try:
-        result = _run(call(socket_path(), "say", {"text": text, "modality": "cli"}))
+        result = _run(call(socket_path(), "say", payload))
     except IpcError as exc:
         typer.echo(f"could not reach Sunday: {exc}", err=True)
         raise typer.Exit(code=1)

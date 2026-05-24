@@ -98,13 +98,35 @@ def list_threads(limit: int = 20) -> list[dict[str, Any]]:
     ]
 
 
+def _attachments_for(conn: sqlite3.Connection, message_rowid: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT a.filename, a.mime_type, a.transfer_name, a.uti, a.total_bytes
+        FROM attachment a
+        JOIN message_attachment_join maj ON maj.attachment_id = a.ROWID
+        WHERE maj.message_id = ?
+        """,
+        (message_rowid,),
+    ).fetchall()
+    return [
+        {
+            "path": (row[0] or "").replace("~", str(Path.home())) if row[0] else "",
+            "mime_type": row[1] or "application/octet-stream",
+            "filename": row[2] or (Path(row[0]).name if row[0] else "attachment"),
+            "uti": row[3],
+            "size": int(row[4] or 0),
+        }
+        for row in rows
+    ]
+
+
 def read_thread(chat_identifier: str, limit: int = 30) -> list[dict[str, Any]]:
-    """Messages in one conversation, oldest first."""
+    """Messages in one conversation, oldest first, with attachments inline."""
     conn = _connect_read_only()
     try:
         rows = conn.execute(
             """
-            SELECT m.text, m.is_from_me, m.date, h.id AS handle
+            SELECT m.ROWID, m.text, m.is_from_me, m.date, h.id AS handle
             FROM message m
             LEFT JOIN handle h ON h.ROWID = m.handle_id
             JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -115,18 +137,21 @@ def read_thread(chat_identifier: str, limit: int = 30) -> list[dict[str, Any]]:
             """,
             (chat_identifier, limit),
         ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            atts = _attachments_for(conn, row[0])
+            out.append({
+                "rowid": row[0],
+                "text": row[1] or ("(attachment)" if atts else ""),
+                "is_from_me": bool(row[2]),
+                "date": _mac_ns_to_unix_seconds(row[3] or 0),
+                "handle": row[4],
+                "attachments": atts,
+            })
     finally:
         conn.close()
-    rows.reverse()
-    return [
-        {
-            "text": row[0] or "(attachment)",
-            "is_from_me": bool(row[1]),
-            "date": _mac_ns_to_unix_seconds(row[2] or 0),
-            "handle": row[3],
-        }
-        for row in rows
-    ]
+    out.reverse()
+    return out
 
 
 def read_recent(limit: int = 20) -> list[dict[str, Any]]:
@@ -160,22 +185,7 @@ def read_recent(limit: int = 20) -> list[dict[str, Any]]:
     ]
 
 
-async def send_imessage(to: str, body: str) -> dict[str, Any]:
-    """Send an iMessage through the user's Messages.app via AppleScript.
-
-    `to` should be a phone number (E.164: '+15551234567') or email used
-    as an iMessage handle. For group chats, prefer chat GUIDs — see
-    send_to_chat (not yet implemented in v0.1).
-    """
-    safe_body = body.replace("\\", "\\\\").replace('"', '\\"')
-    safe_to = to.replace('"', '\\"')
-    script = (
-        'tell application "Messages"\n'
-        '    set targetService to 1st service whose service type = iMessage\n'
-        f'    set targetBuddy to buddy "{safe_to}" of targetService\n'
-        f'    send "{safe_body}" to targetBuddy\n'
-        'end tell'
-    )
+async def _run_osascript(script: str) -> dict[str, Any]:
     proc = await asyncio.create_subprocess_exec(
         "osascript", "-e", script,
         stdout=asyncio.subprocess.PIPE,
@@ -188,7 +198,48 @@ async def send_imessage(to: str, body: str) -> dict[str, Any]:
             or out_b.decode("utf-8", errors="replace").strip()
             or f"osascript exited {proc.returncode}"
         }
-    return {"ok": True, "to": to}
+    return {"ok": True}
+
+
+async def send_imessage(to: str, body: str, attachments: list[str] | None = None) -> dict[str, Any]:
+    """Send an iMessage through the user's Messages.app via AppleScript.
+
+    `to` is a phone (E.164: '+15551234567') or email handle. `attachments`
+    is a list of absolute file paths sent one after the other to the same
+    buddy. For group chats prefer chat GUIDs — not in v0.1.
+    """
+    safe_to = to.replace('"', '\\"')
+
+    if body:
+        safe_body = body.replace("\\", "\\\\").replace('"', '\\"')
+        body_script = (
+            'tell application "Messages"\n'
+            '    set targetService to 1st service whose service type = iMessage\n'
+            f'    set targetBuddy to buddy "{safe_to}" of targetService\n'
+            f'    send "{safe_body}" to targetBuddy\n'
+            'end tell'
+        )
+        result = await _run_osascript(body_script)
+        if "error" in result:
+            return result
+
+    for att_path in attachments or []:
+        p = Path(att_path).expanduser().resolve()
+        if not p.exists():
+            return {"error": f"attachment missing: {p}"}
+        safe_path = str(p).replace('"', '\\"')
+        att_script = (
+            'tell application "Messages"\n'
+            '    set targetService to 1st service whose service type = iMessage\n'
+            f'    set targetBuddy to buddy "{safe_to}" of targetService\n'
+            f'    send POSIX file "{safe_path}" to targetBuddy\n'
+            'end tell'
+        )
+        result = await _run_osascript(att_script)
+        if "error" in result:
+            return result
+
+    return {"ok": True, "to": to, "attached": len(attachments or [])}
 
 
 # ─── tool registrations ──────────────────────────────────────────────────
@@ -227,9 +278,14 @@ _SEND_PARAMS = {
             "type": "string",
             "description": "Recipient handle: phone number in E.164 ('+15551234567') or email tied to iMessage.",
         },
-        "body": {"type": "string", "description": "Message body."},
+        "body": {"type": "string", "description": "Message body. Optional if attachments are provided."},
+        "attachments": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Absolute paths to files/images to send to the same recipient.",
+        },
     },
-    "required": ["to", "body"],
+    "required": ["to"],
 }
 
 
@@ -259,10 +315,15 @@ async def _t_read_recent(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 async def _t_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     to = args.get("to")
-    body = args.get("body")
-    if not to or not body:
-        return {"error": "'to' and 'body' are required"}
-    return await send_imessage(str(to), str(body))
+    body = args.get("body") or ""
+    atts = args.get("attachments") or []
+    if not to:
+        return {"error": "'to' is required"}
+    if not body and not atts:
+        return {"error": "'body' or 'attachments' is required"}
+    if not isinstance(atts, list):
+        return {"error": "'attachments' must be a list of paths"}
+    return await send_imessage(str(to), str(body), [str(p) for p in atts])
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:

@@ -37,9 +37,18 @@ async def respond(
     config: SundayConfig,
     registry: ToolRegistry | None = None,
     runtime: Runtime | None = None,
+    attachments: list[dict] | None = None,
 ) -> str:
-    """Take a user message, drive the tool-call loop, return the final reply."""
-    chat.append("user", user_text, modality)
+    """Take a user message, drive the tool-call loop, return the final reply.
+
+    `attachments` is a list of Attachment-shaped dicts (see sunday.attachments)
+    that get stored on the user message metadata and forwarded to the model
+    via Message.to_llm()'s multipart handling.
+    """
+    user_meta: dict = {}
+    if attachments:
+        user_meta["attachments"] = attachments
+    chat.append("user", user_text, modality, metadata=user_meta or None)
 
     rt = runtime or build_runtime(config)
     ctx = ToolContext(chat=chat, config=config, modality=modality)

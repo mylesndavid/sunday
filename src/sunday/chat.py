@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sunday.attachments import Attachment
 from sunday.paths import db_path, ensure_home
 
 SCHEMA = """
@@ -44,11 +45,18 @@ class Message:
     created_at: float
     metadata: dict[str, Any] | None
 
+    def attachments(self) -> list[Attachment]:
+        raw = (self.metadata or {}).get("attachments") or []
+        return [Attachment.from_dict(a) for a in raw if isinstance(a, dict)]
+
     def to_llm(self) -> dict[str, Any]:
         """OpenAI-compatible chat message dict.
 
-        Handles tool-call assistant messages and tool result messages so the
-        model sees a coherent transcript across turns.
+        Handles tool-call assistant messages, tool result messages, and
+        vision multipart content when image attachments are present on a
+        user message. Non-image attachments render as a short text
+        descriptor at the end of content — the model can call a tool to
+        actually consume them.
         """
         meta = self.metadata or {}
 
@@ -60,7 +68,39 @@ class Message:
             }
 
         role = "assistant" if self.role == "sunday" else self.role
-        out: dict[str, Any] = {"role": role, "content": self.content or ""}
+        attachments = self.attachments()
+        images = [a for a in attachments if a.is_image()]
+        others = [a for a in attachments if not a.is_image()]
+
+        # Build descriptive suffix for non-image attachments so the model is
+        # aware of them without needing vision capability.
+        descriptor = ""
+        if others:
+            lines = [
+                f"[attached {a.kind}: {a.filename}"
+                + (f", {a.size} bytes" if a.size else "")
+                + (f", {a.mime_type}" if a.mime_type else "")
+                + (f", url={a.url}" if a.url else "")
+                + (f", path={a.path}" if a.path else "")
+                + "]"
+                for a in others
+            ]
+            descriptor = "\n" + "\n".join(lines)
+
+        text_part = (self.content or "") + descriptor
+
+        # Multipart vision content only makes sense on user-role messages.
+        if images and role == "user":
+            content_parts: list[dict[str, Any]] = []
+            if text_part:
+                content_parts.append({"type": "text", "text": text_part})
+            for img in images:
+                url = img.to_llm_image_url()
+                if url:
+                    content_parts.append({"type": "image_url", "image_url": {"url": url}})
+            out: dict[str, Any] = {"role": role, "content": content_parts}
+        else:
+            out = {"role": role, "content": text_part}
 
         tcs = meta.get("tool_calls") if self.role == "sunday" else None
         if tcs:
@@ -72,7 +112,6 @@ class Message:
                 }
                 for tc in tcs
             ]
-            # When tool_calls present, content may be empty — OpenAI accepts that.
         return out
 
     def to_json(self) -> dict[str, Any]:
