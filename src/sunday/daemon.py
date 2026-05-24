@@ -24,6 +24,7 @@ from sunday import __version__
 from sunday.brain import respond
 from sunday.chat import Chat
 from sunday.config import load_config
+from sunday.devices.manager import DeviceManager
 from sunday.ipc import IpcError, read_json, write_json
 from sunday.paths import ensure_home, socket_path
 from sunday.tools import default_registry
@@ -48,10 +49,16 @@ class Daemon:
         self.config = load_config()
         self.chat = Chat()
         self.registry = default_registry(self.config)
+        self.devices = DeviceManager(broadcast=self._broadcast_lazy)
         self._unix_server: asyncio.Server | None = None
         self._http_runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
         self._stop = asyncio.Event()
+
+    async def _broadcast_lazy(self, event: dict[str, Any]) -> None:
+        # DeviceManager is built in __init__ before the event loop runs, so we
+        # can't bind _broadcast directly. Defer the call to runtime.
+        await self._broadcast(event)
 
     # ─── shared dispatch (used by both Unix-socket and HTTP) ─────────────
 
@@ -64,7 +71,7 @@ class Daemon:
         reply = await respond(
             self.chat, text, modality, self.config, self.registry,
             attachments=attachments,
-            extras={"broadcast": self._broadcast},
+            extras={"broadcast": self._broadcast, "devices": self.devices},
         )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         return {"reply": reply}
@@ -91,6 +98,7 @@ class Daemon:
                 "model": f"{self.config.model.provider}/{self.config.model.name}",
                 "messages": self.chat.count(),
                 "tools": self.registry.names(),
+                "devices": self.devices.list_devices(),
                 "server": {"host": self.config.server.host, "port": self.config.server.port},
             }
 
@@ -228,6 +236,8 @@ class Daemon:
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/tools", self._http_tools)
         app.router.add_get("/v1/ws", self._ws_handler)
+        # Satellite devices connect here.
+        app.router.add_get("/v1/devices/ws", self.devices.handle_ws)
         # Catch-all webhook dispatcher — modules register paths in _webhooks.
         app.router.add_post("/webhooks/{name}", self._webhook_dispatch)
         return app
