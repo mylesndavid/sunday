@@ -97,6 +97,23 @@ body {
 }
 .msg.user .msg-body  { color: var(--user); }
 .msg.sunday .msg-body { color: var(--sunday); }
+
+/* Streaming state — pulse a soft caret at the end while tokens arrive. */
+.msg.sunday.streaming .msg-body::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 3px;
+  background: var(--user);
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  animation: caret 1s ease-in-out infinite;
+}
+@keyframes caret {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 0.25; }
+}
 .msg.tool .msg-body   {
   font-family: "Geist Mono", "SF Mono", ui-monospace, monospace;
   font-size: 12px;

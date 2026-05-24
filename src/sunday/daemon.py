@@ -245,11 +245,18 @@ class Daemon:
     # ─── lifecycle ───────────────────────────────────────────────────────
 
     async def run(self) -> None:
-        # Unix socket
+        # Unix socket. Record the inode we create so the shutdown handler
+        # only unlinks our own socket — protects against stop/start races
+        # where the previous daemon's cleanup runs after the new one's
+        # startup and would otherwise delete the fresh socket file.
         sock = socket_path()
         if sock.exists():
             sock.unlink()
         self._unix_server = await asyncio.start_unix_server(self._handle_unix, path=str(sock))
+        try:
+            self._sock_inode: int | None = sock.stat().st_ino
+        except OSError:
+            self._sock_inode = None
 
         # HTTP + WS
         app = self._build_http_app()
@@ -279,8 +286,14 @@ class Daemon:
             await self._unix_server.wait_closed()
             if self._http_runner is not None:
                 await self._http_runner.cleanup()
-            if sock.exists():
-                sock.unlink()
+            # Only remove the socket file if it still has the inode we
+            # created — otherwise a newer daemon has already taken it over.
+            if sock.exists() and self._sock_inode is not None:
+                try:
+                    if sock.stat().st_ino == self._sock_inode:
+                        sock.unlink()
+                except OSError:
+                    pass
             self.chat.close()
 
 

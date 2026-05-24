@@ -13,9 +13,11 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from sunday.config import SundayConfig
+
+DeltaHandler = Callable[[str], Awaitable[None]]
 
 
 @dataclass
@@ -44,6 +46,7 @@ class Runtime(Protocol):
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
+        on_delta: DeltaHandler | None = None,
     ) -> CompletionResult: ...
 
 
@@ -81,10 +84,8 @@ def build_runtime(config: SundayConfig) -> Runtime:
         from sunday.runtime_hermes import HermesRuntime
         return HermesRuntime(config, binary_path=path)
 
-    # auto
-    path = hermes_binary_path(config)
-    if path:
-        from sunday.runtime_hermes import HermesRuntime
-        return HermesRuntime(config, binary_path=path)
+    # auto: prefer OpenAI direct (streams token-by-token through OpenRouter,
+    # same gateway as Hermes uses). Hermes is still available as an explicit
+    # choice for non-streaming use.
     from sunday.runtime_openai import OpenAIRuntime
     return OpenAIRuntime(config)

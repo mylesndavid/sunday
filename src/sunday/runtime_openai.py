@@ -1,8 +1,13 @@
-"""OpenAI-compatible direct runtime.
+"""OpenAI-compatible direct runtime with streaming.
 
-Talks to DeepSeek (default), OpenAI, or any other vendor exposing the
-chat-completions + tool-calling spec. Native tool calling — the model
-emits a tool_calls field and our harness loop dispatches.
+Talks to OpenRouter by default (default base URL), or OpenAI / DeepSeek
+direct if explicitly configured. Tokens stream back through an optional
+`on_delta` callback while we accumulate the full message + any tool calls
+for the harness's tool-call loop.
+
+When tools are involved, tool_call deltas arrive interleaved with content
+deltas — same pattern dcharness's `complete_with_tools` uses. We assemble
+each tool call by index and only finalize it at end-of-stream.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from openai import AsyncOpenAI
 
 from sunday.config import SundayConfig
 from sunday.credentials import get_credential
-from sunday.runtime import CompletionResult, Runtime, ToolCall
+from sunday.runtime import CompletionResult, DeltaHandler, Runtime, ToolCall
 
 
 class OpenAIRuntime:
@@ -35,7 +40,6 @@ class OpenAIRuntime:
             return AsyncOpenAI(
                 api_key=key,
                 base_url=self.config.model.base_url,
-                # OpenRouter uses these for attribution + per-app analytics.
                 default_headers={
                     "HTTP-Referer": "https://sunday.local",
                     "X-Title": "Sunday",
@@ -49,9 +53,6 @@ class OpenAIRuntime:
             return AsyncOpenAI(api_key=key)
 
         if provider == "deepseek-direct":
-            # Only use this when you specifically want DeepSeek's own API.
-            # The default 'openrouter' provider also lets you call DeepSeek
-            # models — go through it unless you have a reason not to.
             key = get_credential("DEEPSEEK_API_KEY")
             if not key:
                 raise RuntimeError("DEEPSEEK_API_KEY is not set.")
@@ -65,26 +66,72 @@ class OpenAIRuntime:
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
+        on_delta: DeltaHandler | None = None,
     ) -> CompletionResult:
         client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.config.model.name,
             "messages": [{"role": "system", "content": system_prompt}, *messages],
+            "stream": True,
         }
         if tools_schema:
             kwargs["tools"] = tools_schema
             kwargs["tool_choice"] = "auto"
 
-        completion = await client.chat.completions.create(**kwargs)
-        msg = completion.choices[0].message
-        tool_calls_raw = getattr(msg, "tool_calls", None) or []
+        stream = await client.chat.completions.create(**kwargs)
+
+        content_parts: list[str] = []
+        # Tool calls arrive as deltas indexed by position; assemble by index.
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        finish_reason: str | None = None
+
+        async for chunk in stream:
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                if getattr(choice, "finish_reason", None):
+                    finish_reason = choice.finish_reason
+                continue
+
+            if getattr(delta, "content", None):
+                piece = delta.content
+                content_parts.append(piece)
+                if on_delta is not None:
+                    await on_delta(piece)
+
+            for tc in (getattr(delta, "tool_calls", None) or []):
+                idx = getattr(tc, "index", 0) or 0
+                slot = tool_calls_acc.setdefault(idx, {
+                    "id": "",
+                    "function": {"name": "", "arguments": ""},
+                })
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["function"]["name"] = (slot["function"]["name"] or "") + fn.name
+                    if getattr(fn, "arguments", None) is not None:
+                        slot["function"]["arguments"] = (slot["function"]["arguments"] or "") + fn.arguments
+
+            if getattr(choice, "finish_reason", None):
+                finish_reason = choice.finish_reason
+
+        tool_calls = [
+            ToolCall(
+                id=tool_calls_acc[i]["id"],
+                name=tool_calls_acc[i]["function"]["name"],
+                arguments=tool_calls_acc[i]["function"]["arguments"],
+            )
+            for i in sorted(tool_calls_acc.keys())
+        ]
 
         return CompletionResult(
-            content=msg.content or "",
-            tool_calls=[
-                ToolCall(id=tc.id, name=tc.function.name, arguments=tc.function.arguments)
-                for tc in tool_calls_raw
-            ],
-            finish_reason=completion.choices[0].finish_reason,
-            raw={"model": self.config.model.name},
+            content="".join(content_parts),
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            raw={"runtime": "openai", "model": self.config.model.name, "streamed": True},
         )

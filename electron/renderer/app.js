@@ -84,11 +84,34 @@ function connectWs() {
   };
 }
 
+let activeStream = null;  // { id, bodyEl, articleEl }
+
 function handleWsEvent(event) {
-  if (event.type === 'reply') {
-    // We refresh from the daemon's log so we render the full message with
-    // attachments / metadata rather than just the reply text.
+  if (event.type === 'stream_start') {
+    activeStream = beginStreamBubble(event);
+    return;
+  }
+  if (event.type === 'stream_delta') {
+    if (activeStream && activeStream.id === event.stream_id) {
+      activeStream.bodyEl.textContent += (event.content || '');
+      scrollToEnd();
+    }
+    return;
+  }
+  if (event.type === 'stream_end') {
+    if (activeStream && activeStream.id === event.stream_id) {
+      activeStream.articleEl.classList.remove('streaming');
+    }
+    activeStream = null;
+    // Pull the final, DB-backed message so we get the real id + metadata.
     refreshLog();
+    refreshStatus();
+    return;
+  }
+  if (event.type === 'reply') {
+    // Non-streaming fallback path (Hermes runtime) — no stream_* events
+    // arrived, so just refresh the whole log.
+    if (!activeStream) refreshLog();
     return;
   }
   if (event.type === 'browser_frame' || event.type === 'device_browser_frame' || event.type === 'device_screen') {
@@ -99,6 +122,25 @@ function handleWsEvent(event) {
     refreshStatus();
     return;
   }
+}
+
+function beginStreamBubble(event) {
+  const article = document.createElement('article');
+  article.className = 'msg sunday streaming';
+  article.dataset.streamId = event.stream_id;
+
+  const meta = document.createElement('div');
+  meta.className = 'msg-meta';
+  meta.innerHTML = `<span class="who">sunday</span><span class="mod">${event.modality || ''}</span>`;
+  article.appendChild(meta);
+
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  article.appendChild(body);
+
+  chatEl.appendChild(article);
+  scrollToEnd();
+  return { id: event.stream_id, bodyEl: body, articleEl: article };
 }
 
 // ─── rendering ─────────────────────────────────────────────────────────

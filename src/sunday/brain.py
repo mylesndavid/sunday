@@ -11,6 +11,7 @@ OpenAI-compatible (DeepSeek by default). Same loop either way.
 from __future__ import annotations
 
 import json
+import uuid
 
 import structlog
 
@@ -58,11 +59,31 @@ async def respond(
     ctx = ToolContext(chat=chat, config=config, modality=modality, extras=extras or {})
     tool_schema = registry.as_openai_schema() if (registry and registry.list_tools()) else None
 
+    broadcast = (extras or {}).get("broadcast")
+    stream_id = uuid.uuid4().hex[:12]
+
+    async def _emit_delta(piece: str) -> None:
+        if broadcast is not None:
+            await broadcast({
+                "type": "stream_delta",
+                "stream_id": stream_id,
+                "modality": modality,
+                "content": piece,
+            })
+
+    if broadcast is not None:
+        await broadcast({
+            "type": "stream_start",
+            "stream_id": stream_id,
+            "modality": modality,
+        })
+
     for iteration in range(MAX_TOOL_ITERATIONS):
         result = await rt.complete(
             system_prompt=stable_prefix(),
             messages=_context_messages(chat),
             tools_schema=tool_schema,
+            on_delta=_emit_delta,
         )
 
         if result.tool_calls:
@@ -97,9 +118,23 @@ async def respond(
 
         reply = result.content.strip()
         chat.append("sunday", reply, modality, metadata={"runtime": rt.name})
+        if broadcast is not None:
+            await broadcast({
+                "type": "stream_end",
+                "stream_id": stream_id,
+                "modality": modality,
+                "content_full": reply,
+            })
         return reply
 
     truncated = "I hit my tool-call ceiling. Let me know if you want me to keep going."
     chat.append("sunday", truncated, modality, metadata={"truncated": True})
     log.warning("tool loop ceiling reached")
+    if broadcast is not None:
+        await broadcast({
+            "type": "stream_end",
+            "stream_id": stream_id,
+            "modality": modality,
+            "content_full": truncated,
+        })
     return truncated

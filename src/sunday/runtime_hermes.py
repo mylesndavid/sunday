@@ -23,7 +23,7 @@ from typing import Any
 import structlog
 
 from sunday.config import SundayConfig
-from sunday.runtime import CompletionResult, Runtime, ToolCall
+from sunday.runtime import CompletionResult, DeltaHandler, Runtime, ToolCall
 
 log = structlog.get_logger("sunday.runtime.hermes")
 
@@ -60,6 +60,7 @@ class HermesRuntime:
         system_prompt: str,
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
+        on_delta: DeltaHandler | None = None,
     ) -> CompletionResult:
         full_system = system_prompt
         if tools_schema:
@@ -67,7 +68,12 @@ class HermesRuntime:
                 f"- {t['function']['name']}: {t['function'].get('description', '')}"
                 for t in tools_schema
             )
-            full_system = system_prompt + HERMES_TOOL_PROTOCOL.format(tools_listing=tools_listing)
+            # `.replace` instead of `.format` because the protocol template
+            # contains literal `{"name": ...}` JSON braces inside the fenced
+            # ```tool``` example — `.format` would treat them as placeholders.
+            full_system = system_prompt + HERMES_TOOL_PROTOCOL.replace(
+                "{tools_listing}", tools_listing
+            )
 
         prompt = _render_transcript(messages)
 
@@ -103,6 +109,11 @@ class HermesRuntime:
         # If tool calls were emitted, strip them from the visible content so
         # the chat log doesn't carry duplicate tool-call JSON.
         visible = TOOL_BLOCK_RE.sub("", content).strip()
+
+        # Hermes CLI doesn't expose token-level streaming. Emit one delta at
+        # the end so callers that wired on_delta still see the content land.
+        if on_delta is not None and visible:
+            await on_delta(visible)
 
         return CompletionResult(
             content=visible,
