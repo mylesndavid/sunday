@@ -80,6 +80,19 @@ class CloudflareConfig:
 
 
 @dataclass
+class VapiConfig:
+    """VAPI outbound voice calls."""
+    api_base: str = "https://api.vapi.ai"
+    model_provider: str = "openai"
+    model_name: str = "gpt-4o-mini"
+    voice_provider: str = "11labs"
+    voice_id: str = "rachel"
+    transcriber_provider: str = "deepgram"
+    transcriber_model: str = "nova-2"
+    first_message: str = "Hi, this is Sunday calling on behalf of my user. Got a second?"
+
+
+@dataclass
 class SundayConfig:
     """Root config."""
     home: Path = field(default_factory=lambda: Path.home() / ".sunday")
@@ -89,6 +102,7 @@ class SundayConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     hermes: HermesConfig = field(default_factory=HermesConfig)
     cloudflare: CloudflareConfig = field(default_factory=CloudflareConfig)
+    vapi: VapiConfig = field(default_factory=VapiConfig)
 
     def ensure_home(self) -> Path:
         self.home.mkdir(parents=True, exist_ok=True)
