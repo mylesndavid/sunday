@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sunday"
+version = "0.0.1"
+description = "A personal AI that knows you."
+requires-python = ">=3.11"
+authors = [{ name = "Myles", email = "mylesnosa@gmail.com" }]
+license = { text = "Proprietary" }
+readme = "README.md"
+
+dependencies = [
+  "openai>=2.0",
+  "typer>=0.12",
+  "structlog>=24.1",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+]
+voice = [
+  "faster-whisper>=1.2",
+  "sounddevice>=0.5",
+]
+memory = [
+  "sqlite-vec>=0.1",
+]
+
+[project.scripts]
+sunday = "sunday.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sunday"]
