@@ -67,14 +67,15 @@ class ServerConfig:
 
 @dataclass
 class HermesConfig:
-    """Hermes runtime. If the binary is available we use it as Sunday's brain
-    (the user wants max leverage from Hermes); otherwise we fall back to a
-    direct OpenAI-compatible call."""
-    binary: str = "hermes"  # PATH lookup; falls back to ~/.hermes/bin/hermes
-    provider: str = "openrouter"  # Hermes' own --provider flag
-    model: str = "deepseek/deepseek-chat"  # Hermes' --model flag
-    max_turns: int = 1  # we drive the multi-turn loop ourselves
-    runtime_choice: Literal["auto", "hermes", "openai"] = "auto"
+    """Legacy: kept for any external integration that wants to subprocess the
+    Hermes CLI directly. Sunday's core runtime is now a native fork of
+    Hermes's loop (see src/sunday/runtime/), so this is no longer the
+    default brain. Only used by the `delegate_to_hermes` sub-agent tool,
+    which still subprocesses an installed `hermes` binary when present."""
+    binary: str = "hermes"
+    provider: str = "openrouter"
+    model: str = "deepseek/deepseek-chat"
+    max_turns: int = 1
 
 
 @dataclass

@@ -12,13 +12,26 @@ text-in/text-out call. If a task needs tools, do it in the main loop.
 from __future__ import annotations
 
 import asyncio
+import shutil
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 from sunday.config import SundayConfig
-from sunday.runtime import hermes_binary_path
 from sunday.tools import Tool, ToolContext, ToolRegistry
+
+
+def hermes_binary_path(config: SundayConfig) -> str | None:
+    """Resolve the Hermes CLI binary if it's installed on this machine."""
+    name = config.hermes.binary
+    found = shutil.which(name)
+    if found:
+        return found
+    candidate = Path("~/.hermes/bin").expanduser() / name
+    if candidate.exists():
+        return str(candidate)
+    return None
 
 log = structlog.get_logger("sunday.subagent.hermes")
 

@@ -1,13 +1,11 @@
-"""OpenAI-compatible direct runtime with streaming.
+"""OpenAI-compatible streaming provider.
 
-Talks to OpenRouter by default (default base URL), or OpenAI / DeepSeek
-direct if explicitly configured. Tokens stream back through an optional
-`on_delta` callback while we accumulate the full message + any tool calls
-for the harness's tool-call loop.
+Covers OpenRouter (default), OpenAI direct, DeepSeek direct, and anything
+else exposing the OpenAI Chat Completions wire format. Streams token-by-
+token, assembles tool_call deltas by index, normalises to CompletionResult.
 
-When tools are involved, tool_call deltas arrive interleaved with content
-deltas — same pattern dcharness's `complete_with_tools` uses. We assemble
-each tool call by index and only finalize it at end-of-stream.
+Hermes-shape: provider is dumb and self-contained. The agent loop in
+core.py handles iteration budgeting, tool dispatch, and message history.
 """
 
 from __future__ import annotations
@@ -18,11 +16,13 @@ from openai import AsyncOpenAI
 
 from sunday.config import SundayConfig
 from sunday.credentials import get_credential
-from sunday.runtime import CompletionResult, DeltaHandler, Runtime, ToolCall
+from sunday.runtime.types import CompletionResult, DeltaHandler, ToolCall
 
 
-class OpenAIRuntime:
-    name = "openai"
+class OpenAICompatProvider:
+    """OpenAI Chat Completions streaming, configurable base_url."""
+
+    name = "openai-compat"
 
     def __init__(self, config: SundayConfig) -> None:
         self.config = config
@@ -58,7 +58,7 @@ class OpenAIRuntime:
                 raise RuntimeError("DEEPSEEK_API_KEY is not set.")
             return AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
 
-        raise RuntimeError(f"OpenAIRuntime does not handle provider: {provider}")
+        raise RuntimeError(f"OpenAICompatProvider does not handle: {provider}")
 
     async def complete(
         self,
@@ -81,8 +81,8 @@ class OpenAIRuntime:
         stream = await client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
-        # Tool calls arrive as deltas indexed by position; assemble by index.
-        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        # tool_calls arrive as indexed deltas; accumulate into a dict keyed by index
+        tc_acc: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
 
         async for chunk in stream:
@@ -104,7 +104,7 @@ class OpenAIRuntime:
 
             for tc in (getattr(delta, "tool_calls", None) or []):
                 idx = getattr(tc, "index", 0) or 0
-                slot = tool_calls_acc.setdefault(idx, {
+                slot = tc_acc.setdefault(idx, {
                     "id": "",
                     "function": {"name": "", "arguments": ""},
                 })
@@ -122,16 +122,16 @@ class OpenAIRuntime:
 
         tool_calls = [
             ToolCall(
-                id=tool_calls_acc[i]["id"],
-                name=tool_calls_acc[i]["function"]["name"],
-                arguments=tool_calls_acc[i]["function"]["arguments"],
+                id=tc_acc[i]["id"],
+                name=tc_acc[i]["function"]["name"],
+                arguments=tc_acc[i]["function"]["arguments"],
             )
-            for i in sorted(tool_calls_acc.keys())
+            for i in sorted(tc_acc.keys())
         ]
 
         return CompletionResult(
             content="".join(content_parts),
             tool_calls=tool_calls,
             finish_reason=finish_reason,
-            raw={"runtime": "openai", "model": self.config.model.name, "streamed": True},
+            raw={"provider": self.name, "model": self.config.model.name, "streamed": True},
         )

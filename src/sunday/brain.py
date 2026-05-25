@@ -19,11 +19,13 @@ from sunday.chat import Chat
 from sunday.config import SundayConfig
 from sunday.memory import recall_block as memory_recall_block
 from sunday.prompt import stable_prefix
-from sunday.runtime import Runtime, build_runtime
+from sunday.runtime import IterationBudget, Runtime, build_runtime, repair_tool_call_arguments
 from sunday.tools import ToolContext, ToolRegistry
 
 CONTEXT_WINDOW = 40
-MAX_TOOL_ITERATIONS = 8
+# Per-turn iteration budget. Same shape as Hermes's --max-iterations.
+# 30 is generous for normal use; a runaway tool loop would still bail.
+MAX_TOOL_ITERATIONS = 30
 
 log = structlog.get_logger("sunday.brain")
 
@@ -100,7 +102,8 @@ async def respond(
             "modality": modality,
         })
 
-    for iteration in range(MAX_TOOL_ITERATIONS):
+    budget = IterationBudget(MAX_TOOL_ITERATIONS)
+    while budget.consume():
         result = await rt.complete(
             system_prompt=_system_prompt(),
             messages=_context_messages(chat),
@@ -109,22 +112,30 @@ async def respond(
         )
 
         if result.tool_calls:
+            # Repair any malformed JSON argument blobs before persisting +
+            # dispatching — covers models that emit trailing commas,
+            # unclosed structures, unescaped control chars, etc.
+            sanitized = [
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "arguments": repair_tool_call_arguments(tc.arguments, tc.name),
+                }
+                for tc in result.tool_calls
+            ]
             chat.append(
                 "sunday",
                 result.content,
                 modality,
                 metadata={
                     "runtime": rt.name,
-                    "tool_calls": [
-                        {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                        for tc in result.tool_calls
-                    ],
+                    "tool_calls": sanitized,
                 },
             )
 
             assert registry is not None
-            for tc in result.tool_calls:
-                tool_result = await registry.execute(tc.name, tc.arguments, ctx)
+            for tc in sanitized:
+                tool_result = await registry.execute(tc["name"], tc["arguments"], ctx)
                 content = (
                     tool_result
                     if isinstance(tool_result, str)
@@ -134,7 +145,7 @@ async def respond(
                     "tool",
                     content,
                     modality,
-                    metadata={"tool_call_id": tc.id, "tool_name": tc.name},
+                    metadata={"tool_call_id": tc["id"], "tool_name": tc["name"]},
                 )
             continue
 
@@ -150,8 +161,8 @@ async def respond(
         return reply
 
     truncated = "I hit my tool-call ceiling. Let me know if you want me to keep going."
-    chat.append("sunday", truncated, modality, metadata={"truncated": True})
-    log.warning("tool loop ceiling reached")
+    chat.append("sunday", truncated, modality, metadata={"truncated": True, "budget_used": budget.used})
+    log.warning("tool loop ceiling reached", budget_used=budget.used, budget_max=budget.max_total)
     if broadcast is not None:
         await broadcast({
             "type": "stream_end",
