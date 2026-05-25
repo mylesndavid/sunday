@@ -35,10 +35,10 @@ from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.channel.sendblue")
 
-SENDBLUE_API_BASE = "https://api.sendblue.co/api"
+SENDBLUE_API_BASE = "https://api.sendblue.com/api"
 SENDBLUE_SEND     = f"{SENDBLUE_API_BASE}/send-message"
 SENDBLUE_TYPING   = f"{SENDBLUE_API_BASE}/send-typing-indicator"
-SENDBLUE_MESSAGES = "https://api.sendblue.co/accounts/messages"
+SENDBLUE_MESSAGES = "https://api.sendblue.com/accounts/messages"
 
 # Polling cadence for the inbound backup loop.
 POLL_INTERVAL_SECONDS = 30
