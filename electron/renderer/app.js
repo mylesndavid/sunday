@@ -19,6 +19,9 @@ const attachmentsEl = $('#attachments');
 const statusEl     = $('#status');
 const brandDot     = document.querySelector('.brand-dot');
 const dropzoneEl   = $('#dropzone');
+const adminBtn     = $('#admin-btn');
+const adminPanel   = $('#admin-panel');
+const adminCloseBtn= $('#admin-close');
 
 let DAEMON_HTTP = 'http://127.0.0.1:8765';
 let DAEMON_WS   = 'ws://127.0.0.1:8765/v1/ws';
@@ -378,6 +381,127 @@ attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => addFiles(e.target.files));
 
 micBtn.addEventListener('click', () => (listening ? stopVoice() : startVoice()));
+
+// ─── admin panel ───────────────────────────────────────────────────────
+
+let adminRefreshTimer = null;
+
+function adminOpen() {
+  adminPanel.hidden = false;
+  // Two-frame delay so the transition triggers from translateX(100%) → 0
+  requestAnimationFrame(() => requestAnimationFrame(() => adminPanel.classList.add('open')));
+  refreshAdmin();
+  adminRefreshTimer = setInterval(refreshAdmin, 5000);
+}
+function adminClose() {
+  adminPanel.classList.remove('open');
+  if (adminRefreshTimer) { clearInterval(adminRefreshTimer); adminRefreshTimer = null; }
+  setTimeout(() => { adminPanel.hidden = true; }, 220);
+}
+function adminToggle() {
+  if (adminPanel.classList.contains('open')) adminClose(); else adminOpen();
+}
+
+async function refreshAdmin() {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/health`);
+    if (!res.ok) return;
+    const h = await res.json();
+    renderAdminDaemon(h.daemon || {});
+    renderAdminSatellites(h.devices || []);
+    renderAdminMemory(h.memory || {});
+    renderAdminSkills(h.skills || []);
+    renderAdminActivity(h.recent_tool_calls || []);
+  } catch {}
+}
+
+function renderAdminDaemon(d) {
+  const grid = $('#admin-daemon-grid');
+  const uptime = d.uptime_s ? formatUptime(d.uptime_s) : '—';
+  grid.innerHTML = `
+    <span class="k">version</span><span class="v">${d.version || '—'}</span>
+    <span class="k">model</span><span class="v">${d.model || '—'}</span>
+    <span class="k">messages</span><span class="v">${d.messages ?? '—'}</span>
+    <span class="k">tools</span><span class="v">${d.tools_count ?? '—'}</span>
+    <span class="k">uptime</span><span class="v">${uptime}</span>
+  `;
+}
+
+function renderAdminSatellites(devices) {
+  $('#admin-satellites-count').textContent = devices.length;
+  const ul = $('#admin-satellites-list');
+  if (!devices.length) { ul.innerHTML = '<li class="empty">no satellites connected</li>'; return; }
+  ul.innerHTML = devices.map((d) => `
+    <li>
+      <div><strong>${d.device_id}</strong></div>
+      <div>${(d.capabilities || []).map((c) => `<span class="cap">${c}</span>`).join('')}</div>
+      <span class="meta">${(d.platform || '').slice(0, 60)}</span>
+    </li>
+  `).join('');
+}
+
+function renderAdminMemory(m) {
+  $('#admin-memory-count').textContent = m.total ?? '—';
+  const ul = $('#admin-memory-list');
+  if (!m.available) { ul.innerHTML = '<li class="empty">memory disabled (set OPENAI_API_KEY)</li>'; return; }
+  const recent = m.recent || [];
+  if (!recent.length) { ul.innerHTML = '<li class="empty">no memories yet — talk to Sunday</li>'; return; }
+  ul.innerHTML = recent.slice(0, 12).map((mem) => `
+    <li>
+      ${escapeHtml(mem.content)}
+      <span class="meta">${mem.source} · ${formatRelative(mem.created_at)}</span>
+    </li>
+  `).join('');
+}
+
+function renderAdminSkills(skills) {
+  $('#admin-skills-count').textContent = skills.length;
+  const ul = $('#admin-skills-list');
+  if (!skills.length) { ul.innerHTML = '<li class="empty">no skills installed (~/.sunday/skills/)</li>'; return; }
+  ul.innerHTML = skills.map((s) => `
+    <li>
+      <div><strong>${s.name}</strong></div>
+      <span class="meta">${escapeHtml(s.description || s.slug)}</span>
+    </li>
+  `).join('');
+}
+
+function renderAdminActivity(tools) {
+  const ul = $('#admin-activity-list');
+  if (!tools.length) { ul.innerHTML = '<li class="empty">no recent tool calls</li>'; return; }
+  ul.innerHTML = tools.slice().reverse().map((t) => `
+    <li>
+      <strong>${t.tool_name}</strong>
+      <span class="meta">${t.modality} · ${formatRelative(t.created_at)}</span>
+    </li>
+  `).join('');
+}
+
+function formatUptime(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
+}
+
+function formatRelative(epoch) {
+  const diff = (Date.now() / 1000) - epoch;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+  return `${Math.round(diff / 86400)}d ago`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+adminBtn.addEventListener('click', adminToggle);
+adminCloseBtn.addEventListener('click', adminClose);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && adminPanel.classList.contains('open')) adminClose();
+  if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); adminToggle(); }
+});
 
 document.addEventListener('dragover', (e) => { e.preventDefault(); dropzoneEl.hidden = false; });
 document.addEventListener('dragleave', (e) => {

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import time
 from typing import Any
 
 import structlog
@@ -71,6 +72,7 @@ class Daemon:
         self._http_runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
         self._stop = asyncio.Event()
+        self._started_at = time.time()
 
     async def _broadcast_lazy(self, event: dict[str, Any]) -> None:
         # DeviceManager is built in __init__ before the event loop runs, so we
@@ -222,6 +224,64 @@ class Daemon:
     async def _http_tools(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("tools", {}))
 
+    async def _http_health(self, request: web.Request) -> web.Response:
+        """Rich health snapshot for admin UIs — daemon stats, satellites,
+        memory growth, skills, recent tool activity."""
+        from sunday.skills import list_skills
+        recent_memories = []
+        if self.memory.available:
+            try:
+                recent_memories = [
+                    {
+                        "id": m.id,
+                        "content": m.content,
+                        "source": m.source,
+                        "created_at": m.created_at,
+                    }
+                    for m in self.memory.all(limit=20)
+                ]
+            except Exception:  # noqa: BLE001
+                pass
+
+        skills_list = []
+        try:
+            skills_list = [
+                {"slug": s.slug, "name": s.name, "description": s.description}
+                for s in list_skills()
+            ]
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Recent tool activity from the chat log — last 50 tool messages
+        recent_tools = []
+        for m in self.chat.recent(limit=80):
+            if m.role == "tool":
+                recent_tools.append({
+                    "tool_name": (m.metadata or {}).get("tool_name", "?"),
+                    "modality":  m.modality,
+                    "created_at": m.created_at,
+                })
+        recent_tools = recent_tools[-20:]
+
+        return web.json_response({
+            "daemon": {
+                "version":     __version__,
+                "model":       f"{self.config.model.provider}/{self.config.model.name}",
+                "messages":    self.chat.count(),
+                "tools_count": len(self.registry.names()),
+                "uptime_s":    round(time.time() - self._started_at, 1),
+                "started_at":  self._started_at,
+            },
+            "memory": {
+                "available": self.memory.available,
+                "total":     self.memory.count() if self.memory.available else 0,
+                "recent":    recent_memories,
+            },
+            "skills":  skills_list,
+            "devices": self.devices.list_devices(),
+            "recent_tool_calls": recent_tools,
+        })
+
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
@@ -269,6 +329,7 @@ class Daemon:
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/tools", self._http_tools)
+        app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)

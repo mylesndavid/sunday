@@ -13,7 +13,37 @@
       <span class="brand-name">Sunday</span>
     </div>
     <div class="status" id="status">connecting…</div>
+    <button id="admin-btn" class="topbar-btn" title="open admin console (⌘.)">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="5" cy="12" r="2"/></svg>
+    </button>
   </header>
+
+  <aside class="admin-panel" id="admin-panel" hidden>
+    <div class="admin-header">
+      <span class="admin-title">Sunday — admin</span>
+      <button id="admin-close" class="icon-btn" title="close (esc)">×</button>
+    </div>
+    <div class="admin-section" id="admin-daemon">
+      <h3>Daemon</h3>
+      <div class="admin-grid" id="admin-daemon-grid">…</div>
+    </div>
+    <div class="admin-section" id="admin-satellites">
+      <h3>Satellites <span class="admin-count" id="admin-satellites-count">—</span></h3>
+      <ul class="admin-list" id="admin-satellites-list"><li class="empty">—</li></ul>
+    </div>
+    <div class="admin-section" id="admin-memory">
+      <h3>Memory <span class="admin-count" id="admin-memory-count">—</span></h3>
+      <ul class="admin-list" id="admin-memory-list"><li class="empty">—</li></ul>
+    </div>
+    <div class="admin-section" id="admin-skills">
+      <h3>Skills <span class="admin-count" id="admin-skills-count">—</span></h3>
+      <ul class="admin-list" id="admin-skills-list"><li class="empty">—</li></ul>
+    </div>
+    <div class="admin-section" id="admin-activity">
+      <h3>Recent tool activity</h3>
+      <ul class="admin-list" id="admin-activity-list"><li class="empty">—</li></ul>
+    </div>
+  </aside>
 
   <main class="chat" id="chat" aria-live="polite"></main>
 
