@@ -35,6 +35,25 @@ def version() -> None:
 
 
 @app.command()
+def init(
+    public_url: str = typer.Option(
+        "",
+        "--public-url",
+        help="Public URL Sunday will be reachable at (https://sunday.example.com). "
+             "If omitted, the wizard asks interactively.",
+    ),
+) -> None:
+    """Interactive setup wizard — credentials, channels, verification.
+
+    Walks through the central nervous system once: brain, memory, iMessage,
+    phone calls, browser tools. Verifies each as you go. Idempotent — re-run
+    to reconfigure or add channels later.
+    """
+    from sunday.setup import run as run_setup
+    raise typer.Exit(code=run_setup(public_url or None))
+
+
+@app.command()
 def start() -> None:
     """Run the daemon in the foreground. Ctrl+C to stop."""
     daemon_module.main()

@@ -36,13 +36,20 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[devices]"
 
-# Credentials
-cp .env.example ~/.sunday/credentials.env
-$EDITOR ~/.sunday/credentials.env        # at minimum, set OPENROUTER_API_KEY
+# Interactive setup — walks through every credential + verifies each one.
+# Re-run any time to reconfigure.
+sunday init
 
 # Start the daemon (foreground)
 sunday start
 ```
+
+`sunday init` is the central onboarding step. It asks for an OpenRouter
+key (and verifies with a 1-token completion), then optionally for OpenAI /
+Anthropic fallbacks, Sendblue (auto-registers the inbound webhook against
+your public URL), VAPI, and Cloudflare browser tools. Each provider is
+verified before the wizard moves on. Skipping a step is fine — Sunday
+just won't register tools she lacks credentials for.
 
 In a second terminal:
 
