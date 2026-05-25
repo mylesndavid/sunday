@@ -1,0 +1,35 @@
+# Litestream config for Sunday's SQLite databases — copy to /etc/litestream.yml
+# and fill in your S3-compatible bucket + creds. Then:
+#
+#   sudo apt install ./litestream-v0.3.13-linux-amd64.deb   # or brew install benbjohnson/litestream/litestream
+#   sudo systemctl enable --now litestream
+#
+# Every WAL transaction streams to your replica within ~1 second. On a fresh
+# server, Sunday's systemd unit runs `litestream restore` automatically before
+# starting (see scripts/sunday.service for the drop-in).
+#
+# Cloudflare R2 is the example below (cheap, no egress fees). Any S3-compatible
+# bucket works: AWS S3, Backblaze B2, MinIO, etc. — just change `endpoint`.
+
+dbs:
+  - path: /root/.sunday/sunday.db            # the one chat
+    replicas:
+      - type: s3
+        bucket: YOUR_BUCKET_HERE
+        path: sunday/sunday.db
+        endpoint: https://YOUR_R2_ACCOUNT_ID.r2.cloudflarestorage.com
+        region: auto
+        access-key-id: YOUR_R2_ACCESS_KEY_ID
+        secret-access-key: YOUR_R2_SECRET_ACCESS_KEY
+        force-path-style: true
+
+  - path: /root/.sunday/memories.db          # vector store + facts
+    replicas:
+      - type: s3
+        bucket: YOUR_BUCKET_HERE
+        path: sunday/memories.db
+        endpoint: https://YOUR_R2_ACCOUNT_ID.r2.cloudflarestorage.com
+        region: auto
+        access-key-id: YOUR_R2_ACCESS_KEY_ID
+        secret-access-key: YOUR_R2_SECRET_ACCESS_KEY
+        force-path-style: true

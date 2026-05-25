@@ -138,6 +138,41 @@ your-sunday.example.com {
 
 Now `https://your-sunday.example.com/v1/status` returns from your daemon.
 
+## Durability — Litestream
+
+Sunday's data lives in two SQLite files: `~/.sunday/sunday.db` (the one chat) and `~/.sunday/memories.db` (auto-extracted facts + embeddings). On a single VPS that's fine until the VPS dies. Wire [Litestream](https://litestream.io) to stream every WAL transaction to S3 / R2 / B2 / MinIO so your conversation history is restorable in seconds.
+
+```bash
+# Install (Ubuntu/Debian)
+curl -LO https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.deb
+sudo dpkg -i litestream-v0.3.13-linux-amd64.deb
+
+# Config
+sudo cp litestream.yml.example /etc/litestream.yml
+sudo $EDITOR /etc/litestream.yml            # bucket, endpoint, keys
+sudo chmod 600 /etc/litestream.yml
+
+# Run
+sudo systemctl enable --now litestream
+
+# Wire the auto-restore-on-fresh-start hook into Sunday's systemd unit
+sudo mkdir -p /etc/systemd/system/sunday.service.d
+sudo cp scripts/sunday-litestream.service.d.conf /etc/systemd/system/sunday.service.d/litestream.conf
+sudo systemctl daemon-reload
+sudo systemctl restart sunday
+```
+
+Verify by wiping a DB cold:
+
+```bash
+sudo systemctl stop sunday
+sudo rm /root/.sunday/sunday.db          # wipe
+sudo systemctl start sunday              # the ExecStartPre hook restores from R2 first
+sqlite3 /root/.sunday/sunday.db 'SELECT COUNT(*) FROM messages'   # → your row count is back
+```
+
+Cloudflare R2 is the path of least resistance — no egress fees, ~$0.015/GB/month, and you probably already have an account if you're using Sunday's Cloudflare browser tools.
+
 ## Optional integrations
 
 Each is opt-in — Sunday just won't register tools she lacks credentials for.
