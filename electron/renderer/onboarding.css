@@ -1,0 +1,240 @@
+/* Sunday onboarding — first-launch wizard.
+ * Matches the main chat aesthetic: warm-dark, amber accent, generous spacing.
+ * Single page, four steps swapped via [hidden].
+ */
+
+:root {
+  --bg:          #0f0e0d;
+  --bg-soft:     #181715;
+  --bg-soft-2:   #221f1c;
+  --line:        #2a2724;
+  --text:        #f1ece4;
+  --text-dim:    #a39d92;
+  --text-faint:  #6e6a62;
+  --user:        #f3c969;
+  --user-fade:   #f3c96922;
+  --error:       #d77a6a;
+  --ok:          #84d18b;
+  --radius:      14px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+body {
+  font: 15px/1.6 system-ui, -apple-system, "SF Pro Text", "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+}
+
+.onb-topbar {
+  -webkit-app-region: drag;
+  height: 44px;
+  padding: 0 18px 0 84px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.onb-logo {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.onb-step-pill {
+  font: 11px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  color: var(--text-faint);
+  background: var(--bg-soft);
+  padding: 4px 9px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  -webkit-app-region: no-drag;
+}
+
+.onb-stage {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(40px, 8vh, 100px) 30px 60px;
+}
+
+.onb-step {
+  width: 100%;
+  max-width: 560px;
+  animation: fadeIn 200ms ease;
+}
+.onb-step[hidden] { display: none; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0 0 18px;
+  letter-spacing: -0.01em;
+}
+.lede {
+  color: var(--text-dim);
+  margin: 0 0 16px;
+}
+.lede.summary {
+  color: var(--text);
+  background: var(--bg-soft);
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  font-family: "Geist Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+}
+code {
+  background: var(--bg-soft-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font: 12px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  color: var(--text);
+}
+kbd {
+  background: var(--bg-soft-2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font: 12px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+/* Choices (radio list) */
+.onb-choices {
+  border: 0;
+  padding: 0;
+  margin: 28px 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.onb-choice {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.onb-choice:hover { border-color: var(--text-faint); }
+.onb-choice:has(input:checked) {
+  border-color: var(--user);
+  background: var(--user-fade);
+}
+.onb-choice input[type="radio"] {
+  accent-color: var(--user);
+  margin-top: 4px;
+}
+.onb-choice .t { font-weight: 500; }
+.onb-choice .m { color: var(--text-faint); font-size: 13px; margin-top: 2px; }
+
+.onb-input {
+  margin-top: 10px;
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+  outline: none;
+}
+.onb-input:focus { border-color: var(--user); }
+
+/* Verify result */
+.onb-verify {
+  margin: 14px 0 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  font: 12px/1.5 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  color: var(--text-dim);
+}
+.onb-verify[data-state="ok"]   { border-color: var(--ok);    background: rgba(132, 209, 139, 0.07); color: var(--text); }
+.onb-verify[data-state="fail"] { border-color: var(--error); background: rgba(215, 122, 106, 0.07); color: var(--error); }
+
+/* Permission card */
+.onb-permission-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 16px;
+  padding: 14px 16px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.onb-perm-status {
+  font: 12px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-soft-2);
+  color: var(--text-dim);
+}
+.onb-perm-status[data-state="granted"] { background: rgba(132, 209, 139, 0.12); color: var(--ok); }
+.onb-perm-status[data-state="denied"]  { background: rgba(215, 122, 106, 0.12); color: var(--error); }
+
+/* Aside */
+.onb-aside {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.onb-aside summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+.onb-aside summary:hover { color: var(--text); }
+.onb-aside p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+
+/* Actions */
+.onb-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 32px;
+}
+.onb-btn {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 10px 18px;
+  border-radius: 10px;
+  font: 14px/1 inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.onb-btn:hover { border-color: var(--text-faint); background: var(--bg-soft); }
+.onb-btn.primary {
+  background: var(--user);
+  color: #1a1612;
+  border-color: var(--user);
+}
+.onb-btn.primary:hover { background: #ffd982; border-color: #ffd982; }
+.onb-btn.primary:disabled {
+  background: var(--bg-soft-2);
+  color: var(--text-faint);
+  border-color: var(--line);
+  cursor: not-allowed;
+}
+.onb-btn.ghost { background: transparent; }
+.onb-btn.big { padding: 14px 26px; font-size: 15px; }

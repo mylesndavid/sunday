@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sunday — setup</title>
+  <link rel="stylesheet" href="onboarding.css">
+</head>
+<body>
+  <header class="onb-topbar">
+    <span class="onb-logo">Sunday</span>
+    <span class="onb-step-pill" id="onb-step-pill">step 1 of 4</span>
+  </header>
+
+  <main class="onb-stage">
+    <!-- Step 1: welcome -->
+    <section class="onb-step" data-step="welcome">
+      <h1>Welcome.</h1>
+      <p class="lede">
+        Sunday is a personal AI you self-host. There's one chat between you and her — across the
+        desktop app, iMessage, voice calls, and any computer you give her as a satellite.
+      </p>
+      <p class="lede">
+        This setup takes ninety seconds. We'll pick which Sunday daemon you're connecting to,
+        grant microphone access for "Hey Sunday," then drop you into the chat.
+      </p>
+      <div class="onb-actions">
+        <button class="onb-btn primary" data-go="node">Let's go</button>
+      </div>
+    </section>
+
+    <!-- Step 2: pick node -->
+    <section class="onb-step" data-step="node" hidden>
+      <h1>Which Sunday are you connecting to?</h1>
+      <p class="lede">
+        The Sunday daemon is her central nervous system — chat history, memory, the brain. It can
+        live on your laptop, on a VPS you control, or anywhere else you've installed her.
+      </p>
+
+      <fieldset class="onb-choices">
+        <label class="onb-choice">
+          <input type="radio" name="node" value="local" checked>
+          <div>
+            <div class="t">Local — this Mac</div>
+            <div class="m"><code>http://127.0.0.1:8765</code> · for development</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="node" value="prod">
+          <div>
+            <div class="t">Production — <code>sunday.betterbotagent.com</code></div>
+            <div class="m">The VPS-hosted daemon · what iMessage + Sendblue talk to</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="node" value="custom">
+          <div>
+            <div class="t">Custom URL</div>
+            <input type="text" id="onb-custom-url" placeholder="https://your-sunday.example.com" class="onb-input">
+          </div>
+        </label>
+      </fieldset>
+
+      <div class="onb-verify" id="onb-verify" hidden></div>
+
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="welcome">Back</button>
+        <button class="onb-btn primary" id="onb-test-conn">Test connection</button>
+      </div>
+    </section>
+
+    <!-- Step 3: microphone permission -->
+    <section class="onb-step" data-step="mic" hidden>
+      <h1>Microphone access</h1>
+      <p class="lede">
+        Sunday listens for "Hey Sunday" via your microphone and runs voice transcription locally.
+        Audio never leaves your Mac unless you've configured a speech-to-text provider.
+      </p>
+
+      <div class="onb-permission-card" id="onb-mic-card">
+        <div class="onb-perm-status" data-state="unknown">unknown</div>
+        <div class="onb-perm-actions">
+          <button class="onb-btn primary" id="onb-mic-request">Grant microphone access</button>
+        </div>
+      </div>
+
+      <details class="onb-aside">
+        <summary>Optional: Full Disk Access for the satellite</summary>
+        <p>
+          If you run <code>sunday-satellite</code> on this Mac so Sunday can read + reply to your
+          real iMessages, the satellite process needs Full Disk Access. Grant it under
+          <strong>System Settings → Privacy &amp; Security → Full Disk Access</strong> and add
+          <code>/Users/myles/Development/Repos/sunday/.venv/bin/python3</code>.
+          Skip this if you don't want iMessage reads.
+        </p>
+      </details>
+
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="node">Back</button>
+        <button class="onb-btn primary" data-go="done">Continue</button>
+      </div>
+    </section>
+
+    <!-- Step 4: done -->
+    <section class="onb-step" data-step="done" hidden>
+      <h1>You're set.</h1>
+      <p class="lede">
+        Sunday is wired up. Press <kbd>⌘.</kbd> any time to open the admin panel and see her
+        satellites, memory, and recent activity.
+      </p>
+      <p class="lede summary" id="onb-summary"></p>
+      <div class="onb-actions">
+        <button class="onb-btn primary big" id="onb-finish">Open Sunday</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="onboarding.js"></script>
+</body>
+</html>

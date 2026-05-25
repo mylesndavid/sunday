@@ -28,7 +28,8 @@
       "main.js",
       "preload.js",
       "renderer/**/*",
-      "overlay/**/*"
+      "overlay/**/*",
+      "build/entitlements.mac.plist"
     ],
     "mac": {
       "category": "public.app-category.productivity",
