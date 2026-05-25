@@ -18,6 +18,7 @@ dependencies = [
   "typer>=0.12",
   "structlog>=24.1",
   "pyyaml>=6.0",
+  "sqlite-vec>=0.1",
 ]
 
 [project.optional-dependencies]
@@ -28,9 +29,6 @@ dev = [
 voice = [
   "faster-whisper>=1.2",
   "sounddevice>=0.5",
-]
-memory = [
-  "sqlite-vec>=0.1",
 ]
 devices = [
   "websockets>=12.0",

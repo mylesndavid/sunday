@@ -26,6 +26,7 @@ from sunday.chat import Chat
 from sunday.config import load_config
 from sunday.devices.manager import DeviceManager
 from sunday.ipc import IpcError, read_json, write_json
+from sunday.memory import Memory, extract_facts
 from sunday.paths import ensure_home, socket_path
 from sunday.tools import default_registry
 
@@ -59,6 +60,11 @@ class Daemon:
         ensure_home()
         self.config = load_config()
         self.chat = Chat()
+        self.memory = Memory()
+        if self.memory.available:
+            log.info("memory enabled", path=str(self.memory.path), count=self.memory.count())
+        else:
+            log.info("memory disabled (sqlite-vec or OPENAI_API_KEY missing)")
         self.registry = default_registry(self.config)
         self.devices = DeviceManager(broadcast=self._broadcast_lazy)
         self._unix_server: asyncio.Server | None = None
@@ -82,10 +88,26 @@ class Daemon:
         reply = await respond(
             self.chat, text, modality, self.config, self.registry,
             attachments=attachments,
-            extras={"broadcast": self._broadcast, "devices": self.devices},
+            extras={
+                "broadcast": self._broadcast,
+                "devices":   self.devices,
+                "memory":    self.memory,
+            },
         )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
+        # Fire-and-forget memory extraction so the brain returns immediately.
+        if self.memory.available:
+            asyncio.create_task(self._extract_memories(text, reply))
         return {"reply": reply}
+
+    async def _extract_memories(self, user_text: str, sunday_reply: str) -> None:
+        try:
+            facts = await extract_facts(user_text, sunday_reply, self.config)
+            if facts:
+                await self.memory.store_many(facts, source="auto")
+                log.info("memory extracted", new_facts=len(facts))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("memory extraction task failed", error=str(exc))
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "say":
@@ -108,6 +130,7 @@ class Daemon:
                 "version": __version__,
                 "model": f"{self.config.model.provider}/{self.config.model.name}",
                 "messages": self.chat.count(),
+                "memories": self.memory.count() if self.memory.available else None,
                 "tools": self.registry.names(),
                 "devices": self.devices.list_devices(),
                 "server": {"host": self.config.server.host, "port": self.config.server.port},

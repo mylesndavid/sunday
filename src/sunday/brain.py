@@ -17,6 +17,7 @@ import structlog
 
 from sunday.chat import Chat
 from sunday.config import SundayConfig
+from sunday.memory import recall_block as memory_recall_block
 from sunday.prompt import stable_prefix
 from sunday.runtime import Runtime, build_runtime
 from sunday.tools import ToolContext, ToolRegistry
@@ -60,7 +61,28 @@ async def respond(
     tool_schema = registry.as_openai_schema() if (registry and registry.list_tools()) else None
 
     broadcast = (extras or {}).get("broadcast")
+    memory    = (extras or {}).get("memory")
     stream_id = uuid.uuid4().hex[:12]
+
+    # Pull relevant memories ONCE per turn (not per tool iteration) and bake
+    # them into the system prompt. The model can also call the `recall` tool
+    # for deeper searches if it needs them.
+    memory_block = ""
+    if memory is not None and getattr(memory, "available", False):
+        try:
+            recalled = await memory.recall(user_text, top_k=6)
+            memory_block = memory_recall_block(recalled)
+            log.info(
+                "memory recall",
+                hits=len(recalled),
+                top_distance=(f"{recalled[0].distance:.3f}" if recalled else None),
+                stored_total=memory.count(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("memory recall failed", error=str(exc))
+
+    def _system_prompt() -> str:
+        return stable_prefix() + memory_block
 
     async def _emit_delta(piece: str) -> None:
         if broadcast is not None:
@@ -80,7 +102,7 @@ async def respond(
 
     for iteration in range(MAX_TOOL_ITERATIONS):
         result = await rt.complete(
-            system_prompt=stable_prefix(),
+            system_prompt=_system_prompt(),
             messages=_context_messages(chat),
             tools_schema=tool_schema,
             on_delta=_emit_delta,

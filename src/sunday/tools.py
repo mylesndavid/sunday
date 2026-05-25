@@ -111,6 +111,9 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
     registry = ToolRegistry()
 
     for module_path in (
+        "sunday.memory_tools",
+        "sunday.skills",
+        "sunday.subagents.native",
         "sunday.subagents.hermes",
         "sunday.channels.messages_local",
         "sunday.channels.sendblue",
