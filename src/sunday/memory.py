@@ -38,10 +38,15 @@ EMBED_MODEL = "text-embedding-3-small"
 EMBED_DIMS  = 1536
 
 DEFAULT_TOP_K = 6
-# Cosine distance gate. text-embedding-3-small in practice produces distances
-# of 0.4-0.9 even for semantically related text; 1.5 effectively means "trust
-# top-K." If you want stricter relevance, tighten this in config later.
-DEFAULT_RECALL_FLOOR = 1.5
+# sqlite-vec L2 distance gate. text-embedding-3-small under L2 lands at:
+#   ~0.6-0.9 for clearly relevant pairs
+#   ~1.0-1.2 for thematic/tangential matches
+#   ~1.3+   for unrelated noise
+# Floor of 1.0 filters out the noise that would otherwise let the model
+# parrot recalled facts in conversations they don't relate to (e.g. ask
+# about wine, get "User has a dog named Bowser" injected). The model can
+# always call recall() explicitly if it wants a broader search.
+DEFAULT_RECALL_FLOOR = 1.0
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -287,10 +292,16 @@ async def extract_facts(user_text: str, sunday_reply: str, config: SundayConfig)
 
 
 def recall_block(memories: list[MemoryRow]) -> str:
-    """Format recalled memories as a system-prompt block. Empty when no hits."""
+    """Format recalled memories as a context block prepended to the user's
+    latest message. Empty when no hits. The wording is deliberately soft —
+    these are *available facts*, not instructions to mention them."""
     if not memories:
         return ""
-    lines = ["", "# What you know about them", ""]
+    lines = [
+        "(Background you can draw on if it's relevant to what they're asking — do NOT mention "
+        "these out of nowhere or recite them back. Only use what fits the moment.)",
+        "",
+    ]
     for m in memories:
         lines.append(f"- {m.content}")
     return "\n".join(lines)

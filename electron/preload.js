@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sunday', {
   getConfig: () => ipcRenderer.invoke('sunday:config'),
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
+  checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),
+  openFDASettings: () => ipcRenderer.invoke('sunday:open-fda-settings'),
   setOverlayState: (state) => ipcRenderer.send('sunday:overlay-state', state),
   onOverlayState: (handler) => {
     ipcRenderer.on('sunday:overlay-state', (_evt, state) => handler(state));

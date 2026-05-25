@@ -169,41 +169,55 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin: 24px 0 16px;
+  gap: 18px;
+  margin: 16px 0;
   padding: 14px 16px;
   background: var(--bg-soft);
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
+.onb-perm-meta { flex: 1; min-width: 0; }
+.onb-perm-title {
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.onb-perm-sub {
+  color: var(--text-faint);
+  font-size: 13px;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.onb-perm-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.onb-tag {
+  font: 10px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--bg-soft-2);
+  padding: 3px 7px;
+  border-radius: 4px;
+  vertical-align: middle;
+}
 .onb-perm-status {
-  font: 12px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
+  font: 11px/1 "Geist Mono", "SF Mono", ui-monospace, monospace;
   letter-spacing: 0.04em;
   text-transform: lowercase;
-  padding: 6px 10px;
+  padding: 5px 9px;
   border-radius: 999px;
   background: var(--bg-soft-2);
   color: var(--text-dim);
 }
 .onb-perm-status[data-state="granted"] { background: rgba(132, 209, 139, 0.12); color: var(--ok); }
 .onb-perm-status[data-state="denied"]  { background: rgba(215, 122, 106, 0.12); color: var(--error); }
-
-/* Aside */
-.onb-aside {
-  margin: 18px 0 8px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-.onb-aside summary {
-  cursor: pointer;
-  color: var(--text-dim);
-  padding: 4px 0;
-}
-.onb-aside summary:hover { color: var(--text); }
-.onb-aside p {
-  margin: 8px 0 0;
-  line-height: 1.6;
-}
+.onb-btn.small { padding: 6px 12px; font-size: 12px; }
 
 /* Actions */
 .onb-actions {

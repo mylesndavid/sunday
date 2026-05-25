@@ -68,31 +68,42 @@
       </div>
     </section>
 
-    <!-- Step 3: microphone permission -->
+    <!-- Step 3: permissions -->
     <section class="onb-step" data-step="mic" hidden>
-      <h1>Microphone access</h1>
+      <h1>Permissions</h1>
       <p class="lede">
-        Sunday listens for "Hey Sunday" via your microphone and runs voice transcription locally.
-        Audio never leaves your Mac unless you've configured a speech-to-text provider.
+        Two permissions for Sunday to use her full surface. Mic is required for voice +
+        "Hey Sunday." Full Disk Access is only needed if you run a satellite on this Mac
+        and want her to read + reply to your real iMessages.
       </p>
 
-      <div class="onb-permission-card" id="onb-mic-card">
-        <div class="onb-perm-status" data-state="unknown">unknown</div>
-        <div class="onb-perm-actions">
-          <button class="onb-btn primary" id="onb-mic-request">Grant microphone access</button>
+      <!-- Microphone card -->
+      <div class="onb-permission-card">
+        <div class="onb-perm-meta">
+          <div class="onb-perm-title">Microphone</div>
+          <div class="onb-perm-sub">Voice input + "Hey Sunday" wake word. Required for voice features.</div>
+        </div>
+        <div class="onb-perm-side">
+          <div class="onb-perm-status" id="onb-mic-status" data-state="unknown">checking…</div>
+          <button class="onb-btn small" id="onb-mic-request">Grant</button>
         </div>
       </div>
 
-      <details class="onb-aside">
-        <summary>Optional: Full Disk Access for the satellite</summary>
-        <p>
-          If you run <code>sunday-satellite</code> on this Mac so Sunday can read + reply to your
-          real iMessages, the satellite process needs Full Disk Access. Grant it under
-          <strong>System Settings → Privacy &amp; Security → Full Disk Access</strong> and add
-          <code>/Users/myles/Development/Repos/sunday/.venv/bin/python3</code>.
-          Skip this if you don't want iMessage reads.
-        </p>
-      </details>
+      <!-- Full Disk Access card -->
+      <div class="onb-permission-card">
+        <div class="onb-perm-meta">
+          <div class="onb-perm-title">Full Disk Access <span class="onb-tag">optional</span></div>
+          <div class="onb-perm-sub">
+            Lets Sunday read your iMessages from <code>~/Library/Messages/chat.db</code>.
+            We'll open Privacy &amp; Security and reveal <strong>Sunday.app</strong> in Finder
+            so you can drag it into the list.
+          </div>
+        </div>
+        <div class="onb-perm-side">
+          <div class="onb-perm-status" id="onb-fda-status" data-state="unknown">checking…</div>
+          <button class="onb-btn small" id="onb-fda-open">Open settings</button>
+        </div>
+      </div>
 
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="node">Back</button>

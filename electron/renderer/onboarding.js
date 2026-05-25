@@ -91,24 +91,23 @@ $('#onb-custom-url').addEventListener('keydown', (e) => {
 
 // ─── step 3: microphone permission ─────────────────────────────────────
 
-const micStatus = $('.onb-perm-status');
+// ── Microphone permission ──────────────────────────────────────────────
+const micStatus = $('#onb-mic-status');
 const micBtn    = $('#onb-mic-request');
 
 async function checkMicPermission() {
   if (!navigator.permissions || !navigator.permissions.query) return 'unknown';
   try {
-    const status = await navigator.permissions.query({ name: 'microphone' });
-    return status.state;
-  } catch {
-    return 'unknown';
-  }
+    const s = await navigator.permissions.query({ name: 'microphone' });
+    return s.state;
+  } catch { return 'unknown'; }
 }
 
 function paintMicStatus(state) {
   micStatus.dataset.state = state;
   micStatus.textContent = state;
   micBtn.disabled = state === 'granted';
-  micBtn.textContent = state === 'granted' ? 'Microphone ready' : 'Grant microphone access';
+  micBtn.textContent = state === 'granted' ? 'ready' : 'Grant';
 }
 
 async function requestMic() {
@@ -116,19 +115,44 @@ async function requestMic() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     stream.getTracks().forEach((t) => t.stop());
     paintMicStatus('granted');
-  } catch {
-    paintMicStatus('denied');
-  }
+  } catch { paintMicStatus('denied'); }
 }
-
 micBtn.addEventListener('click', requestMic);
 
-// Recheck mic on showing step 3
+// ── Full Disk Access ───────────────────────────────────────────────────
+const fdaStatus = $('#onb-fda-status');
+const fdaBtn    = $('#onb-fda-open');
+
+function paintFdaStatus(state) {
+  fdaStatus.dataset.state = state;
+  fdaStatus.textContent = state;
+  fdaBtn.textContent = state === 'granted' ? 'ready' : 'Open settings';
+  fdaBtn.disabled = state === 'granted';
+}
+
+async function checkFda() {
+  if (!window.sunday?.checkFDA) return 'unknown';
+  try {
+    const granted = await window.sunday.checkFDA();
+    return granted ? 'granted' : 'denied';
+  } catch { return 'unknown'; }
+}
+
+async function openFdaSettings() {
+  if (!window.sunday?.openFDASettings) return;
+  await window.sunday.openFDASettings();
+  // Re-check shortly after — user typically grants within ~10s.
+  setTimeout(async () => paintFdaStatus(await checkFda()), 4000);
+}
+fdaBtn.addEventListener('click', openFdaSettings);
+
+// Re-check permissions when arriving at the perms step
 const _origShow = showStep;
 showStep = (name) => {
   _origShow(name);
   if (name === 'mic') {
     checkMicPermission().then(paintMicStatus);
+    checkFda().then(paintFdaStatus);
   }
   if (name === 'done') {
     $('#onb-summary').textContent = [

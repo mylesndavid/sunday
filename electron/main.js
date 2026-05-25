@@ -105,10 +105,53 @@ ipcMain.handle('sunday:config', () => {
 ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label }) => {
   savePrefs({ daemonHttp, daemonWs, label, onboarded: true });
   if (!mainWindow) createMainWindow();
-  if (!overlayWindow) createOverlayWindow();
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close();
   rebuildTrayMenu();
   return true;
+});
+
+// Check whether the satellite would be able to read iMessage history.
+// We can't ask macOS directly — instead probe a path that requires Full
+// Disk Access. Returns true when readable (i.e. FDA granted to whichever
+// process the satellite runs under).
+ipcMain.handle('sunday:check-fda', async () => {
+  const chatDb = path.join(require('node:os').homedir(), 'Library', 'Messages', 'chat.db');
+  try {
+    // fs.accessSync with R_OK throws on protected paths even when the
+    // file exists. On non-macOS or missing chat.db we return false.
+    fs.accessSync(chatDb, fs.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+// Open Privacy & Security → Full Disk Access AND reveal Sunday.app in
+// Finder so the user can drag the app itself into the FDA list — same
+// flow Perplexity Comet uses for their permissions.
+//
+// macOS grants FDA per-process. Sunday.app's child processes (including
+// any embedded satellite we spawn from here) inherit the grant. Until
+// we embed the satellite (next slice — kills the "FDA on python3" path
+// entirely), users still need to grant FDA to the satellite Python
+// binary separately if they're running one. For the *app's own*
+// iMessage reads (when we embed), this is the right pointer.
+ipcMain.handle('sunday:open-fda-settings', async () => {
+  // 1. Open the FDA pane via Apple's deep-link URL scheme.
+  await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+
+  // 2. Reveal Sunday.app itself in Finder so the user can drag it into
+  //    the FDA list. app.getAppPath() returns the asar / app root;
+  //    walking up to the .app bundle is one step.
+  const appBundle = path.dirname(path.dirname(path.dirname(app.getAppPath())));
+  // For dev (running `npm start`), the .app bundle doesn't exist — fall
+  // back to revealing the project folder.
+  if (appBundle.endsWith('.app')) {
+    shell.showItemInFolder(appBundle);
+    return { revealedPath: appBundle };
+  }
+  shell.openPath(require('node:os').homedir() + '/Applications');
+  return { revealedPath: null };
 });
 
 ipcMain.on('sunday:overlay-state', (_evt, state) => {
@@ -197,7 +240,9 @@ app.whenReady().then(() => {
     createOnboardingWindow();
   } else {
     createMainWindow();
-    createOverlayWindow();
+    // Overlay pill is opt-in — most users don't want a persistent
+    // always-on-top indicator. The tray icon conveys presence + state.
+    // Toggle via the tray menu when we wire it (not in this commit).
   }
   createTray();
   Menu.setApplicationMenu(null);
