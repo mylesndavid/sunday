@@ -93,15 +93,25 @@ def _build_provider(config: SundayConfig, provider_name: str) -> Provider:
 
 class RouterProvider:
     """Wraps multiple providers, tries them in order, fails over on
-    credit/rate-limit errors. The agent loop calls this exactly like a
-    single provider — failover is invisible from above."""
+    credit/rate-limit errors. Built providers are cached so the inner
+    httpx client + TLS connection stay warm across turns — every call
+    after the first skips the handshake."""
 
     name = "router"
 
     def __init__(self, config: SundayConfig) -> None:
         self.config = config
         self._chain = _credentialed_providers(config)
+        self._provider_cache: dict[str, Provider] = {}
         log.info("router built", chain=self._chain)
+
+    def _provider(self, name: str) -> Provider:
+        cached = self._provider_cache.get(name)
+        if cached is not None:
+            return cached
+        built = _build_provider(self.config, name)
+        self._provider_cache[name] = built
+        return built
 
     async def complete(
         self,
@@ -114,7 +124,7 @@ class RouterProvider:
         last_exc: BaseException | None = None
         for provider_name in self._chain:
             try:
-                provider = _build_provider(self.config, provider_name)
+                provider = self._provider(provider_name)
                 result = await provider.complete(
                     system_prompt=system_prompt,
                     messages=messages,

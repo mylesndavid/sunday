@@ -4,30 +4,50 @@ Covers OpenRouter (default), OpenAI direct, DeepSeek direct, and anything
 else exposing the OpenAI Chat Completions wire format. Streams token-by-
 token, assembles tool_call deltas by index, normalises to CompletionResult.
 
-Hermes-shape: provider is dumb and self-contained. The agent loop in
-core.py handles iteration budgeting, tool dispatch, and message history.
+Performance choices:
+- Lazy import of the openai SDK (defers ~800ms of pydantic-backed type
+  initialization until the first actual LLM call — matches Hermes's
+  `_load_openai_cls` trick in run_agent.py:77).
+- The AsyncOpenAI client is built once per provider instance and reused
+  across calls. httpx underneath does HTTP/1.1 keepalive, so the TLS
+  handshake is paid once instead of per-turn.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from openai import AsyncOpenAI
-
 from sunday.config import SundayConfig
 from sunday.credentials import get_credential
 from sunday.runtime.types import CompletionResult, DeltaHandler, ToolCall
 
 
+def _load_async_openai():
+    """Lazy import — saves ~800ms of pydantic load on `sunday start` and
+    on `sunday init`. Only hits when someone actually wants a completion."""
+    from openai import AsyncOpenAI
+    return AsyncOpenAI
+
+
 class OpenAICompatProvider:
-    """OpenAI Chat Completions streaming, configurable base_url."""
+    """OpenAI Chat Completions streaming, configurable base_url.
+
+    The underlying AsyncOpenAI client is cached on the instance — same
+    client across every call. httpx keeps the TLS connection warm so
+    second + subsequent calls skip the ~150ms TLS handshake.
+    """
 
     name = "openai-compat"
 
     def __init__(self, config: SundayConfig) -> None:
         self.config = config
+        self._client_cache: Any = None
 
-    def _client(self) -> AsyncOpenAI:
+    def _client(self):
+        if self._client_cache is not None:
+            return self._client_cache
+
+        AsyncOpenAI = _load_async_openai()
         provider = self.config.model.provider
 
         if provider == "openrouter":
@@ -37,7 +57,7 @@ class OpenAICompatProvider:
                     "OPENROUTER_API_KEY is not set. "
                     "Run: sunday credential set OPENROUTER_API_KEY <key>"
                 )
-            return AsyncOpenAI(
+            self._client_cache = AsyncOpenAI(
                 api_key=key,
                 base_url=self.config.model.base_url,
                 default_headers={
@@ -45,18 +65,21 @@ class OpenAICompatProvider:
                     "X-Title": "Sunday",
                 },
             )
+            return self._client_cache
 
         if provider == "openai":
             key = get_credential("OPENAI_API_KEY")
             if not key:
                 raise RuntimeError("OPENAI_API_KEY is not set.")
-            return AsyncOpenAI(api_key=key)
+            self._client_cache = AsyncOpenAI(api_key=key)
+            return self._client_cache
 
         if provider == "deepseek-direct":
             key = get_credential("DEEPSEEK_API_KEY")
             if not key:
                 raise RuntimeError("DEEPSEEK_API_KEY is not set.")
-            return AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
+            self._client_cache = AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
+            return self._client_cache
 
         raise RuntimeError(f"OpenAICompatProvider does not handle: {provider}")
 
@@ -81,11 +104,12 @@ class OpenAICompatProvider:
         stream = await client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
-        # Reasoning content (deepseek-reasoner, o-series, etc.) arrives as
-        # a parallel `reasoning_content` field on each delta. We accumulate
-        # it separately so we can preserve it across turns.
+        # Reasoning content (deepseek-reasoner, o-series, kimi, glm) arrives
+        # as a parallel `reasoning_content` field on each delta. Accumulated
+        # separately so we can preserve it across turns without leaking
+        # into the visible reply.
         reasoning_parts: list[str] = []
-        # tool_calls arrive as indexed deltas; accumulate into a dict keyed by index
+        # tool_calls arrive as indexed deltas; assemble per index
         tc_acc: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
 
@@ -106,9 +130,6 @@ class OpenAICompatProvider:
                 if on_delta is not None:
                     await on_delta(piece)
 
-            # Reasoning content — accumulate but don't stream (most UIs
-            # don't render it; let the brain stash it in metadata so it
-            # flows back on the next turn).
             r_piece = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
             if r_piece:
                 reasoning_parts.append(str(r_piece))

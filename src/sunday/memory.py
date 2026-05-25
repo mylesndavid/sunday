@@ -64,16 +64,26 @@ class MemoryRow:
     distance: float = 0.0
 
 
+_EMBED_CLIENT_CACHE: Any = None
+_EMBED_CLIENT_KEY: str | None = None
+
+
 def _embed_client():
-    """Lazy import of openai so memory module loads without OpenAI installed."""
-    from openai import AsyncOpenAI
+    """Lazy import of openai + singleton cache so the client (and its
+    underlying httpx connection) is reused across recall / store calls."""
+    global _EMBED_CLIENT_CACHE, _EMBED_CLIENT_KEY
     key = get_credential("OPENAI_API_KEY")
     if not key:
         raise RuntimeError(
             "OPENAI_API_KEY is required for Sunday's memory (used for "
             "embeddings). Run: sunday credential set OPENAI_API_KEY <key>"
         )
-    return AsyncOpenAI(api_key=key)
+    if _EMBED_CLIENT_CACHE is not None and _EMBED_CLIENT_KEY == key:
+        return _EMBED_CLIENT_CACHE
+    from openai import AsyncOpenAI
+    _EMBED_CLIENT_CACHE = AsyncOpenAI(api_key=key)
+    _EMBED_CLIENT_KEY = key
+    return _EMBED_CLIENT_CACHE
 
 
 def _emb_bytes(vec: list[float]) -> bytes:
