@@ -13,7 +13,7 @@
 // Env vars SUNDAY_DAEMON_HTTP / SUNDAY_DAEMON_WS, when set, win over saved
 // prefs (lets you override without re-onboarding).
 
-const { app, BrowserWindow, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage } = require('electron');
 const path = require('node:path');
 const fs   = require('node:fs');
 
@@ -42,6 +42,7 @@ function resolveDaemon() {
 let mainWindow = null;
 let overlayWindow = null;
 let onboardingWindow = null;
+let tray = null;
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
@@ -104,7 +105,9 @@ ipcMain.handle('sunday:config', () => {
 ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label }) => {
   savePrefs({ daemonHttp, daemonWs, label, onboarded: true });
   if (!mainWindow) createMainWindow();
+  if (!overlayWindow) createOverlayWindow();
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close();
+  rebuildTrayMenu();
   return true;
 });
 
@@ -135,6 +138,59 @@ function createOnboardingWindow() {
   onboardingWindow.on('closed', () => { onboardingWindow = null; });
 }
 
+function createTray() {
+  // Tiny template image — macOS tints automatically to match the menu bar
+  // theme. 18×18 is the canonical Apple template size; we draw a single
+  // amber-ish dot (becomes black/white at runtime under template tint).
+  const icon = nativeImage.createFromDataURL(
+    'data:image/png;base64,' +
+    'iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAhUlEQVQ4y2NkYGD4z0AB' +
+    'YGJgYGBgZGRk+I+L8/8DEzkamRiZGBmYmBlYWZkZmJgYGRgZGZgYWBgYmRgZmBgYGRgY' +
+    'mBgYGRgYGBgYGBkYmRgYGBkYmRgZGRgYGRiZGBgYGRgZGBgYGRgYGBgYGRgZGBkYGRgY' +
+    'GRgZGBgYGRgZGBgYGRgYGBgYGAEACS8EBaBPRMAAAAAASUVORK5CYII='
+  );
+  icon.setTemplateImage(true);
+  tray = new Tray(icon);
+  tray.setToolTip('Sunday');
+  rebuildTrayMenu();
+  tray.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isVisible()) mainWindow.focus(); else mainWindow.show();
+    } else if (!onboardingWindow) {
+      createMainWindow();
+    }
+  });
+}
+
+function rebuildTrayMenu() {
+  if (!tray) return;
+  const { daemonHttp, onboarded } = resolveDaemon();
+  const prefs = loadPrefs();
+  const menu = Menu.buildFromTemplate([
+    { label: `Sunday — ${prefs.label || daemonHttp}`, enabled: false },
+    { type: 'separator' },
+    { label: 'Open chat',  click: () => {
+        if (!mainWindow) createMainWindow();
+        else { mainWindow.show(); mainWindow.focus(); }
+    }},
+    { label: 'Admin console',  click: () => {
+        if (!mainWindow) createMainWindow();
+        else { mainWindow.show(); mainWindow.focus(); }
+        // mainWindow renderer handles ⌘. — send a message to open the panel
+        setTimeout(() => mainWindow?.webContents.send('sunday:open-admin'), 200);
+    }},
+    { type: 'separator' },
+    { label: 'Reconfigure (re-run onboarding)…', click: () => {
+        savePrefs({ onboarded: false });
+        if (mainWindow) mainWindow.close();
+        if (!onboardingWindow) createOnboardingWindow();
+    }},
+    { type: 'separator' },
+    { label: 'Quit Sunday',  role: 'quit' },
+  ]);
+  tray.setContextMenu(menu);
+}
+
 app.whenReady().then(() => {
   const { onboarded } = resolveDaemon();
   if (!onboarded) {
@@ -143,6 +199,7 @@ app.whenReady().then(() => {
     createMainWindow();
     createOverlayWindow();
   }
+  createTray();
   Menu.setApplicationMenu(null);
 });
 

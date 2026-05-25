@@ -503,6 +503,11 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); adminToggle(); }
 });
 
+// Tray menu can ask us to open the admin panel
+if (window.sunday?.onOpenAdmin) {
+  window.sunday.onOpenAdmin(() => adminOpen());
+}
+
 document.addEventListener('dragover', (e) => { e.preventDefault(); dropzoneEl.hidden = false; });
 document.addEventListener('dragleave', (e) => {
   if (e.target === document || e.target === document.documentElement) dropzoneEl.hidden = true;

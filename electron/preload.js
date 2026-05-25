@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('sunday', {
   onOverlayState: (handler) => {
     ipcRenderer.on('sunday:overlay-state', (_evt, state) => handler(state));
   },
+  onOpenAdmin: (handler) => {
+    ipcRenderer.on('sunday:open-admin', () => handler());
+  },
 });
