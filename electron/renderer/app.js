@@ -179,14 +179,14 @@ function renderAttachment(a) {
   const kind = a.kind || guessKind(a.mime_type || '');
   if (kind === 'image') {
     const img = document.createElement('img');
-    // local file path — Electron renderer can fetch file:// directly
     img.src = a.url || (a.path ? `file://${a.path}` : '');
     img.alt = a.filename || '';
     return img;
   }
   const chip = document.createElement('div');
   chip.className = 'att';
-  chip.textContent = `${a.filename || 'attachment'} · ${a.mime_type || ''}`;
+  const sizeBit = a.size ? `${Math.round(a.size / 1024)}kb · ` : '';
+  chip.textContent = `${a.filename || 'attachment'} · ${sizeBit}${a.mime_type || ''}`;
   return chip;
 }
 
@@ -279,33 +279,48 @@ function renderAttachmentChips() {
   }
 }
 
-function fileToAttachmentMeta(file) {
-  // The daemon needs an absolute path. Electron with sandbox=true doesn't
-  // expose file paths via the File API; the workaround is for the user to
-  // drop the file or use the OS open dialog from main process. As a v0,
-  // copy the file via a temp data URL we resolve in the daemon side.
-  // For now we send via a separate /v1/attach endpoint that the daemon can
-  // expose later. Meanwhile, when running with `electron .` from dev, the
-  // path IS available via webUtils.getPathForFile in newer Electron — try it.
-  const path = file.path || (window.electronUtils?.getPathForFile?.(file) ?? '');
+// Read a File as a data: URL so we can send it INSIDE the say payload —
+// no path dependency, works across a remote daemon. The daemon's
+// Attachment.to_llm_image_url already accepts data: URLs natively for
+// vision content. ~16MB cap so we don't blow up the request size.
+const MAX_ATTACH_BYTES = 16 * 1024 * 1024;
+
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('read failed'));
+    reader.onload  = () => resolve(reader.result);   // already a data:<mime>;base64,... URL
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileToAttachmentMeta(file) {
+  if (file.size > MAX_ATTACH_BYTES) {
+    return { error: `${file.name}: ${Math.round(file.size / 1024 / 1024)}MB exceeds the 16MB attachment cap` };
+  }
+  let dataUrl;
+  try { dataUrl = await readAsDataURL(file); }
+  catch (err) { return { error: `${file.name}: read failed (${err.message})` }; }
+
+  const mime = file.type || 'application/octet-stream';
   return {
-    id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    path,
-    filename: file.name,
-    mime_type: file.type || 'application/octet-stream',
-    size: file.size,
-    kind: guessKind(file.type || ''),
+    id:        `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    url:       dataUrl,           // daemon reads URL, not path
+    path:      '',                // empty — we don't rely on filesystem paths
+    filename:  file.name,
+    mime_type: mime,
+    size:      file.size,
+    kind:      guessKind(mime),
   };
 }
 
-function addFiles(files) {
+async function addFiles(files) {
   for (const file of files) {
-    const meta = fileToAttachmentMeta(file);
-    if (!meta.path) {
-      // Without a path, can't reach the daemon. Note it visibly.
+    const meta = await fileToAttachmentMeta(file);
+    if (meta.error) {
       renderMessage({
         id: `warn-${Date.now()}`, role: 'system', modality: 'electron',
-        content: `${file.name}: drop-and-go needs a future /v1/attach upload route — coming next.`,
+        content: meta.error,
       });
       scrollToEnd();
       continue;
@@ -379,6 +394,21 @@ function resizeComposer() {
 
 attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => addFiles(e.target.files));
+// Paste an image directly into the composer — common UX shortcut.
+composerEl.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items || [];
+  const files = [];
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length) {
+    e.preventDefault();
+    await addFiles(files);
+  }
+});
 
 micBtn.addEventListener('click', () => (listening ? stopVoice() : startVoice()));
 
@@ -512,10 +542,10 @@ document.addEventListener('dragover', (e) => { e.preventDefault(); dropzoneEl.hi
 document.addEventListener('dragleave', (e) => {
   if (e.target === document || e.target === document.documentElement) dropzoneEl.hidden = true;
 });
-document.addEventListener('drop', (e) => {
+document.addEventListener('drop', async (e) => {
   e.preventDefault();
   dropzoneEl.hidden = true;
-  if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+  if (e.dataTransfer?.files?.length) await addFiles(e.dataTransfer.files);
 });
 
 // Boot.

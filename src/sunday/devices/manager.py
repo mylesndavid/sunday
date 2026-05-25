@@ -87,7 +87,14 @@ class DeviceManager:
 
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Accept an incoming satellite connection and pump its frames."""
-        ws = web.WebSocketResponse(heartbeat=30.0, max_msg_size=32 * 1024 * 1024)
+        # 20s heartbeat matches the satellite's ping_interval. autoping=True
+        # so aiohttp generates protocol-level pings the websockets lib on
+        # the satellite recognises as keepalive.
+        ws = web.WebSocketResponse(
+            heartbeat=20.0,
+            autoping=True,
+            max_msg_size=32 * 1024 * 1024,
+        )
         await ws.prepare(request)
 
         device: ConnectedDevice | None = None

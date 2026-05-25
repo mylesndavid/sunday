@@ -182,7 +182,12 @@ async def _serve(server_url: str, device_id: str, token: str | None) -> None:
                 server_url,
                 additional_headers=headers,
                 max_size=32 * 1024 * 1024,
-                ping_interval=30,
+                # 20s ping cadence — well under any proxy idle timeout
+                # (Cloudflare's is 100s for unproxied, Caddy default 60s).
+                # ping_timeout high enough that a slow pong doesn't kill us.
+                ping_interval=20,
+                ping_timeout=60,
+                close_timeout=10,
             ) as ws:
                 log.info("connected", server=server_url, device_id=device_id)
                 caps = _capabilities()
