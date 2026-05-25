@@ -12,6 +12,10 @@ from __future__ import annotations
 
 from sunday.config import SundayConfig
 from sunday.runtime.iteration_budget import IterationBudget
+from sunday.runtime.sanitize import (
+    repair_message_sequence,
+    sanitize_messages_surrogates,
+)
 from sunday.runtime.tool_args import repair_tool_call_arguments
 from sunday.runtime.types import (
     CompletionResult,
@@ -29,16 +33,16 @@ __all__ = [
     "Runtime",
     "ToolCall",
     "build_runtime",
+    "repair_message_sequence",
     "repair_tool_call_arguments",
+    "sanitize_messages_surrogates",
 ]
 
 
 def build_runtime(config: SundayConfig) -> Provider:
-    """Pick a provider based on config. For now: OpenAI-compatible only.
-
-    Multi-provider auto-fallback (Hermes's auxiliary_client pattern) lands
-    in a follow-up — anthropic.py + a router that tries the configured
-    provider first and falls back on 402 / rate-limit.
+    """Build the multi-provider router. Primary provider per config; auto-
+    fallback to any other provider with credentials available on this host
+    when the primary hits 402 / credit-exhausted / rate-limit errors.
     """
-    from sunday.runtime.providers.openai_compat import OpenAICompatProvider
-    return OpenAICompatProvider(config)
+    from sunday.runtime.router import RouterProvider
+    return RouterProvider(config)

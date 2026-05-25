@@ -19,7 +19,14 @@ from sunday.chat import Chat
 from sunday.config import SundayConfig
 from sunday.memory import recall_block as memory_recall_block
 from sunday.prompt import stable_prefix
-from sunday.runtime import IterationBudget, Runtime, build_runtime, repair_tool_call_arguments
+from sunday.runtime import (
+    IterationBudget,
+    Runtime,
+    build_runtime,
+    repair_message_sequence,
+    repair_tool_call_arguments,
+    sanitize_messages_surrogates,
+)
 from sunday.tools import ToolContext, ToolRegistry
 
 CONTEXT_WINDOW = 40
@@ -31,7 +38,17 @@ log = structlog.get_logger("sunday.brain")
 
 
 def _context_messages(chat: Chat) -> list[dict]:
-    return [m.to_llm() for m in chat.recent(limit=CONTEXT_WINDOW)]
+    """Build the messages list for the next provider call, with the same
+    defensive belts Hermes runs before every API call: surrogate
+    sanitization + role-alternation repair. Both are no-ops on healthy
+    histories and silent fixes when something's off."""
+    messages = [m.to_llm() for m in chat.recent(limit=CONTEXT_WINDOW)]
+    if sanitize_messages_surrogates(messages):
+        log.info("sanitized surrogate code points in messages")
+    repaired = repair_message_sequence(messages)
+    if repaired:
+        log.info("repaired role-alternation violations", count=repaired)
+    return messages
 
 
 async def respond(
@@ -103,7 +120,20 @@ async def respond(
         })
 
     budget = IterationBudget(MAX_TOOL_ITERATIONS)
+    iteration = 0
     while budget.consume():
+        iteration += 1
+        # Step callback — observability event before each provider call.
+        # Lets the Electron app render "thinking", "calling tool X", etc.
+        if broadcast is not None:
+            await broadcast({
+                "type": "agent_step",
+                "stream_id": stream_id,
+                "iteration": iteration,
+                "budget_used": budget.used,
+                "budget_max": budget.max_total,
+            })
+
         result = await rt.complete(
             system_prompt=_system_prompt(),
             messages=_context_messages(chat),
@@ -135,6 +165,15 @@ async def respond(
 
             assert registry is not None
             for tc in sanitized:
+                # Step callback for tool execution start
+                if broadcast is not None:
+                    await broadcast({
+                        "type": "tool_call",
+                        "stream_id": stream_id,
+                        "tool_name": tc["name"],
+                        "tool_call_id": tc["id"],
+                    })
+
                 tool_result = await registry.execute(tc["name"], tc["arguments"], ctx)
                 content = (
                     tool_result
@@ -147,6 +186,14 @@ async def respond(
                     modality,
                     metadata={"tool_call_id": tc["id"], "tool_name": tc["name"]},
                 )
+
+                if broadcast is not None:
+                    await broadcast({
+                        "type": "tool_result",
+                        "stream_id": stream_id,
+                        "tool_call_id": tc["id"],
+                        "tool_name": tc["name"],
+                    })
             continue
 
         reply = result.content.strip()
