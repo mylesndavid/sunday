@@ -112,6 +112,11 @@ class Message:
                 }
                 for tc in tcs
             ]
+        # Pass reasoning content back to providers that consume it
+        # (deepseek-reasoner, OpenAI o-series). Cheap on chat models — they
+        # ignore unknown fields.
+        if self.role == "sunday" and meta.get("reasoning_content"):
+            out["reasoning_content"] = meta["reasoning_content"]
         return out
 
     def to_json(self) -> dict[str, Any]:

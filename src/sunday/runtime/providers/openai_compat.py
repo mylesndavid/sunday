@@ -81,6 +81,10 @@ class OpenAICompatProvider:
         stream = await client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
+        # Reasoning content (deepseek-reasoner, o-series, etc.) arrives as
+        # a parallel `reasoning_content` field on each delta. We accumulate
+        # it separately so we can preserve it across turns.
+        reasoning_parts: list[str] = []
         # tool_calls arrive as indexed deltas; accumulate into a dict keyed by index
         tc_acc: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
@@ -101,6 +105,13 @@ class OpenAICompatProvider:
                 content_parts.append(piece)
                 if on_delta is not None:
                     await on_delta(piece)
+
+            # Reasoning content — accumulate but don't stream (most UIs
+            # don't render it; let the brain stash it in metadata so it
+            # flows back on the next turn).
+            r_piece = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+            if r_piece:
+                reasoning_parts.append(str(r_piece))
 
             for tc in (getattr(delta, "tool_calls", None) or []):
                 idx = getattr(tc, "index", 0) or 0
@@ -129,9 +140,16 @@ class OpenAICompatProvider:
             for i in sorted(tc_acc.keys())
         ]
 
+        raw: dict[str, Any] = {
+            "provider": self.name,
+            "model": self.config.model.name,
+            "streamed": True,
+        }
+        if reasoning_parts:
+            raw["reasoning_content"] = "".join(reasoning_parts)
         return CompletionResult(
             content="".join(content_parts),
             tool_calls=tool_calls,
             finish_reason=finish_reason,
-            raw={"provider": self.name, "model": self.config.model.name, "streamed": True},
+            raw=raw,
         )
