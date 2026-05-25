@@ -27,6 +27,7 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from sunday import __version__
+from sunday.banner import render as render_banner
 from sunday.credentials import get_credential, set_credential
 
 console = Console()
@@ -36,12 +37,11 @@ console = Console()
 
 
 def banner() -> None:
-    console.print()
+    render_banner(console, tagline=f"a personal AI you self-host  ·  v{__version__}")
     console.print(Panel.fit(
-        "[bold]Sunday[/bold]  [dim]— a personal AI you self-host[/dim]\n"
         "Setup walks you through credentials + channels + a real verification pass.\n"
         "Re-run any time to reconfigure.",
-        title=f"sunday init  ·  v{__version__}",
+        title="sunday init",
         title_align="left",
         border_style="yellow",
     ))

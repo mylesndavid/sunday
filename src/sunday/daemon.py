@@ -409,6 +409,12 @@ def main() -> None:
             structlog.dev.ConsoleRenderer(),
         ],
     )
+    # Only render the banner on attached terminals — keeps systemd /
+    # launchd logs clean of ANSI gradient escape sequences.
+    import sys as _sys
+    if _sys.stdout.isatty():
+        from sunday.banner import render as _render
+        _render(tagline=f"a personal AI you self-host  ·  v{__version__}")
     asyncio.run(Daemon().run())
 
 

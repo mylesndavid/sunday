@@ -3,6 +3,16 @@
 The face Sunday wears on macOS. Connects to the local daemon over HTTP +
 WebSocket. The one chat lives in the daemon — this is a renderer of it.
 
+## Building for distribution
+
+See [`build/README.md`](build/README.md) for the three paths (unsigned,
+signed, signed-and-notarized). Quick start:
+
+```bash
+npm install
+npm run dist:mac:unsigned    # local DMG for testing
+```
+
 ## Dev
 
 ```bash

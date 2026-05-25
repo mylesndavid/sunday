@@ -8,7 +8,9 @@
     "start": "electron .",
     "dev": "electron .",
     "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac"
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:dmg": "electron-builder --mac dmg",
+    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config.mac.identity=null"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -17,15 +19,41 @@
   "build": {
     "appId": "com.sunday.desktop",
     "productName": "Sunday",
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"]
+    "asar": true,
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
     },
     "files": [
       "main.js",
       "preload.js",
       "renderer/**/*",
       "overlay/**/*"
-    ]
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg",  "arch": ["arm64", "x64"] },
+        { "target": "zip",  "arch": ["arm64", "x64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Sunday uses the microphone for voice input + the \"Hey Sunday\" wake word.",
+        "NSCameraUsageDescription": "Sunday does not use the camera.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "notarize": false
+    },
+    "dmg": {
+      "title": "Sunday ${version}",
+      "writeUpdateInfo": false,
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    }
   }
 }
