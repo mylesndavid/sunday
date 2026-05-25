@@ -6,9 +6,9 @@ build-backend = "hatchling.build"
 name = "sunday"
 version = "0.0.1"
 description = "A personal AI that knows you."
-requires-python = ">=3.11"
-authors = [{ name = "Myles", email = "mylesnosa@gmail.com" }]
-license = { text = "Proprietary" }
+requires-python = ">=3.10"
+authors = [{ name = "Myles David" }, { name = "Sunday contributors" }]
+license = { text = "MIT" }
 readme = "README.md"
 
 dependencies = [

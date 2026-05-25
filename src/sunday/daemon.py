@@ -37,10 +37,21 @@ log = structlog.get_logger("sunday.daemon")
 WebhookHandler = Any  # async (request: web.Request, daemon: "Daemon") -> web.Response
 _webhooks: dict[str, WebhookHandler] = {}
 
+# Long-running background tasks subsystems want to run alongside the daemon
+# (e.g. Sendblue polling, calendar watchers). Each is an async callable
+# taking the Daemon and looping forever.
+BackgroundTask = Any  # async (daemon: "Daemon") -> None
+_background_tasks: list[BackgroundTask] = []
+
 
 def register_webhook(path: str, handler: WebhookHandler) -> None:
     """Register an HTTP POST webhook. path like '/webhooks/sendblue'."""
     _webhooks[path] = handler
+
+
+def register_background_task(task: BackgroundTask) -> None:
+    """Register a coroutine the daemon should run on startup until shutdown."""
+    _background_tasks.append(task)
 
 
 class Daemon:
@@ -274,6 +285,13 @@ class Daemon:
             tools=self.registry.names(),
         )
 
+        # Kick off any registered background tasks (Sendblue poller, etc.).
+        self._bg_tasks: list[asyncio.Task] = []
+        for task_fn in _background_tasks:
+            self._bg_tasks.append(asyncio.create_task(task_fn(self)))
+        if self._bg_tasks:
+            log.info("background tasks started", count=len(self._bg_tasks))
+
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)
@@ -282,6 +300,8 @@ class Daemon:
             await self._stop.wait()
         finally:
             log.info("sunday down")
+            for t in getattr(self, "_bg_tasks", []):
+                t.cancel()
             self._unix_server.close()
             await self._unix_server.wait_closed()
             if self._http_runner is not None:

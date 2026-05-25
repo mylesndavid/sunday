@@ -1,21 +1,21 @@
 """Sendblue iMessage channel — Sunday's own phone number.
 
-This is the "text Sunday from anywhere" path. Sendblue gives Sunday a
-dedicated iMessage-capable phone number. Inbound messages hit our webhook;
-Sunday writes them to the one chat with modality='imessage_sendblue',
-runs the brain, and replies through Sendblue's API.
+Inbound iMessages hit our webhook, get written into the one chat with
+modality='imessage_sendblue', the brain runs, and Sunday replies through
+Sendblue's API. Distinct from channels/messages_local, which is "Sunday
+reads + replies in the user's *own* Messages.app via a satellite."
 
-Distinct from channels/messages_local, which is "Sunday can read and
-respond as you in your own iMessages."
+Webhook-only. We trust Sendblue's delivery — if it stalls (theirs to
+fix), you'll see it in the dashboard's recent-messages view.
 
-Config (via credentials):
+Credentials:
   SENDBLUE_API_KEY_ID
   SENDBLUE_API_SECRET_KEY
-  SENDBLUE_NUMBER          your Sendblue-provisioned number for outbound
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -46,24 +46,33 @@ def _sendblue_headers() -> dict[str, str] | None:
     }
 
 
-async def _send_typing(to: str) -> dict[str, Any]:
+async def _send_typing(to: str, from_number: str | None = None) -> dict[str, Any]:
     """Make Sunday show up as 'typing…' in the user's Messages thread.
 
-    Best-effort — if Sendblue returns a non-2xx (endpoint shape varies by
-    plan), we log and continue rather than failing the inbound handler.
+    Sendblue free-tier accounts require an explicit `from_number`; paid
+    plans auto-fill it. The inbound webhook payload's `from_number` field
+    is Sunday's routing number — we forward it through here.
     """
     headers = _sendblue_headers()
     if headers is None:
         return {"error": "credentials missing"}
+    payload: dict[str, Any] = {"number": to}
+    if from_number:
+        payload["from_number"] = from_number
     async with httpx.AsyncClient(timeout=10) as client:
-        res = await client.post(SENDBLUE_TYPING, headers=headers, json={"number": to})
+        res = await client.post(SENDBLUE_TYPING, headers=headers, json=payload)
     if res.status_code >= 400:
         log.warning("sendblue typing indicator failed", status=res.status_code, body=res.text[:200])
         return {"error": f"sendblue typing {res.status_code}"}
     return {"ok": True}
 
 
-async def _send_sendblue(to: str, body: str, media_url: str | None = None) -> dict[str, Any]:
+async def _send_sendblue(
+    to: str,
+    body: str,
+    media_url: str | None = None,
+    from_number: str | None = None,
+) -> dict[str, Any]:
     headers = _sendblue_headers()
     if headers is None:
         return {
@@ -74,6 +83,8 @@ async def _send_sendblue(to: str, body: str, media_url: str | None = None) -> di
     payload: dict[str, Any] = {"number": to, "content": body}
     if media_url:
         payload["media_url"] = media_url
+    if from_number:
+        payload["from_number"] = from_number
 
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(SENDBLUE_SEND, headers=headers, json=payload)
@@ -101,23 +112,23 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
         return web.json_response({"ok": True, "skipped": "outbound receipt"})
     status = (body.get("status") or "").upper()
     if status and status not in ("RECEIVED", "DELIVERED"):
-        # echo, sent-callback, etc.
         return web.json_response({"ok": True, "skipped": f"status={status}"})
 
-    sender = body.get("from_number") or body.get("number") or ""
-    text = body.get("content") or ""
-    media_url = body.get("media_url")
+    # Sendblue inbound payload convention:
+    #   number      = the OTHER party (the user texting Sunday)
+    #   from_number = Sunday's own Sendblue routing number
+    sender        = body.get("number") or ""
+    sunday_number = body.get("from_number") or ""
+    text          = body.get("content") or ""
+    media_url     = body.get("media_url")
 
     if not text and media_url:
         text = f"(media: {media_url})"
     if not sender or not text:
         return web.json_response({"ok": True, "skipped": "missing sender/content"})
 
-    # Fire-and-forget: show "Sunday is typing…" in the user's iMessage
-    # thread the moment the inbound message lands, well before the brain
-    # has finished generating a reply.
-    import asyncio as _asyncio
-    _asyncio.create_task(_send_typing(sender))
+    # Fire-and-forget: show "Sunday is typing…" before the brain finishes.
+    asyncio.create_task(_send_typing(sender, from_number=sunday_number or None))
 
     try:
         reply = await respond(
@@ -132,11 +143,11 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
         log.exception("sendblue brain failed")
         return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
-    send_result = await _send_sendblue(sender, reply)
+    send_result = await _send_sendblue(sender, reply, from_number=sunday_number or None)
     return web.json_response({"ok": True, "reply": reply, "send": send_result})
 
 
-# ─── tool ────────────────────────────────────────────────────────────────
+# ─── outbound tool ───────────────────────────────────────────────────────
 
 
 _SEND_PARAMS = {
@@ -145,6 +156,7 @@ _SEND_PARAMS = {
         "to": {"type": "string", "description": "Recipient phone number in E.164 ('+15551234567')."},
         "body": {"type": "string", "description": "Message body."},
         "media_url": {"type": "string", "description": "Optional public URL of media to attach."},
+        "from_number": {"type": "string", "description": "Optional override of the Sendblue-side number."},
     },
     "required": ["to", "body"],
 }
@@ -155,11 +167,15 @@ async def _t_sendblue_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     body = args.get("body")
     if not to or not body:
         return {"error": "'to' and 'body' are required"}
-    return await _send_sendblue(str(to), str(body), args.get("media_url"))
+    return await _send_sendblue(
+        str(to),
+        str(body),
+        args.get("media_url"),
+        args.get("from_number"),
+    )
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
-    # Register the inbound webhook lazily — daemon.py owns the registry.
     from sunday.daemon import register_webhook
     register_webhook("/webhooks/sendblue", _webhook_handler)
 
@@ -167,8 +183,8 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         name="sendblue_send",
         description=(
             "Send an iMessage from Sunday's own Sendblue number to any phone. "
-            "Use for sending from the bot's number, not the user's personal iMessages "
-            "(for that, use imessage_send)."
+            "Use this when Sunday is reaching out from her own number — not when "
+            "replying as the user (for that, use imessage_send through a connected satellite)."
         ),
         parameters=_SEND_PARAMS,
         run=_t_sendblue_send,

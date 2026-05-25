@@ -25,11 +25,19 @@ from typing import Any
 import structlog
 
 from sunday.devices import cdp
+from sunday.devices import imessage_macos
 from sunday.devices.protocol import event_frame, register_frame, response_frame
 
 log = structlog.get_logger("sunday.satellite")
 
-CAPABILITIES = ["shell", "screen", "cdp"]
+
+def _capabilities() -> list[str]:
+    """Capabilities this satellite advertises. iMessage is opt-in based on
+    chat.db being readable (so Linux/non-Mac satellites simply don't claim it)."""
+    caps = ["shell", "screen", "cdp"]
+    if imessage_macos.is_available():
+        caps.append("imessage")
+    return caps
 
 
 # ─── handlers (commands the satellite responds to) ──────────────────────
@@ -109,14 +117,47 @@ async def _h_cdp_close(params: dict[str, Any]) -> dict[str, Any]:
     return await cdp.close(profile_id=params.get("profile_id", "default"))
 
 
+# ─── iMessage handlers (macOS only) ──────────────────────────────────────
+
+
+async def _h_imessage_list_threads(params: dict[str, Any]) -> dict[str, Any]:
+    return {"threads": imessage_macos.list_threads(int(params.get("limit") or 20))}
+
+
+async def _h_imessage_read_thread(params: dict[str, Any]) -> dict[str, Any]:
+    chat_id = params.get("chat_identifier")
+    if not chat_id:
+        return {"error": "'chat_identifier' is required"}
+    return {"messages": imessage_macos.read_thread(str(chat_id), int(params.get("limit") or 30))}
+
+
+async def _h_imessage_read_recent(params: dict[str, Any]) -> dict[str, Any]:
+    return {"messages": imessage_macos.read_recent(int(params.get("limit") or 20))}
+
+
+async def _h_imessage_send(params: dict[str, Any]) -> dict[str, Any]:
+    to = params.get("to")
+    if not to:
+        return {"error": "'to' is required"}
+    body = params.get("body") or ""
+    atts = params.get("attachments") or []
+    if not body and not atts:
+        return {"error": "'body' or 'attachments' is required"}
+    return await imessage_macos.send_imessage(str(to), str(body), [str(p) for p in atts])
+
+
 HANDLERS = {
-    "run_command":   _h_run_command,
-    "screenshot":    _h_screenshot,
-    "cdp_launch":    _h_cdp_launch,
-    "cdp_navigate":  _h_cdp_navigate,
-    "cdp_screenshot": _h_cdp_screenshot,
-    "cdp_evaluate":  _h_cdp_evaluate,
-    "cdp_close":     _h_cdp_close,
+    "run_command":            _h_run_command,
+    "screenshot":             _h_screenshot,
+    "cdp_launch":             _h_cdp_launch,
+    "cdp_navigate":           _h_cdp_navigate,
+    "cdp_screenshot":         _h_cdp_screenshot,
+    "cdp_evaluate":           _h_cdp_evaluate,
+    "cdp_close":              _h_cdp_close,
+    "imessage_list_threads":  _h_imessage_list_threads,
+    "imessage_read_thread":   _h_imessage_read_thread,
+    "imessage_read_recent":   _h_imessage_read_recent,
+    "imessage_send":          _h_imessage_send,
 }
 
 
@@ -144,9 +185,11 @@ async def _serve(server_url: str, device_id: str, token: str | None) -> None:
                 ping_interval=30,
             ) as ws:
                 log.info("connected", server=server_url, device_id=device_id)
+                caps = _capabilities()
+                log.info("registering", device_id=device_id, capabilities=caps)
                 await ws.send(_jsondumps(register_frame(
                     device_id=device_id,
-                    capabilities=CAPABILITIES,
+                    capabilities=caps,
                     platform_name=platform.platform(),
                 )))
 
