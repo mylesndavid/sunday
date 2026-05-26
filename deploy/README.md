@@ -22,18 +22,24 @@ docker compose up -d
 ## Reverse proxy (Caddy example)
 
 ```
-sunday.example.com { reverse_proxy localhost:8765 }
-nango.example.com  { reverse_proxy localhost:3003 }
+sunday.example.com  { reverse_proxy localhost:8765 }   # the app
+nango.example.com   { reverse_proxy localhost:3003 }   # Nango API + OAuth callback
+connect.example.com { reverse_proxy localhost:3009 }   # Nango Connect UI
 ```
 
-## Connecting integrations (Gmail, Calendar, …)
+## Connecting integrations (Gmail, Calendar, …) — all env-driven
 
-1. Open the Nango dashboard at `NANGO_PUBLIC_URL` (login from `.env`).
-2. Grab the environment **secret key**, put it in `.env` as
-   `NANGO_SECRET_KEY`, and `docker compose up -d sunday` to pick it up.
-3. Add each provider as an integration in Nango (e.g. `google-mail`,
-   `google-calendar`) with your own Google Cloud OAuth client id/secret.
-4. In the Sunday app: Settings → Connections → Connect.
+No Nango dashboard needed (its self-hosted dashboard is built for Nango
+Cloud login). Integrations are provisioned from env on startup:
+
+1. Create the OAuth client **once** in the provider's console. For Google:
+   enable the Gmail + Calendar APIs, make an OAuth 2.0 **Web** client, and
+   set the redirect URI to `<NANGO_PUBLIC_URL>/oauth/callback`.
+2. Put it in `.env` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) and
+   `docker compose up -d sunday`. On boot Sunday creates the matching Nango
+   integrations automatically (`POST /integrations`).
+3. In the Sunday app: Settings → Connections → **Connect** → approve in the
+   browser (Nango's Connect UI at `NANGO_CONNECT_URL`).
 
 Sunday holds no provider OAuth secrets — Nango owns the apps and refreshes
 tokens; Sunday calls provider APIs through Nango's proxy.
