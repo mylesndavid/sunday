@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sunday', {
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
   openSettings: () => ipcRenderer.invoke('sunday:open-settings'),
   requestScreen: () => ipcRenderer.invoke('sunday:request-screen'),
+  rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),
   openFDASettings: () => ipcRenderer.invoke('sunday:open-fda-settings'),
   setOverlayState: (state) => ipcRenderer.send('sunday:overlay-state', state),

@@ -329,6 +329,42 @@ class Daemon:
             log.exception("memory graph rebuild failed")
             return web.json_response({"error": str(exc)}, status=500)
 
+    # ─── rewind (screen history) — routes to the satellite advertising it ──
+
+    def _rewind_device(self) -> str | None:
+        for d in self.devices.list_devices():
+            if "rewind" in (d.get("capabilities") or []):
+                return d["device_id"]
+        return None
+
+    async def _rewind_call(self, method: str, params: dict) -> dict:
+        did = self._rewind_device()
+        if not did:
+            return {"error": "no Mac with screen history connected"}
+        try:
+            return await self.devices.command(did, method, params, timeout=20)
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    async def _http_rewind_recent(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit", "500"))
+        except ValueError:
+            limit = 500
+        return web.json_response(await self._rewind_call("rewind_recent", {"limit": limit}))
+
+    async def _http_rewind_state(self, request: web.Request) -> web.Response:
+        return web.json_response(await self._rewind_call("rewind_stats", {}))
+
+    async def _http_rewind_toggle(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        on = bool(body.get("on"))
+        if on:
+            interval = body.get("interval_seconds")
+            params = {"interval_seconds": interval} if interval else {}
+            return web.json_response(await self._rewind_call("rewind_start", params))
+        return web.json_response(await self._rewind_call("rewind_stop", {}))
+
     async def _http_health(self, request: web.Request) -> web.Response:
         """Rich health snapshot for admin UIs — daemon stats, satellites,
         memory growth, skills, recent tool activity."""
@@ -440,6 +476,9 @@ class Daemon:
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
+        app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
+        app.router.add_get("/v1/rewind/state", self._http_rewind_state)
+        app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)

@@ -176,6 +176,22 @@ ipcMain.handle('sunday:open-fda-settings', async () => {
   return { revealedPath: null };
 });
 
+// Read a Rewind frame off disk and hand it back as a data URL. The frames
+// live under ~/.sunday/rewind on this same Mac (the satellite is local);
+// reading via IPC sidesteps file:// subresource restrictions and lets us
+// constrain access to the rewind directory.
+ipcMain.handle('sunday:rewind-image', async (_evt, p) => {
+  try {
+    const dir = path.join(require('node:os').homedir(), '.sunday', 'rewind');
+    const resolved = path.resolve(String(p || ''));
+    if (!resolved.startsWith(dir)) return null;
+    const buf = fs.readFileSync(resolved);
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.on('sunday:overlay-state', (_evt, state) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('sunday:overlay-state', state);

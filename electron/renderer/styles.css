@@ -63,9 +63,12 @@ body { display: flex; flex-direction: column; }
   scroll-behavior: smooth;
 }
 
-.msg { display: flex; flex-direction: column; max-width: 100%; margin: 3px 0; }
+.msg { position: relative; display: flex; flex-direction: column; max-width: 100%; margin: 0; }
 .msg.user   { align-items: flex-end; }
 .msg.sunday { align-items: flex-start; }
+/* Tight within a turn; a clear break only between turns (when the speaker
+ * side changes). thinking + tool steps cluster with the text they belong to. */
+.turn-gap { margin-top: 18px; }
 
 .bubble {
   position: relative;
@@ -99,20 +102,21 @@ body { display: flex; flex-direction: column; }
 }
 @keyframes caret { 0%,100%{opacity:.55} 50%{opacity:.1} }
 
-/* meta line under a bubble — finish time + duration. Space is always
- * reserved (fixed height) so revealing it on hover only fades opacity —
- * the thread never shifts. */
+/* finish time + duration — floats at the outer thread edge, vertically
+ * centered to the bubble. Absolutely positioned so it reserves no space
+ * and never shifts the layout; only fades in on hover. */
 .msg-meta {
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
   font: 500 11px/1 var(--font-mono);
   color: var(--text-3);
-  margin: 4px 4px 0;
-  height: 12px;
-  display: flex; gap: 8px;
-  opacity: 0;
+  display: flex; gap: 8px; white-space: nowrap;
+  opacity: 0; pointer-events: none;
   transition: opacity var(--t-fast) var(--ease);
 }
+.msg.sunday .msg-meta { right: 4px; }
+.msg.user   .msg-meta { left: 4px; }
 .msg:hover .msg-meta { opacity: 1; }
-.msg-meta:empty { height: 0; margin: 0; }
 .msg-meta .dur { color: var(--accent-press); }
 
 /* per-bubble copy on hover */
@@ -131,8 +135,8 @@ body { display: flex; flex-direction: column; }
 .msg:hover .bubble-copy { opacity: 1; }
 .bubble-copy:hover { background: var(--surface-2); }
 
-/* reasoning disclosure under sunday bubbles */
-.reasoning { margin: 4px 4px 0; max-width: 74%; align-self: flex-start; }
+/* reasoning disclosure — a quiet step in the turn */
+.reasoning { margin: 2px 4px; max-width: 74%; align-self: flex-start; }
 .reasoning summary { list-style: none; cursor: pointer; font: 500 11px/1 var(--font-mono); color: var(--text-3); display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; }
 .reasoning summary::-webkit-details-marker { display: none; }
 .reasoning summary:hover { color: var(--text-2); }
@@ -141,7 +145,7 @@ body { display: flex; flex-direction: column; }
 .reasoning .r-body { margin-top: 5px; padding: 9px 12px; background: var(--surface-2); border-radius: 12px; font-size: 13px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; }
 
 /* tool calls — inline on the left, quiet, no card chrome until expanded */
-.msg.tool { align-items: flex-start; max-width: 100%; margin: 1px 0; }
+.msg.tool { align-items: flex-start; max-width: 100%; margin: 0; }
 .tool-card { max-width: 100%; }
 .tool-card summary {
   list-style: none; cursor: pointer;
@@ -253,6 +257,28 @@ textarea#composer::placeholder { color: var(--text-3); }
 .mem-conns li:hover { color: var(--text); }
 .mem-conns .sw { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .mem-conns .rel { color: var(--text-3); font-size: 12px; }
+
+/* ── REWIND ───────────────────────────────────────────────────────────── */
+.view-rewind { flex-direction: row; }
+.rw-stage { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; background: var(--bg-2); }
+.rw-frame { flex: 1 1 auto; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 22px; }
+#rw-img { max-width: 100%; max-height: 100%; border-radius: var(--r-md); border: 1px solid var(--line); box-shadow: var(--shadow-2); object-fit: contain; }
+#rw-img[hidden] { display: none; }
+.rw-empty { max-width: 400px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 13px; }
+.rw-empty[hidden] { display: none; }
+.rw-empty-icon { width: 56px; height: 56px; border-radius: var(--r-lg); background: var(--accent-tint); color: var(--accent-press); display: flex; align-items: center; justify-content: center; }
+.rw-empty h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.rw-empty p { margin: 0 0 4px; color: var(--text-2); font-size: 14px; line-height: 1.6; }
+.rw-controls { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 12px clamp(16px, 4vw, 36px); border-top: 1px solid var(--line); background: var(--surface); }
+.rw-controls[hidden] { display: none; }
+.rw-slider { -webkit-appearance: none; appearance: none; flex: 1; height: 5px; border-radius: var(--r-pill); background: var(--surface-3); cursor: pointer; }
+.rw-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); box-shadow: var(--shadow-1); cursor: grab; }
+.rw-slider::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.1); }
+.rw-time { font-size: 12px; color: var(--text-2); white-space: nowrap; min-width: 150px; text-align: right; }
+.rw-text { flex: 0 0 300px; border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 22px 20px; }
+.rw-text[hidden] { display: none; }
+.rw-text h3 { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 0 0 12px; }
+.rw-ocr { font-size: 12px; line-height: 1.6; color: var(--text-2); white-space: pre-wrap; word-break: break-word; }
 
 /* ── SETTINGS ─────────────────────────────────────────────────────────── */
 .view-settings { flex-direction: row; }

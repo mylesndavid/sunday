@@ -4,6 +4,7 @@
 
 import * as memoryView from './memory-view.js';
 import * as settingsView from './settings-view.js';
+import * as rewindView from './rewind-view.js';
 
 const $ = (s) => document.querySelector(s);
 const chatEl     = $('#chat');
@@ -41,6 +42,11 @@ async function boot() {
     detailFacts: $('#mem-detail-facts'), detailConns: $('#mem-detail-conns'),
   });
   settingsView.init(DAEMON_HTTP);
+  rewindView.init({ daemonHttp: DAEMON_HTTP }, {
+    img: $('#rw-img'), empty: $('#rw-empty'), emptyTitle: $('#rw-empty-title'), emptySub: $('#rw-empty-sub'),
+    enable: $('#rw-enable'), controls: $('#rw-controls'), text: $('#rw-text'), ocr: $('#rw-ocr'),
+    slider: $('#rw-slider'), time: $('#rw-time'), play: $('#rw-play'), prev: $('#rw-prev'), next: $('#rw-next'), stop: $('#rw-stop'),
+  });
   renderSkeleton();
   await refreshLog();
   await refreshStatus();
@@ -121,15 +127,24 @@ function beginStream(ev) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   el.appendChild(bubble);
-  chatEl.appendChild(el);
+  placeRow(el, 'assistant');
   autoScroll(true);
   return { id: ev.stream_id, el, body: bubble, raw: '' };
 }
 
+// Append a top-level row, inserting a turn break only when the speaker side
+// changes — so all of one turn's activity (thinking, tools, text) clusters.
+function placeRow(el, side) {
+  const prevSide = chatEl.lastElementChild?.dataset?.side;
+  if (prevSide && prevSide !== side) el.classList.add('turn-gap');
+  el.dataset.side = side;
+  chatEl.appendChild(el);
+}
+
 function appendMessage(m) {
   const role = m.role;
-  if (role === 'tool')   { chatEl.appendChild(buildToolRow(m)); return; }
-  if (role === 'system') { chatEl.appendChild(buildSystemRow(m)); return; }
+  if (role === 'tool')   { placeRow(buildToolRow(m), 'assistant'); return; }
+  if (role === 'system') { placeRow(buildSystemRow(m), 'assistant'); return; }
 
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}`;
@@ -160,19 +175,19 @@ function appendMessage(m) {
   if (role === 'sunday' && lastUserTs && m.created_at > lastUserTs) html += `<span class="dur">${fmtDur(m.created_at - lastUserTs)}</span>`;
   if (m.created_at) html += `<span class="time" title="${esc(fmtFull(m.created_at))}">${esc(fmtClock(m.created_at))} · ${esc(fmtRel(m.created_at))}</span>`;
   meta.innerHTML = html;
-  wrap.appendChild(meta);
+  if (html) wrap.appendChild(meta);
 
-  chatEl.appendChild(wrap);
-
-  // reasoning disclosure (separate row, left-aligned under sunday)
-  const reasoning = m.metadata && m.metadata.reasoning_content;
-  if (role === 'sunday' && reasoning && reasoning.trim()) {
+  const side = role === 'user' ? 'user' : 'assistant';
+  // reasoning leads the bubble (it happened first), tucked just above it
+  const reasoning = role === 'sunday' && m.metadata && m.metadata.reasoning_content;
+  if (reasoning && reasoning.trim()) {
     const det = document.createElement('details');
     det.className = 'reasoning';
     det.innerHTML = `<summary><svg class="chev" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>thinking</summary><div class="r-body"></div>`;
     det.querySelector('.r-body').textContent = reasoning.trim();
-    chatEl.appendChild(det);
+    placeRow(det, side);
   }
+  placeRow(wrap, side);
 
   if (role === 'user') lastUserTs = m.created_at;
 }
@@ -261,7 +276,7 @@ function showLiveFrame(ev) {
   const p = document.createElement('div'); p.className = 'sys-msg'; p.textContent = ev.url ? `live · ${ev.url}` : 'live frame';
   wrap.appendChild(p);
   if (ev.screenshot_path) { const aw = document.createElement('div'); aw.className = 'msg-attachments'; aw.style.justifyContent = 'center'; aw.appendChild(buildAttachment({ kind: 'image', path: ev.screenshot_path, filename: 'frame.png' })); wrap.appendChild(aw); }
-  chatEl.appendChild(wrap); autoScroll();
+  placeRow(wrap, 'assistant'); autoScroll();
 }
 
 // ─── send ────────────────────────────────────────────────────────────────
@@ -273,7 +288,7 @@ async function send() {
   const w = document.createElement('div'); w.className = 'msg user pending';
   const b = document.createElement('div'); b.className = 'bubble'; b.innerHTML = mdLite(text); w.appendChild(b);
   if (pending.length) { const aw = document.createElement('div'); aw.className = 'msg-attachments'; for (const a of pending) aw.appendChild(buildAttachment(a)); w.appendChild(aw); }
-  chatEl.appendChild(w); scrollToEnd();
+  placeRow(w, 'user'); scrollToEnd();
 
   const payload = { text, modality: 'electron' };
   if (pending.length) payload.attachments = pending;
@@ -337,11 +352,12 @@ micBtn.addEventListener('click', () => (listening ? recog?.stop() : startVoice()
 
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
-  if (!['chat', 'memory', 'settings'].includes(name)) return;
+  if (!['chat', 'memory', 'rewind', 'settings'].includes(name)) return;
   currentView = name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'memory') { memoryView.resize(); if (!memoryView.isLoaded()) memoryView.load(); }
+  if (name === 'rewind') rewindView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
   if (name === 'chat') scrollToEnd();
 }
@@ -353,6 +369,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); switchView('settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); switchView('chat'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); switchView('memory'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('rewind'); }
 });
 window.sunday?.onSwitchView?.((name) => switchView(name));
 window.sunday?.onOpenAdmin?.(() => switchView('settings'));
