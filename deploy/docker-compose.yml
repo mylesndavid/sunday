@@ -32,6 +32,12 @@ services:
       NANGO_HOST: http://nango-server:3003
       NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
       NANGO_CONNECTION_ID: ${NANGO_CONNECTION_ID:-sunday}
+      NANGO_PUBLIC_URL: ${NANGO_PUBLIC_URL:-}
+      NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
+      # OAuth client creds — set these and Sunday auto-provisions the Nango
+      # integrations on startup (no dashboard clicking).
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - sunday-data:/data
     ports:

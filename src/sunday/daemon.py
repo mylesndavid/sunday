@@ -329,6 +329,37 @@ class Daemon:
             log.exception("memory graph rebuild failed")
             return web.json_response({"error": str(exc)}, status=500)
 
+    async def _http_integrations(self, request: web.Request) -> web.Response:
+        from sunday.integrations import nango
+        if not nango.configured():
+            return web.json_response({
+                "configured": False,
+                "providers": [{"id": k, "label": v["label"], "connected": False} for k, v in nango.PROVIDERS.items()],
+            })
+        connected = set()
+        try:
+            for p in nango.PROVIDERS:
+                if await nango.is_connected(p):
+                    connected.add(p)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("integrations status failed", error=str(exc))
+        return web.json_response({
+            "configured": True,
+            "providers": [{"id": k, "label": v["label"], "connected": k in connected} for k, v in nango.PROVIDERS.items()],
+        })
+
+    async def _http_integrations_connect(self, request: web.Request) -> web.Response:
+        from sunday.integrations import nango
+        body = await request.json()
+        provider = body.get("provider")
+        if provider not in nango.PROVIDERS:
+            return web.json_response({"error": f"unknown provider: {provider}"}, status=400)
+        return web.json_response(await nango.create_connect_session(provider))
+
+    async def _http_integrations_provision(self, request: web.Request) -> web.Response:
+        from sunday.integrations import nango
+        return web.json_response(await nango.provision_from_env())
+
     async def _http_models(self, request: web.Request) -> web.Response:
         """Proxy + trim OpenRouter's public model catalog (cached ~1h) so the
         app can offer a searchable picker with a 'sees images' flag."""
@@ -508,6 +539,9 @@ class Daemon:
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
+        app.router.add_get("/v1/integrations", self._http_integrations)
+        app.router.add_post("/v1/integrations/connect", self._http_integrations_connect)
+        app.router.add_post("/v1/integrations/provision", self._http_integrations_provision)
         app.router.add_get("/v1/models", self._http_models)
         app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
         app.router.add_get("/v1/rewind/state", self._http_rewind_state)
@@ -557,6 +591,18 @@ class Daemon:
             self._bg_tasks.append(asyncio.create_task(task_fn(self)))
         if self._bg_tasks:
             log.info("background tasks started", count=len(self._bg_tasks))
+
+        # Declaratively provision Nango integrations from env-held OAuth
+        # client creds (GOOGLE_CLIENT_ID/SECRET, …) — no dashboard clicking.
+        async def _provision_integrations():
+            try:
+                from sunday.integrations import nango
+                if nango.configured():
+                    result = await nango.provision_from_env()
+                    log.info("integrations provisioned", result=result)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("integration provisioning failed", error=str(exc))
+        self._bg_tasks.append(asyncio.create_task(_provision_integrations()))
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
