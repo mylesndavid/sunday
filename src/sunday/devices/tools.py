@@ -317,6 +317,41 @@ async def _t_browser_key(args: dict[str, Any], ctx: ToolContext) -> Any:
     })
 
 
+# ─── native UI control (any app, via macOS Accessibility) ────────────────
+
+
+async def _ctl_cmd(ctx: ToolContext, method: str, params: dict[str, Any], timeout: float = 25) -> Any:
+    device_id, err = _resolve_device(ctx, params.pop("device_id", None), capability="control")
+    if err:
+        return {"error": err}
+    try:
+        return await _devices_manager(ctx).command(str(device_id), method, params, timeout=timeout)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
+async def _t_app_snapshot(args: dict[str, Any], ctx: ToolContext) -> Any:
+    return await _ctl_cmd(ctx, "ax_snapshot", {"device_id": args.get("device_id")})
+
+
+async def _t_app_click(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if args.get("x") is None or args.get("y") is None:
+        return {"error": "'x' and 'y' are required (from app_snapshot)"}
+    return await _ctl_cmd(ctx, "ax_click", {"device_id": args.get("device_id"), "x": args["x"], "y": args["y"]})
+
+
+async def _t_app_type(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if not args.get("text"):
+        return {"error": "'text' is required"}
+    return await _ctl_cmd(ctx, "ax_type", {"device_id": args.get("device_id"), "text": args["text"]})
+
+
+async def _t_app_key(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if not args.get("combo"):
+        return {"error": "'combo' is required (e.g. cmd+t, enter, cmd+shift+4)"}
+    return await _ctl_cmd(ctx, "ax_key", {"device_id": args.get("device_id"), "combo": args["combo"]})
+
+
 _OPEN_URL_PARAMS = {
     "type": "object",
     "properties": {
@@ -571,4 +606,34 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         description="Press a key in the browser (Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp).",
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "key": {"type": "string"}}},
         run=_t_browser_key,
+    ))
+    registry.register(Tool(
+        name="app_snapshot",
+        description=(
+            "Read the UI of whatever app is in front on the Mac — every button, "
+            "field, menu, link with its label and on-screen position (x,y). This "
+            "is your eyes on ANY native app (Messages, Finder, Notes, anything), "
+            "not just the browser. Call it, then app_click(x,y) / app_type / "
+            "app_key to operate. Bring an app to the front first with device_open_app."
+        ),
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM}},
+        run=_t_app_snapshot,
+    ))
+    registry.register(Tool(
+        name="app_click",
+        description="Click at a screen point on the Mac (use the x,y of an element from app_snapshot). Then app_snapshot again to see the result.",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "x": {"type": "number"}, "y": {"type": "number"}}, "required": ["x", "y"]},
+        run=_t_app_click,
+    ))
+    registry.register(Tool(
+        name="app_type",
+        description="Type text into the focused field of the frontmost app (click the field first with app_click).",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "text": {"type": "string"}}, "required": ["text"]},
+        run=_t_app_type,
+    ))
+    registry.register(Tool(
+        name="app_key",
+        description="Press a key or combo on the Mac: 'enter', 'tab', 'escape', 'cmd+t', 'cmd+shift+4', 'cmd+c', etc. Drives menus and shortcuts in any app.",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "combo": {"type": "string"}}, "required": ["combo"]},
+        run=_t_app_key,
     ))

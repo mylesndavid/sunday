@@ -25,6 +25,7 @@ from typing import Any
 import structlog
 
 from sunday.devices import cdp
+from sunday.devices import control_macos
 from sunday.devices import imessage_macos
 from sunday.devices import rewind_macos
 from sunday.devices.protocol import event_frame, register_frame, response_frame
@@ -40,6 +41,8 @@ def _capabilities() -> list[str]:
         caps.append("imessage")
     if rewind_macos.is_available():
         caps.append("rewind")
+    if control_macos.is_available():
+        caps.append("control")
     return caps
 
 
@@ -256,6 +259,25 @@ async def _h_screen_text(params: dict[str, Any]) -> dict[str, Any]:
     return await rewind_macos.capture_text()
 
 
+# ─── native UI control (macOS Accessibility) ─────────────────────────────
+
+
+async def _h_ax_snapshot(params: dict[str, Any]) -> dict[str, Any]:
+    return await control_macos.snapshot()
+
+
+async def _h_ax_click(params: dict[str, Any]) -> dict[str, Any]:
+    return await control_macos.click(float(params.get("x", 0)), float(params.get("y", 0)))
+
+
+async def _h_ax_type(params: dict[str, Any]) -> dict[str, Any]:
+    return await control_macos.type_text(str(params.get("text", "")))
+
+
+async def _h_ax_key(params: dict[str, Any]) -> dict[str, Any]:
+    return await control_macos.key(str(params.get("combo", "")))
+
+
 HANDLERS = {
     "run_command":            _h_run_command,
     "screenshot":             _h_screenshot,
@@ -280,6 +302,10 @@ HANDLERS = {
     "rewind_recent":          _h_rewind_recent,
     "rewind_stats":           _h_rewind_stats,
     "screen_text":            _h_screen_text,
+    "ax_snapshot":            _h_ax_snapshot,
+    "ax_click":               _h_ax_click,
+    "ax_type":                _h_ax_type,
+    "ax_key":                 _h_ax_key,
 }
 
 
