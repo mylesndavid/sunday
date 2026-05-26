@@ -1,49 +1,42 @@
 """Rewind — continuous screen capture + OCR + searchable history.
 
 Runs on the satellite. Captures the full screen every N seconds via
-`screencapture`, OCRs each frame via OpenAI's vision API, indexes the
-text in a local SQLite FTS5 table. Sunday can then answer "what was on
-my screen at 2pm" / "find the slide that mentioned Q3 revenue" by
-searching the index.
+`screencapture`, OCRs each frame **locally via Apple's Vision framework**
+(the same engine Live Text uses), indexes the text in a SQLite FTS5
+table. Sunday can then answer "what was on my screen at 2pm" / "find
+the slide that mentioned Q3 revenue" by searching the index.
 
 Opt-in by default. Watcher auto-starts on satellite boot only if
 ~/.sunday/rewind.enabled exists. Toggle via the `rewind_start` tool
 (creates the flag + starts the loop) and `rewind_stop` (clears the
 flag + cancels). Settings page toggle is the friendlier surface.
 
-Cost note: ~$0.002 per frame OCR'd. At the default 5-minute interval
-that's roughly $0.50/day during active use. Tune the interval if needed.
+Cost: $0. OCR runs locally via a tiny Swift binary that wraps
+`VNRecognizeTextRequest`. The binary is built once at first use from
+`<repo>/bin/ocr-macos.swift` and cached at `~/.sunday/bin/ocr-macos`.
+Requires Xcode Command Line Tools (`xcode-select --install`) for the
+one-time build.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import sqlite3
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 import structlog
+
+from sunday.paths import sunday_home
 
 log = structlog.get_logger("sunday.devices.rewind")
 
 REWIND_DIR     = Path("~/.sunday/rewind").expanduser()
 REWIND_DB      = Path("~/.sunday/rewind.db").expanduser()
 REWIND_FLAG    = Path("~/.sunday/rewind.enabled").expanduser()
-
-OCR_MODEL = "gpt-4o-mini"
-OCR_PROMPT = (
-    "Extract ALL visible text from this screenshot exactly as it appears. "
-    "Preserve approximate layout with line breaks. Include UI labels, menu "
-    "items, button text. No commentary, no headers, no markdown — just the "
-    "raw text. If the screen is empty or shows only an image with no text, "
-    "respond with one word: EMPTY"
-)
 
 DEFAULT_INTERVAL_SECONDS = 300   # 5 minutes
 HASH_PREFIX_BYTES        = 16
@@ -112,7 +105,7 @@ def is_available() -> bool:
     return Path("/usr/sbin/screencapture").exists()
 
 
-async def _capture() -> tuple[bytes, Path]:
+async def _capture() -> tuple[Path, bytes]:
     today = time.strftime("%Y-%m-%d")
     when  = time.strftime("%H%M%S")
     day   = REWIND_DIR / today
@@ -126,38 +119,57 @@ async def _capture() -> tuple[bytes, Path]:
     _out, err = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(f"screencapture failed: {err.decode('utf-8', errors='replace').strip()}")
-    return path.read_bytes(), path
+    return path, path.read_bytes()
 
 
-async def _ocr(png_bytes: bytes) -> str:
-    """OCR via OpenAI gpt-4o-mini vision. Cheap enough for periodic use."""
-    from sunday.credentials import get_credential
-    key = get_credential("OPENAI_API_KEY")
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY required for Rewind OCR")
-    b64 = base64.b64encode(png_bytes).decode("ascii")
-    payload = {
-        "model": OCR_MODEL,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": OCR_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ],
-        }],
-        "max_tokens": 4000,
-        "temperature": 0,
-    }
-    async with httpx.AsyncClient(timeout=90) as client:
-        res = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=payload,
+# ─── OCR via Apple Vision (free + local) ────────────────────────────────
+
+
+def _ocr_binary_path() -> Path:
+    """Compile the tiny Vision wrapper once and cache the binary in
+    ~/.sunday/bin/. swiftc ships with Xcode Command Line Tools — if it's
+    missing, raise a friendly message."""
+    target = sunday_home() / "bin" / "ocr-macos"
+    if target.exists():
+        return target
+    # The .swift source lives at <repo>/bin/ocr-macos.swift; under the
+    # editable install it's three levels above this module.
+    candidates = [
+        Path(__file__).resolve().parents[3] / "bin" / "ocr-macos.swift",
+        Path("/opt/sunday/bin/ocr-macos.swift"),  # systemd install layout
+    ]
+    src = next((c for c in candidates if c.exists()), None)
+    if src is None:
+        raise FileNotFoundError(f"ocr-macos.swift not found in {candidates}")
+    swiftc = "/usr/bin/swiftc"
+    if not Path(swiftc).exists():
+        raise RuntimeError(
+            "swiftc not found. Install Xcode Command Line Tools: `xcode-select --install`"
         )
-    if res.status_code >= 400:
-        raise RuntimeError(f"openai {res.status_code}: {res.text[:200]}")
-    text = res.json()["choices"][0]["message"]["content"] or ""
-    return "" if text.strip() == "EMPTY" else text.strip()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    log.info("building rewind ocr binary", src=str(src), target=str(target))
+    res = subprocess.run(
+        [swiftc, "-O", "-o", str(target), str(src)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if res.returncode != 0:
+        raise RuntimeError(f"swiftc failed: {res.stderr.strip() or res.stdout.strip()}")
+    return target
+
+
+async def _ocr(png_path: Path) -> str:
+    """Run Apple Vision OCR locally on the captured frame. Returns the
+    recognized text, empty string if Vision saw no text."""
+    bin_path = _ocr_binary_path()
+    proc = await asyncio.create_subprocess_exec(
+        str(bin_path), str(png_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await asyncio.wait_for(proc.communicate(), timeout=15)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ocr failed: {err.decode(errors='replace').strip()}")
+    return out.decode("utf-8", errors="replace").strip()
 
 
 # ─── watcher loop ────────────────────────────────────────────────────────
@@ -171,14 +183,14 @@ async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            png_bytes, png_path = await _capture()
+            png_path, png_bytes = await _capture()
             h = hashlib.sha256(png_bytes).hexdigest()[:HASH_PREFIX_BYTES]
             if h == _last_hash:
                 png_path.unlink(missing_ok=True)
                 continue
             _last_hash = h
             try:
-                ocr_text = await _ocr(png_bytes)
+                ocr_text = await _ocr(png_path)
             except Exception as exc:  # noqa: BLE001
                 log.warning("rewind ocr failed", error=str(exc))
                 ocr_text = ""

@@ -35,3 +35,6 @@ sunday-data/
 .env
 *.key
 credentials.env
+
+# compiled Vision OCR helper (built at first use)
+bin/ocr-macos
