@@ -228,7 +228,9 @@ function bindEvents() {
 
 function selectNode(n) {
   selected = n;
-  alpha = Math.max(alpha, 0.15);
+  // Don't perturb the simulation on click — just redraw the highlight so
+  // nodes stay put. (The detail panel is an overlay, so no resize either.)
+  if (!raf) draw();
   if (!n) { els.detail.hidden = true; return; }
   els.detail.hidden = false;
   const k = KIND[n.kind] || KIND.thing;
