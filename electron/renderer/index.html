@@ -9,19 +9,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar-left">
-      <span class="brand-dot" data-state="connecting" title="connecting…"></span>
-      <span class="brand-name">Sunday</span>
-    </div>
     <nav class="tabs" id="tabs" role="tablist">
       <button class="tab active" data-view="chat" role="tab">Chat</button>
       <button class="tab" data-view="memory" role="tab">Memory</button>
       <button class="tab" data-view="rewind" role="tab">Rewind</button>
       <button class="tab" data-view="settings" role="tab">Settings</button>
     </nav>
-    <div class="topbar-right">
-      <span class="status mono" id="status" title="daemon status">connecting…</span>
-    </div>
+    <span class="status mono" id="status" title="daemon status" hidden></span>
+    <span class="brand-dot" id="conn-dot" data-state="connecting" hidden></span>
   </header>
 
   <!-- ─── CHAT ─────────────────────────────────────────────────────── -->
