@@ -64,6 +64,9 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def remove(self, name: str) -> None:
+        self._tools.pop(name, None)
+
     def names(self) -> list[str]:
         return sorted(self._tools.keys())
 
@@ -120,6 +123,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.channels.vapi",
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",
+        "sunday.integrations.google",
     ):
         try:
             mod = __import__(module_path, fromlist=["register"])

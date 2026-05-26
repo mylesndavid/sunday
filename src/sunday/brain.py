@@ -94,6 +94,7 @@ async def respond(
     runtime: Runtime | None = None,
     attachments: list[dict] | None = None,
     extras: dict | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Take a user message, drive the tool-call loop, return the final reply.
 
@@ -168,7 +169,7 @@ async def respond(
             })
 
         result = await rt.complete(
-            system_prompt=stable_prefix(),
+            system_prompt=system_prompt or stable_prefix(),
             messages=_context_messages(chat, memory_block=memory_block),
             tools_schema=tool_schema,
             on_delta=_emit_delta,
