@@ -9,82 +9,148 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
+    <div class="topbar-left">
       <span class="brand-dot" data-state="connecting" title="connecting…"></span>
       <span class="brand-name">Sunday</span>
     </div>
-    <div class="status mono" id="status">connecting…</div>
-    <div class="topbar-actions">
-      <button id="settings-btn" class="iconbtn" title="Settings (⌘,)" aria-label="Settings">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      </button>
-      <button id="admin-btn" class="iconbtn" title="System panel (⌘.)" aria-label="System panel">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h18"/></svg>
-      </button>
+    <nav class="tabs" id="tabs" role="tablist">
+      <button class="tab active" data-view="chat" role="tab">Chat</button>
+      <button class="tab" data-view="memory" role="tab">Memory</button>
+      <button class="tab" data-view="settings" role="tab">Settings</button>
+    </nav>
+    <div class="topbar-right">
+      <span class="status mono" id="status" title="daemon status">connecting…</span>
     </div>
   </header>
 
-  <aside class="panel" id="admin-panel" hidden aria-label="System panel">
-    <div class="panel-head">
-      <span class="panel-title">System</span>
-      <button id="admin-close" class="iconbtn" title="Close (esc)" aria-label="Close">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-    </div>
-    <div class="panel-body">
-      <section class="panel-sec" id="admin-daemon">
-        <h3>Daemon</h3>
-        <div class="kv mono" id="admin-daemon-grid"></div>
-      </section>
-      <section class="panel-sec" id="admin-satellites">
-        <h3>Devices <span class="pill-count" id="admin-satellites-count">—</span></h3>
-        <ul class="list" id="admin-satellites-list"><li class="empty">—</li></ul>
-      </section>
-      <section class="panel-sec" id="admin-memory">
-        <h3>Memory <span class="pill-count" id="admin-memory-count">—</span></h3>
-        <ul class="list" id="admin-memory-list"><li class="empty">—</li></ul>
-      </section>
-      <section class="panel-sec" id="admin-skills">
-        <h3>Skills <span class="pill-count" id="admin-skills-count">—</span></h3>
-        <ul class="list" id="admin-skills-list"><li class="empty">—</li></ul>
-      </section>
-      <section class="panel-sec" id="admin-activity">
-        <h3>Recent activity</h3>
-        <ul class="list" id="admin-activity-list"><li class="empty">—</li></ul>
-      </section>
-    </div>
-  </aside>
-
-  <main class="chat" id="chat" aria-live="polite" aria-label="Conversation"></main>
-
-  <button class="jump-btn" id="jump-btn" hidden title="Jump to latest" aria-label="Jump to latest">
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
-  </button>
-
-  <section class="dropzone" id="dropzone" hidden>
-    <div class="dropzone-card">
-      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
-      <span>Drop to attach</span>
+  <!-- ─── CHAT ─────────────────────────────────────────────────────── -->
+  <section class="view view-chat active" id="view-chat">
+    <div class="thread" id="chat" aria-live="polite" aria-label="Conversation"></div>
+    <button class="jump-btn" id="jump-btn" hidden title="Jump to latest" aria-label="Jump to latest">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+    </button>
+    <div class="composer-wrap">
+      <div class="attachments" id="attachments"></div>
+      <div class="composer">
+        <button id="attach-btn" class="iconbtn" title="Attach files" aria-label="Attach">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49L13.4 1.6a4 4 0 0 1 5.66 5.66L9.41 16.91a2 2 0 0 1-2.83-2.83l8.46-8.46"/></svg>
+        </button>
+        <input id="file-input" type="file" multiple hidden>
+        <textarea id="composer" rows="1" placeholder="Message Sunday…" aria-label="Message"></textarea>
+        <button id="mic-btn" class="iconbtn" title="Voice (one-shot)" aria-label="Voice">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M9 22h6"/></svg>
+        </button>
+        <button id="send-btn" class="send-btn" title="Send (↵)" aria-label="Send" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
     </div>
   </section>
 
-  <footer class="composer">
-    <div class="attachments" id="attachments"></div>
-    <div class="composer-row">
-      <button id="attach-btn" class="iconbtn" title="Attach files" aria-label="Attach files">
-        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49L13.4 1.6a4 4 0 0 1 5.66 5.66L9.41 16.91a2 2 0 0 1-2.83-2.83l8.46-8.46"/></svg>
+  <!-- ─── MEMORY ───────────────────────────────────────────────────── -->
+  <section class="view view-memory" id="view-memory">
+    <div class="mem-stage">
+      <canvas id="mem-canvas"></canvas>
+      <div class="mem-legend" id="mem-legend"></div>
+      <button class="mem-refresh" id="mem-refresh" title="Refresh map">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        <span>Refresh</span>
       </button>
-      <input id="file-input" type="file" multiple hidden>
-      <textarea id="composer" rows="1" placeholder="Message Sunday…" aria-label="Message"></textarea>
-      <button id="mic-btn" class="iconbtn" title="Voice (one-shot)" aria-label="Voice input">
-        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M9 22h6"/></svg>
-      </button>
-      <button id="send-btn" class="send-btn" title="Send (↵)" aria-label="Send" disabled>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-      </button>
+      <div class="mem-empty" id="mem-empty" hidden>
+        <div class="mem-empty-sun"></div>
+        <h2>Nothing mapped yet</h2>
+        <p>As you talk, Sunday builds a map of the people, places, and things in your life. Chat a little and check back.</p>
+      </div>
     </div>
-    <div class="composer-hint mono" id="hint"><kbd>↵</kbd> send · <kbd>⇧↵</kbd> newline · <kbd>⌘,</kbd> settings</div>
-  </footer>
+    <aside class="mem-detail" id="mem-detail" hidden>
+      <button class="mem-detail-close iconbtn" id="mem-detail-close" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+      <div class="mem-detail-head">
+        <span class="mem-chip" id="mem-detail-kind">—</span>
+        <h2 id="mem-detail-name">—</h2>
+      </div>
+      <div class="mem-detail-section">
+        <h3>What I know</h3>
+        <ul class="mem-facts" id="mem-detail-facts"></ul>
+      </div>
+      <div class="mem-detail-section">
+        <h3>Connected to</h3>
+        <ul class="mem-conns" id="mem-detail-conns"></ul>
+      </div>
+    </aside>
+  </section>
+
+  <!-- ─── SETTINGS ─────────────────────────────────────────────────── -->
+  <section class="view view-settings" id="view-settings">
+    <nav class="set-nav" id="set-nav">
+      <a data-target="sec-connection" class="active">Connection</a>
+      <a data-target="sec-model">Model</a>
+      <a data-target="sec-personality">Personality</a>
+      <a data-target="sec-screen">Screen access</a>
+      <a data-target="sec-system">System</a>
+    </nav>
+    <div class="set-stage" id="set-stage">
+      <div class="set-inner">
+        <span class="set-saved" id="set-saved" hidden>saved</span>
+
+        <section class="set-block" id="sec-connection">
+          <h2>Connection</h2>
+          <p class="set-help">Which Sunday daemon this app talks to. Change a field and save — the chat reconnects.</p>
+          <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
+          <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
+          <div class="set-actions">
+            <span class="set-verify" id="set-conn-verify"></span>
+            <button class="btn" id="set-conn-test">Test</button>
+            <button class="btn btn-primary" id="set-conn-save">Save connection</button>
+          </div>
+        </section>
+
+        <section class="set-block" id="sec-model">
+          <h2>Model</h2>
+          <p class="set-help">Sunday's brain. Any OpenRouter slug works. Takes effect on the next message.</p>
+          <label><span>Provider</span><input type="text" id="set-provider" class="field mono" disabled></label>
+          <label><span>Model</span><input type="text" id="set-model" class="field mono" placeholder="deepseek/deepseek-v4-flash"></label>
+          <div class="set-actions"><button class="btn btn-primary" id="set-model-save">Save model</button></div>
+        </section>
+
+        <section class="set-block" id="sec-personality">
+          <h2>Personality</h2>
+          <p class="set-help">How Sunday should be — read on every message. Write it in your own words; clear it to use the default.</p>
+          <textarea id="set-prompt" class="set-textarea" spellcheck="false" placeholder="Sunday's personality, in your words…"></textarea>
+          <div class="set-prompt-meta mono"><span id="set-prompt-status">—</span><span id="set-prompt-chars">0 chars</span></div>
+          <div class="set-actions">
+            <button class="btn" id="set-prompt-reset">Reset to default</button>
+            <button class="btn" id="set-prompt-show-default">Show default</button>
+            <button class="btn btn-primary" id="set-prompt-save">Save personality</button>
+          </div>
+        </section>
+
+        <section class="set-block" id="sec-screen">
+          <h2>Screen access</h2>
+          <p class="set-help">Lets Sunday read what's on your screen — captured and read on this Mac, nothing sent to the cloud. macOS asks you to allow it once; enable <strong>Sunday</strong> in the window that opens, then relaunch.</p>
+          <div class="set-actions"><span class="set-verify" id="set-screen-status"></span><button class="btn btn-primary" id="set-screen-grant">Allow screen access</button></div>
+        </section>
+
+        <section class="set-block" id="sec-system">
+          <h2>System</h2>
+          <p class="set-help">Live status of the daemon and connected devices.</p>
+          <div class="sys-grid mono" id="sys-grid"></div>
+          <h3 class="sys-sub">Devices</h3>
+          <ul class="sys-list" id="sys-devices"><li class="empty">—</li></ul>
+          <h3 class="sys-sub">Memory</h3>
+          <div class="sys-grid mono" id="sys-memory"></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section class="dropzone" id="dropzone" hidden>
+    <div class="dropzone-card">
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
+      <span>Drop to attach</span>
+    </div>
+  </section>
 
   <script type="module" src="app.js"></script>
 </body>

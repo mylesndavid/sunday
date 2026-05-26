@@ -108,6 +108,15 @@ class Daemon:
             if facts:
                 await self.memory.store_many(facts, source="auto")
                 log.info("memory extracted", new_facts=len(facts))
+                # Refresh the memory graph in the background so the map stays
+                # current without blocking the turn.
+                async def _regraph():
+                    try:
+                        from sunday import memory_graph
+                        await memory_graph.rebuild(self.config)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("memory graph refresh failed", error=str(exc))
+                asyncio.create_task(_regraph())
         except Exception as exc:  # noqa: BLE001
             log.warning("memory extraction task failed", error=str(exc))
 
@@ -286,6 +295,40 @@ class Daemon:
 
         return web.json_response({"applied": applied, "ok": True})
 
+    async def _http_memory_facts(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit", "500"))
+        except ValueError:
+            limit = 500
+        rows = self.memory.all(limit=limit) if self.memory.available else []
+        return web.json_response({
+            "available": self.memory.available,
+            "facts": [
+                {"id": r.id, "content": r.content, "source": r.source, "created_at": r.created_at}
+                for r in rows
+            ],
+        })
+
+    async def _http_memory_graph(self, request: web.Request) -> web.Response:
+        from sunday import memory_graph
+        try:
+            # Build lazily if facts exist but the graph hasn't been built yet.
+            if memory_graph.needs_rebuild():
+                await memory_graph.rebuild(self.config)
+            return web.json_response(memory_graph.graph())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("memory graph read failed", error=str(exc))
+            return web.json_response({"nodes": [], "links": [], "error": str(exc)})
+
+    async def _http_memory_graph_rebuild(self, request: web.Request) -> web.Response:
+        from sunday import memory_graph
+        try:
+            data = await memory_graph.rebuild(self.config, force=True)
+            return web.json_response(data)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("memory graph rebuild failed")
+            return web.json_response({"error": str(exc)}, status=500)
+
     async def _http_health(self, request: web.Request) -> web.Response:
         """Rich health snapshot for admin UIs — daemon stats, satellites,
         memory growth, skills, recent tool activity."""
@@ -394,6 +437,9 @@ class Daemon:
         app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/config", self._http_get_config)
         app.router.add_post("/v1/config", self._http_post_config)
+        app.router.add_get("/v1/memory/facts", self._http_memory_facts)
+        app.router.add_get("/v1/memory/graph", self._http_memory_graph)
+        app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)

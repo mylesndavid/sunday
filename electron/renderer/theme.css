@@ -1,188 +1,137 @@
-/* Sunday — design system.
+/* Sunday — light design system.
  *
- * One source of truth for color, type, spacing, motion, and the shared
- * primitives (buttons, inputs, focus, scrollbars). Every window links this
- * first, then its page-specific sheet. Palette: "Golden Hour" — warm
- * near-black neutrals on a single hue, one saffron-amber accent, one muted
- * teal reserved for machine/tool output. No second loud accent, no AI
- * gradient.
+ * Warm paper light mode. One window, three tabs. Single amber accent on a
+ * warm-neutral base; classic message-bubble layout. Tokens here; each view
+ * styles itself in styles.css.
  */
 
 :root {
-  /* ── warm neutral ramp (hue ≈ 35°, low chroma) ── */
-  --bg:          #15120e;
-  --bg-deep:     #100d0a;   /* recessed wells */
-  --surface-1:   #1c1813;
-  --surface-2:   #241f18;
-  --surface-3:   #2d2720;
-  --line:        #322b22;
-  --line-soft:   #241f18;
+  /* warm paper neutrals */
+  --bg:          #fbfaf7;
+  --bg-2:        #f4f2ec;
+  --surface:     #ffffff;
+  --surface-2:   #f3f1ea;
+  --surface-3:   #ebe8df;
+  --line:        #e6e2d8;
+  --line-strong: #d8d3c6;
 
-  /* ── text ── */
-  --text:        #f4eee3;
-  --text-2:      #b6aea0;
-  --text-3:      #847c6e;
+  /* warm ink */
+  --text:        #211d16;
+  --text-2:      #6c6557;
+  --text-3:      #9a9384;
+  --text-on-accent: #2a1d08;
 
-  /* ── accent: the sun (single dominant accent) ── */
-  --accent:      #e9a23b;
-  --accent-hi:   #f6b855;
-  --accent-press:#d08f2e;
-  --accent-soft: rgba(233, 162, 59, 0.14);
-  --accent-line: rgba(233, 162, 59, 0.34);
-  --on-accent:   #1a140b;
+  /* accent: amber (the sun) */
+  --accent:      #e8932e;
+  --accent-hi:   #f2a644;
+  --accent-press:#cf7f1f;
+  --accent-tint: #fbeed7;
+  --accent-line: #f0cf95;
 
-  /* ── functional / role colors ── */
-  --sunday:      #ece4d6;
-  --tool:        #8fb3ad;   /* muted teal — machine output only */
-  --tool-soft:   rgba(143, 179, 173, 0.10);
-  --tool-line:   rgba(143, 179, 173, 0.24);
-  --ok:          #93c9a1;
-  --warn:        #e0a45c;
-  --error:       #e08a6e;
-  --error-soft:  rgba(224, 138, 110, 0.12);
+  /* sent bubble: warm amber, dark ink for contrast */
+  --bubble-out:      #f6b44d;
+  --bubble-out-hi:   #f7bd63;
+  --bubble-out-text: #3a2806;
+  /* received bubble: warm gray */
+  --bubble-in:       #ececE6;
+  --bubble-in-text:  #211d16;
 
-  /* ── radii ── */
+  /* functional */
+  --ok:     #3f9a5c;
+  --ok-tint:#e6f3ea;
+  --warn:   #c47f22;
+  --error:  #c4503a;
+  --error-tint: #f7e7e2;
+
+  /* graph category colors (warm-leaning, distinct) */
+  --g-person: #e8932e;
+  --g-pet:    #d9694a;
+  --g-place:  #4f9d8c;
+  --g-org:    #5b7fc4;
+  --g-project:#8a6fc0;
+  --g-thing:  #b08a4e;
+  --g-event:  #c95e8e;
+  --g-topic:  #7a8a52;
+
   --r-sm: 8px;
   --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 22px;
+  --r-lg: 18px;
   --r-pill: 999px;
 
-  /* ── elevation (warm-tinted shadows, single light source from above) ── */
-  --shadow-1: 0 1px 2px rgba(10, 7, 4, 0.4);
-  --shadow-2: 0 6px 20px rgba(10, 7, 4, 0.45);
-  --shadow-3: 0 18px 48px rgba(8, 5, 3, 0.55);
+  --shadow-1: 0 1px 2px rgba(60, 48, 28, 0.06);
+  --shadow-2: 0 4px 16px rgba(60, 48, 28, 0.10);
+  --shadow-3: 0 14px 40px rgba(50, 40, 22, 0.16);
 
-  /* ── motion ── */
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --t-fast: 120ms;
   --t-mid: 200ms;
   --t-slow: 320ms;
 
-  /* ── type ── */
   --font-sans: -apple-system, "SF Pro Text", "SF Pro Display", system-ui, "Helvetica Neue", sans-serif;
-  --font-mono: "SF Mono", "Geist Mono", ui-monospace, "JetBrains Mono", monospace;
+  --font-mono: "SF Mono", ui-monospace, "Geist Mono", monospace;
 
-  /* ── z-scale ── */
-  --z-panel: 50;
-  --z-overlay: 80;
-  --z-toast: 100;
+  --topbar-h: 52px;
 }
 
 * { box-sizing: border-box; }
-
-html, body {
-  margin: 0;
-  height: 100%;
-  background: var(--bg);
-  color: var(--text);
-}
-
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 body {
-  font: 400 15px/1.55 var(--font-sans);
+  font: 400 15px/1.5 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  overflow: hidden;
 }
-
-/* tabular figures everywhere numbers matter (timestamps, stats, counts) */
 .mono, .tnum { font-variant-numeric: tabular-nums; }
 
-/* ── focus: a single, visible, accessible ring ── */
 :focus { outline: none; }
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
-/* ── scrollbars (warm, slim, consistent) ── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb {
-  background: var(--surface-3);
-  border-radius: var(--r-pill);
-  border: 3px solid transparent;
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover { background: #3a342b; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: var(--r-pill); border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #c7c1b2; background-clip: padding-box; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ── shared button system ─────────────────────────────────────────────── */
-.btn {
-  -webkit-app-region: no-drag;
-  appearance: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  font: 500 13px/1 var(--font-sans);
-  letter-spacing: 0.01em;
-  padding: 9px 14px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease);
-}
-.btn:active { transform: translateY(1px) scale(0.99); }
-.btn:disabled { cursor: default; opacity: 0.5; transform: none; }
-
-.btn-primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
-}
-.btn-primary:hover:not(:disabled) { background: var(--accent-hi); }
-.btn-primary:active:not(:disabled) { background: var(--accent-press); }
-
-.btn-ghost {
-  background: var(--surface-2);
-  color: var(--text);
-  border-color: var(--line);
-}
-.btn-ghost:hover:not(:disabled) { background: var(--surface-3); border-color: #3c352b; }
-
-.btn-quiet {
-  background: transparent;
-  color: var(--text-2);
-}
-.btn-quiet:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
-
-/* round icon button */
+/* shared icon button */
 .iconbtn {
   -webkit-app-region: no-drag;
-  appearance: none;
-  background: transparent;
-  border: 0;
+  appearance: none; background: transparent; border: 0;
   color: var(--text-2);
-  width: 34px; height: 34px;
-  border-radius: var(--r-sm);
+  width: 32px; height: 32px; border-radius: var(--r-sm);
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer;
   transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
 }
 .iconbtn:hover { background: var(--surface-2); color: var(--text); }
 .iconbtn:active { transform: scale(0.92); }
-.iconbtn[data-active="true"] { background: var(--accent-soft); color: var(--accent); }
+.iconbtn[data-active="true"] { background: var(--accent-tint); color: var(--accent-press); }
 
-/* ── shared input ── */
-.field {
-  width: 100%;
-  background: var(--bg-deep);
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: 400 14px/1.4 var(--font-sans);
-  padding: 11px 13px;
-  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+/* shared buttons */
+.btn {
+  -webkit-app-region: no-drag; appearance: none;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--text); border-radius: var(--r-md);
+  font: 500 13px/1 var(--font-sans); padding: 9px 15px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
 }
-.field:hover { border-color: #3c352b; }
-.field:focus-visible { outline: none; border-color: var(--accent-line); background: var(--bg); }
+.btn:hover:not(:disabled) { background: var(--surface-2); }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn-primary { background: var(--accent); border-color: transparent; color: var(--text-on-accent); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hi); }
+.btn-primary:active:not(:disabled) { background: var(--accent-press); }
+
+/* shared input */
+.field {
+  width: 100%; background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); color: var(--text);
+  font: 400 14px/1.4 var(--font-sans); padding: 11px 13px;
+  transition: border-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+}
 .field::placeholder { color: var(--text-3); }
+.field:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-tint); }
 .field.mono { font-family: var(--font-mono); font-size: 13px; }
-.field:disabled { color: var(--text-3); background: var(--surface-1); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

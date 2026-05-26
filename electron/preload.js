@@ -17,4 +17,7 @@ contextBridge.exposeInMainWorld('sunday', {
   onOpenAdmin: (handler) => {
     ipcRenderer.on('sunday:open-admin', () => handler());
   },
+  onSwitchView: (handler) => {
+    ipcRenderer.on('sunday:switch-view', (_evt, name) => handler(name));
+  },
 });

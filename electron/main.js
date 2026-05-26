@@ -43,7 +43,6 @@ function resolveDaemon() {
 let mainWindow = null;
 let overlayWindow = null;
 let onboardingWindow = null;
-let settingsWindow = null;
 let tray = null;
 
 function createMainWindow() {
@@ -52,7 +51,7 @@ function createMainWindow() {
     height: 720,
     minWidth: 540,
     minHeight: 480,
-    backgroundColor: '#0f0e0d',
+    backgroundColor: '#fbfaf7',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
@@ -121,9 +120,17 @@ ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs }) => {
 });
 
 ipcMain.handle('sunday:open-settings', () => {
-  createSettingsWindow();
+  switchToView('settings');
   return true;
 });
+
+// Settings, Memory, and Chat are tabs in the one window now — focus it and
+// tell the renderer which tab to show.
+function switchToView(name) {
+  if (!mainWindow) createMainWindow();
+  else { mainWindow.show(); mainWindow.focus(); }
+  setTimeout(() => mainWindow?.webContents.send('sunday:switch-view', name), 120);
+}
 
 // Check whether the satellite would be able to read iMessage history.
 // We can't ask macOS directly — instead probe a path that requires Full
@@ -175,38 +182,13 @@ ipcMain.on('sunday:overlay-state', (_evt, state) => {
   }
 });
 
-function createSettingsWindow() {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.focus();
-    return;
-  }
-  settingsWindow = new BrowserWindow({
-    width: 860,
-    height: 720,
-    minWidth: 600,
-    minHeight: 540,
-    backgroundColor: '#0f0e0d',
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 14 },
-    resizable: true,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
-  settingsWindow.on('closed', () => { settingsWindow = null; });
-}
-
 function createOnboardingWindow() {
   onboardingWindow = new BrowserWindow({
     width: 720,
     height: 620,
     minWidth: 540,
     minHeight: 480,
-    backgroundColor: '#0f0e0d',
+    backgroundColor: '#fbfaf7',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     resizable: true,
@@ -252,17 +234,9 @@ function rebuildTrayMenu() {
   const menu = Menu.buildFromTemplate([
     { label: `Sunday — ${prefs.label || daemonHttp}`, enabled: false },
     { type: 'separator' },
-    { label: 'Open chat',  click: () => {
-        if (!mainWindow) createMainWindow();
-        else { mainWindow.show(); mainWindow.focus(); }
-    }},
-    { label: 'Admin console',  click: () => {
-        if (!mainWindow) createMainWindow();
-        else { mainWindow.show(); mainWindow.focus(); }
-        // mainWindow renderer handles ⌘. — send a message to open the panel
-        setTimeout(() => mainWindow?.webContents.send('sunday:open-admin'), 200);
-    }},
-    { label: 'Settings…',       accelerator: 'Command+,', click: () => createSettingsWindow() },
+    { label: 'Chat',     accelerator: 'Command+1', click: () => switchToView('chat') },
+    { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
+    { label: 'Settings…', accelerator: 'Command+,', click: () => switchToView('settings') },
     { type: 'separator' },
     { label: 'Reconfigure (re-run onboarding)…', click: () => {
         savePrefs({ onboarded: false });
