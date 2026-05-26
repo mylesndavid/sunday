@@ -50,6 +50,15 @@ def connection_id() -> str:
     return get_credential("NANGO_CONNECTION_ID") or "sunday"
 
 
+def public_url() -> str | None:
+    u = get_credential("NANGO_PUBLIC_URL")
+    return u.rstrip("/") if u else None
+
+
+def public_key() -> str | None:
+    return get_credential("NANGO_PUBLIC_KEY")
+
+
 def configured() -> bool:
     return bool(host() and secret())
 
@@ -101,9 +110,15 @@ async def create_connect_session(provider: str, end_user: dict | None = None) ->
     if res.status_code >= 400:
         return {"error": f"nango connect session failed ({res.status_code}): {res.text[:200]}"}
     token = (res.json().get("data") or {}).get("token")
-    # Self-hosted Connect UI is served by the Nango instance; the SDK opens
-    # it with the session token. We expose both so the app can pick.
-    return {"token": token, "provider_config_key": key}
+    out = {"token": token, "provider_config_key": key}
+    # Reliable no-SDK path: the OAuth-connect URL the user opens in a
+    # browser. Nango runs the consent + handles the callback.
+    if public_url() and public_key():
+        out["connect_url"] = (
+            f"{public_url()}/oauth/connect/{key}"
+            f"?connection_id={connection_id()}&public_key={public_key()}"
+        )
+    return out
 
 
 async def proxy(

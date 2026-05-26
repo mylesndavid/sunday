@@ -111,6 +111,7 @@
     <nav class="set-nav" id="set-nav">
       <a data-target="sec-connection" class="active">Connection</a>
       <a data-target="sec-model">Model</a>
+      <a data-target="sec-connections">Connections</a>
       <a data-target="sec-personality">Personality</a>
       <a data-target="sec-screen">Screen access</a>
       <a data-target="sec-system">System</a>
@@ -145,6 +146,12 @@
             <span class="set-verify" id="set-model-note"></span>
             <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
           </div>
+        </section>
+
+        <section class="set-block" id="sec-connections">
+          <h2>Connections</h2>
+          <p class="set-help">Let Sunday work with your accounts. Click Connect, approve in your browser, and the matching tools (email, calendar) turn on. <span id="conn-unconfigured" hidden>Integrations aren't set up on your server yet — see setup notes.</span></p>
+          <ul class="conn-list" id="conn-list"><li class="conn-loading">loading…</li></ul>
         </section>
 
         <section class="set-block" id="sec-personality">

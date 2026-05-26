@@ -321,6 +321,15 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .set-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 16px; }
 .set-verify { font: 12px/1.4 var(--font-mono); color: var(--text-3); flex: 1; text-align: left; }
 .set-verify[data-state="ok"] { color: var(--ok); } .set-verify[data-state="fail"] { color: var(--error); }
+.conn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.conn-loading { color: var(--text-3); font-size: 13px; }
+.conn-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
+.conn-ico { width: 32px; height: 32px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.conn-name { font-weight: 600; font-size: 14px; flex: 1; }
+.conn-on { font: 600 10.5px/1 var(--font-sans); letter-spacing: 0.03em; text-transform: uppercase; color: var(--ok); background: var(--ok-tint); padding: 5px 10px; border-radius: var(--r-pill); }
+.conn-connect { padding: 7px 16px; }
+#conn-unconfigured { color: var(--warn); }
+
 .sys-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; font-size: 13px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
 .sys-grid .k { color: var(--text-3); } .sys-grid .v { color: var(--text); word-break: break-all; }
 .sys-sub { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 20px 0 10px; }

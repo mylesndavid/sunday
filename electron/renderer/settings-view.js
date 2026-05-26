@@ -48,6 +48,66 @@ export async function loadAll() {
     flashError(`couldn't load: ${err.message}`);
   }
   refreshSystem();
+  loadConnections();
+}
+
+const CONN_ICON = {
+  gmail: '<path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="m3 7 9 6 9-6"/>',
+  calendar: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+  slack: '<path d="M9 12a2 2 0 1 1-2-2h2zM12 9a2 2 0 1 1 2-2v2zM15 12a2 2 0 1 1 2 2h-2zM12 15a2 2 0 1 1-2 2v-2z"/>',
+};
+
+async function loadConnections() {
+  const ul = document.querySelector('#conn-list');
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/integrations`);
+    const d = await res.json();
+    document.querySelector('#conn-unconfigured').hidden = !!d.configured;
+    ul.innerHTML = (d.providers || []).map((p) => `
+      <li class="conn-row" data-id="${p.id}">
+        <span class="conn-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${CONN_ICON[p.id] || ''}</svg></span>
+        <span class="conn-name">${esc(p.label)}</span>
+        ${p.connected
+          ? '<span class="conn-on">connected</span>'
+          : `<button class="btn conn-connect" data-id="${p.id}" ${d.configured ? '' : 'disabled'}>Connect</button>`}
+      </li>`).join('');
+    ul.querySelectorAll('.conn-connect').forEach((b) => b.addEventListener('click', () => connectProvider(b.dataset.id, b)));
+  } catch {
+    ul.innerHTML = '<li class="conn-loading">couldn\'t reach the daemon</li>';
+  }
+}
+
+async function connectProvider(provider, btn) {
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'opening…';
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
+    const d = await res.json();
+    if (d.connect_url) {
+      await window.sunday.openExternal(d.connect_url);
+      btn.textContent = 'approve in browser…';
+      // poll for the connection landing
+      pollConnected(provider, 0);
+    } else {
+      btn.textContent = orig; btn.disabled = false;
+      flashError(d.error ? friendlyConn(d.error) : 'couldn\'t start the connect flow');
+    }
+  } catch (err) { btn.textContent = orig; btn.disabled = false; flashError(err.message); }
+}
+
+function friendlyConn(e) {
+  if (/integration does not exist/i.test(e)) return 'That service isn\'t set up on your Nango server yet (see setup notes).';
+  return e;
+}
+
+function pollConnected(provider, n) {
+  if (n > 40) { loadConnections(); return; }
+  setTimeout(async () => {
+    try {
+      const d = await (await fetch(`${DAEMON_HTTP}/v1/integrations`)).json();
+      if ((d.providers || []).find((p) => p.id === provider && p.connected)) { loadConnections(); flashSaved(); }
+      else pollConnected(provider, n + 1);
+    } catch { pollConnected(provider, n + 1); }
+  }, 1500);
 }
 
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
