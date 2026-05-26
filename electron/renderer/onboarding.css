@@ -3,25 +3,19 @@
  * Single page, four steps swapped via [hidden].
  */
 
+/* Palette aliases onto the shared design system (theme.css, linked first). */
 :root {
-  --bg:          #0f0e0d;
-  --bg-soft:     #181715;
-  --bg-soft-2:   #221f1c;
-  --line:        #2a2724;
-  --text:        #f1ece4;
-  --text-dim:    #a39d92;
-  --text-faint:  #6e6a62;
-  --user:        #f3c969;
-  --user-fade:   #f3c96922;
-  --error:       #d77a6a;
-  --ok:          #84d18b;
-  --radius:      14px;
+  --bg-soft:    var(--surface-1);
+  --bg-soft-2:  var(--surface-2);
+  --text-dim:   var(--text-2);
+  --text-faint: var(--text-3);
+  --user:       var(--accent);
+  --user-fade:  var(--accent-soft);
+  --radius:     var(--r-lg);
 }
 
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 body {
-  font: 15px/1.6 system-ui, -apple-system, "SF Pro Text", "Inter", sans-serif;
+  font: 15px/1.6 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   display: flex;
   flex-direction: column;
@@ -240,10 +234,11 @@ kbd {
 .onb-btn:hover { border-color: var(--text-faint); background: var(--bg-soft); }
 .onb-btn.primary {
   background: var(--user);
-  color: #1a1612;
+  color: var(--on-accent);
   border-color: var(--user);
 }
-.onb-btn.primary:hover { background: #ffd982; border-color: #ffd982; }
+.onb-btn.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
+.onb-btn:active { transform: translateY(1px) scale(0.99); }
 .onb-btn.primary:disabled {
   background: var(--bg-soft-2);
   color: var(--text-faint);

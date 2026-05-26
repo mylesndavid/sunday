@@ -2,96 +2,118 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sunday — settings</title>
+  <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
   <header class="set-topbar">
-    <span class="set-title">Sunday — settings</span>
+    <span class="set-title">Settings</span>
     <span class="set-saved" id="set-saved" hidden>saved</span>
   </header>
 
-  <main class="set-stage">
+  <div class="set-shell">
+    <nav class="set-nav" id="set-nav">
+      <a data-target="sec-connection" class="active">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M2 8.82a15 15 0 0 1 20 0"/><circle cx="12" cy="20" r="0.5" fill="currentColor"/></svg>
+        Connection
+      </a>
+      <a data-target="sec-model">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M5 5l2 2M17 17l2 2M2 12h3M19 12h3M5 19l2-2M17 7l2-2"/></svg>
+        Model
+      </a>
+      <a data-target="sec-personality">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Personality
+      </a>
+      <a data-target="sec-screen">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        Screen access
+      </a>
+      <a data-target="sec-memory">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3 3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3 3 3 0 0 0 6 0 3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3 3 3 0 0 0-3-3Z"/></svg>
+        Memory
+      </a>
+    </nav>
 
-    <!-- Connection -->
-    <section class="set-block">
-      <h2>Connection</h2>
-      <p class="set-help">Which Sunday daemon this app talks to. Change either and click Save Connection — the chat window reloads.</p>
-      <label>
-        <span>HTTP URL</span>
-        <input type="text" id="set-http" placeholder="https://sunday.example.com" class="set-input mono">
-      </label>
-      <label>
-        <span>WebSocket URL</span>
-        <input type="text" id="set-ws" placeholder="wss://sunday.example.com/v1/ws" class="set-input mono">
-      </label>
-      <div class="set-actions">
-        <span class="set-verify" id="set-conn-verify"></span>
-        <button class="set-btn ghost" id="set-conn-test">Test</button>
-        <button class="set-btn primary" id="set-conn-save">Save Connection</button>
-      </div>
-    </section>
+    <main class="set-stage" id="set-stage">
+      <div class="set-stage-inner">
 
-    <!-- Model -->
-    <section class="set-block">
-      <h2>Model</h2>
-      <p class="set-help">Sunday's brain. Any OpenRouter slug works (or the matching slug for your configured provider). Takes effect on the next turn.</p>
-      <label>
-        <span>Provider</span>
-        <input type="text" id="set-provider" class="set-input mono" disabled>
-      </label>
-      <label>
-        <span>Model</span>
-        <input type="text" id="set-model" class="set-input mono" placeholder="deepseek/deepseek-v4-flash">
-      </label>
-      <div class="set-actions">
-        <button class="set-btn primary" id="set-model-save">Save Model</button>
-      </div>
-    </section>
+        <section class="set-block" id="sec-connection">
+          <h2><span class="h2-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M2 8.82a15 15 0 0 1 20 0"/><circle cx="12" cy="20" r="0.5" fill="currentColor"/></svg></span>Connection</h2>
+          <p class="set-help">Which Sunday daemon this app talks to. Change either field and click Save — the chat window reloads against the new endpoint.</p>
+          <label>
+            <span>HTTP URL</span>
+            <input type="text" id="set-http" placeholder="https://sunday.example.com" class="set-input mono">
+          </label>
+          <label>
+            <span>WebSocket URL</span>
+            <input type="text" id="set-ws" placeholder="wss://sunday.example.com/v1/ws" class="set-input mono">
+          </label>
+          <div class="set-actions">
+            <span class="set-verify" id="set-conn-verify"></span>
+            <button class="set-btn ghost" id="set-conn-test">Test</button>
+            <button class="set-btn primary" id="set-conn-save">Save connection</button>
+          </div>
+        </section>
 
-    <!-- Personality -->
-    <section class="set-block">
-      <h2>Personality</h2>
-      <p class="set-help">
-        Sunday's identity prompt — read by the brain on every turn. Edit freely. Empty = reset to default.
-      </p>
-      <textarea id="set-prompt" class="set-textarea" spellcheck="false" placeholder="Sunday's identity, in your words…"></textarea>
-      <div class="set-prompt-meta">
-        <span id="set-prompt-status">—</span>
-        <span id="set-prompt-chars">0 chars</span>
-      </div>
-      <div class="set-actions">
-        <button class="set-btn ghost" id="set-prompt-reset">Reset to default</button>
-        <button class="set-btn ghost" id="set-prompt-show-default">Show default</button>
-        <button class="set-btn primary" id="set-prompt-save">Save Personality</button>
-      </div>
-    </section>
+        <section class="set-block" id="sec-model">
+          <h2><span class="h2-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M5 5l2 2M17 17l2 2M2 12h3M19 12h3M5 19l2-2M17 7l2-2"/></svg></span>Model</h2>
+          <p class="set-help">Sunday's brain. Any OpenRouter slug works (or the matching slug for your configured provider). Takes effect on the next turn.</p>
+          <label>
+            <span>Provider</span>
+            <input type="text" id="set-provider" class="set-input mono" disabled>
+          </label>
+          <label>
+            <span>Model</span>
+            <input type="text" id="set-model" class="set-input mono" placeholder="deepseek/deepseek-v4-flash">
+          </label>
+          <div class="set-actions">
+            <button class="set-btn primary" id="set-model-save">Save model</button>
+          </div>
+        </section>
 
-    <!-- Permissions -->
-    <section class="set-block">
-      <h2>Screen access</h2>
-      <p class="set-help">
-        Lets Sunday read what's on your screen (captured + OCR'd locally, on-device — no cloud, no cost).
-        macOS requires you to grant <strong>Screen Recording</strong> to Sunday once. Click below, then
-        enable <strong>Sunday</strong> in the list that opens.
-      </p>
-      <div class="set-actions">
-        <span class="set-verify" id="set-screen-status"></span>
-        <button class="set-btn primary" id="set-screen-grant">Grant Screen Recording</button>
-      </div>
-    </section>
+        <section class="set-block" id="sec-personality">
+          <h2><span class="h2-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>Personality</h2>
+          <p class="set-help">Sunday's identity prompt — read by the brain on every turn. Write it in your own words. Clear it to fall back to the default.</p>
+          <textarea id="set-prompt" class="set-textarea" spellcheck="false" placeholder="Sunday's identity, in your words…"></textarea>
+          <div class="set-prompt-meta">
+            <span id="set-prompt-status">—</span>
+            <span id="set-prompt-chars">0 chars</span>
+          </div>
+          <div class="set-actions">
+            <button class="set-btn ghost" id="set-prompt-reset">Reset to default</button>
+            <button class="set-btn ghost" id="set-prompt-show-default">Show default</button>
+            <button class="set-btn primary" id="set-prompt-save">Save personality</button>
+          </div>
+        </section>
 
-    <!-- Memory -->
-    <section class="set-block">
-      <h2>Memory</h2>
-      <p class="set-help">Auto-extracted facts about you, stored at <code>~/.sunday/memories.db</code>. Read-only here; manage via the admin panel or the <code>remember</code>/<code>forget</code> tools.</p>
-      <div class="set-stat">
-        <span class="k">Available</span><span class="v" id="set-mem-avail">—</span>
-        <span class="k">Stored facts</span><span class="v" id="set-mem-count">—</span>
-      </div>
-    </section>
+        <section class="set-block" id="sec-screen">
+          <h2><span class="h2-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>Screen access</h2>
+          <p class="set-help">
+            Lets Sunday read what's on your screen — captured and OCR'd locally on this Mac, no cloud and no cost.
+            macOS asks you to grant <strong>Screen Recording</strong> to Sunday once. Click below, enable
+            <strong>Sunday</strong> in the list that opens, then relaunch the app.
+          </p>
+          <div class="set-actions">
+            <span class="set-verify" id="set-screen-status"></span>
+            <button class="set-btn primary" id="set-screen-grant">Grant Screen Recording</button>
+          </div>
+        </section>
 
-  </main>
+        <section class="set-block" id="sec-memory">
+          <h2><span class="h2-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3 3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3 3 3 0 0 0 6 0 3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3 3 3 0 0 0-3-3Z"/></svg></span>Memory</h2>
+          <p class="set-help">Durable facts Sunday has learned about you, stored at <code>~/.sunday/memories.db</code>. Manage them via the system panel or the <code>remember</code> / <code>forget</code> tools in chat.</p>
+          <div class="set-stat">
+            <span class="k">Available</span><span class="v" id="set-mem-avail">—</span>
+            <span class="k">Stored facts</span><span class="v" id="set-mem-count">—</span>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
 
   <script src="settings.js"></script>
 </body>

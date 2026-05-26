@@ -152,19 +152,43 @@ $('#set-prompt-save').addEventListener('click', async () => {
 
 $('#set-screen-grant').addEventListener('click', async () => {
   const status = $('#set-screen-status');
+  status.dataset.state = '';
   status.textContent = 'requesting…';
   try {
     const r = await window.sunday.requestScreen();
     if (r.status === 'granted') {
+      status.dataset.state = 'ok';
       status.textContent = '✓ already granted';
     } else if (r.status === 'prompted') {
-      status.textContent = 'enable “Sunday” in the window that opened, then restart Sunday';
+      status.textContent = 'enable “Sunday” in the window that opened, then relaunch';
     } else {
+      status.dataset.state = 'fail';
       status.textContent = `error: ${r.error || 'unknown'}`;
     }
   } catch (err) {
+    status.dataset.state = 'fail';
     status.textContent = `error: ${err.message}`;
   }
 });
+
+// ─── section nav (anchored scroll + active-on-scroll highlight) ──────────
+const navLinks = Array.from(document.querySelectorAll('.set-nav a'));
+const stage = $('#set-stage');
+navLinks.forEach((a) => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById(a.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+});
+const navByTarget = new Map(navLinks.map((a) => [a.dataset.target, a]));
+const observer = new IntersectionObserver((entries) => {
+  // pick the entry nearest the top that's intersecting
+  const visible = entries.filter((en) => en.isIntersecting)
+    .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+  if (!visible.length) return;
+  const id = visible[0].target.id;
+  navLinks.forEach((a) => a.classList.toggle('active', a.dataset.target === id));
+}, { root: stage, rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+document.querySelectorAll('.set-block').forEach((sec) => observer.observe(sec));
 
 loadAll();
