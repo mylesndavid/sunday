@@ -192,6 +192,22 @@ ipcMain.handle('sunday:rewind-image', async (_evt, p) => {
   }
 });
 
+// Prompt for / open the macOS Accessibility grant so Sunday can control
+// other apps. isTrustedAccessibilityClient(true) adds Sunday to the list
+// and prompts; the satellite (a child of Sunday) inherits the grant.
+ipcMain.handle('sunday:request-control', async () => {
+  try {
+    let trusted = false;
+    if (systemPreferences.isTrustedAccessibilityClient) {
+      trusted = systemPreferences.isTrustedAccessibilityClient(true);
+    }
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+    return { status: trusted ? 'granted' : 'prompted' };
+  } catch (err) {
+    return { status: 'error', error: String(err) };
+  }
+});
+
 ipcMain.handle('sunday:open-external', (_evt, url) => {
   try { shell.openExternal(String(url)); return true; } catch { return false; }
 });
