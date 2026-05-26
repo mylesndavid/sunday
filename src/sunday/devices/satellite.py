@@ -82,7 +82,15 @@ async def _h_screenshot(params: dict[str, Any]) -> dict[str, Any]:
     )
     _out, err = await proc.communicate()
     if proc.returncode != 0:
-        return {"error": err.decode("utf-8", errors="replace").strip() or "screencapture failed"}
+        raw = err.decode("utf-8", errors="replace").strip()
+        if "could not create image" in raw.lower() or not raw:
+            return {"error": (
+                "SCREEN_RECORDING_DENIED: macOS hasn't granted Screen Recording "
+                "permission to the Sunday satellite. Open System Settings → Privacy "
+                "& Security → Screen Recording, enable Sunday (or the satellite), then "
+                "restart it. This is not a problem you can retry around."
+            )}
+        return {"error": raw or "screencapture failed"}
     data = out.read_bytes()
     out.unlink(missing_ok=True)
     return {"image_b64": base64.b64encode(data).decode("ascii"), "mime": "image/png"}

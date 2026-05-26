@@ -32,6 +32,30 @@ def _devices_manager(ctx: ToolContext):
     return mgr
 
 
+def _resolve_device(ctx: ToolContext, explicit: str | None = None, capability: str | None = None) -> tuple[str | None, str | None]:
+    """Pick the device a tool should target. With an explicit id, validate
+    it's connected. Otherwise auto-select the connected device (optionally
+    one advertising `capability`). Returns (device_id, error). This is why
+    "show me my screen" works without the model first calling device_list
+    and threading an id through — there's almost always exactly one Mac."""
+    mgr = _devices_manager(ctx)
+    devices = mgr.list_devices()
+    if explicit:
+        if any(d["device_id"] == explicit for d in devices):
+            return explicit, None
+        ids = [d["device_id"] for d in devices]
+        return None, f"no connected device '{explicit}'. Connected: {ids or 'none'}"
+    if capability:
+        devices = [d for d in devices if capability in (d.get("capabilities") or [])]
+    if not devices:
+        what = f" advertising '{capability}'" if capability else ""
+        return None, (
+            f"no connected device{what}. Open the Sunday app on your Mac "
+            "(or start the satellite) so it shows up in device_list."
+        )
+    return devices[0]["device_id"], None
+
+
 def _save_image_b64(image_b64: str, label: str) -> Attachment:
     data = base64.b64decode(image_b64)
     path = attachments_dir() / f"{label}-{uuid.uuid4().hex[:8]}.png"
@@ -47,7 +71,10 @@ async def _t_device_list(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 _DEVICE_ID_PARAM = {
-    "device_id": {"type": "string", "description": "Identifier from device_list."},
+    "device_id": {
+        "type": "string",
+        "description": "Optional. Identifier from device_list. Omit to use the connected device automatically.",
+    },
 }
 
 
@@ -59,15 +86,17 @@ _RUN_COMMAND_PARAMS = {
         "cwd": {"type": "string", "description": "Working directory (optional)."},
         "timeout": {"type": "number", "description": "Per-command timeout in seconds (default 60)."},
     },
-    "required": ["device_id", "command"],
+    "required": ["command"],
 }
 
 
 async def _t_device_run_command(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
     command = args.get("command")
-    if not device_id or not command:
-        return {"error": "'device_id' and 'command' are required"}
+    if not command:
+        return {"error": "'command' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="shell")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id),
@@ -86,14 +115,13 @@ async def _t_device_run_command(args: dict[str, Any], ctx: ToolContext) -> Any:
 _SCREENSHOT_PARAMS = {
     "type": "object",
     "properties": {**_DEVICE_ID_PARAM},
-    "required": ["device_id"],
 }
 
 
 async def _t_device_screenshot(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
-    if not device_id:
-        return {"error": "'device_id' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="screen")
+    if err:
+        return {"error": err}
     try:
         result = await _devices_manager(ctx).command(str(device_id), "screenshot", {})
     except RuntimeError as exc:
@@ -124,7 +152,6 @@ _CDP_LAUNCH_PARAMS = {
         "profile_id": {"type": "string", "description": "Isolated shadow-profile name (defaults to 'default')."},
         "browser_path": {"type": "string", "description": "Override path to a Chromium/Electron binary."},
     },
-    "required": ["device_id"],
 }
 
 _CDP_NAVIGATE_PARAMS = {
@@ -134,7 +161,7 @@ _CDP_NAVIGATE_PARAMS = {
         "url": {"type": "string"},
         "profile_id": {"type": "string"},
     },
-    "required": ["device_id", "url"],
+    "required": ["url"],
 }
 
 _CDP_SCREENSHOT_PARAMS = {
@@ -143,7 +170,6 @@ _CDP_SCREENSHOT_PARAMS = {
         **_DEVICE_ID_PARAM,
         "profile_id": {"type": "string"},
     },
-    "required": ["device_id"],
 }
 
 _CDP_EVAL_PARAMS = {
@@ -153,14 +179,14 @@ _CDP_EVAL_PARAMS = {
         "expression": {"type": "string", "description": "JavaScript expression to evaluate in the page."},
         "profile_id": {"type": "string"},
     },
-    "required": ["device_id", "expression"],
+    "required": ["expression"],
 }
 
 
 async def _t_cdp_launch(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
-    if not device_id:
-        return {"error": "'device_id' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id),
@@ -177,10 +203,12 @@ async def _t_cdp_launch(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 async def _t_cdp_navigate(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
     url = args.get("url")
-    if not device_id or not url:
-        return {"error": "'device_id' and 'url' are required"}
+    if not url:
+        return {"error": "'url' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id),
@@ -193,9 +221,9 @@ async def _t_cdp_navigate(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 async def _t_cdp_screenshot(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
-    if not device_id:
-        return {"error": "'device_id' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
     try:
         result = await _devices_manager(ctx).command(
             str(device_id),
@@ -219,10 +247,12 @@ async def _t_cdp_screenshot(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 async def _t_cdp_evaluate(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
     expression = args.get("expression")
-    if not device_id or not expression:
-        return {"error": "'device_id' and 'expression' are required"}
+    if not expression:
+        return {"error": "'expression' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id),
@@ -240,7 +270,7 @@ _OPEN_URL_PARAMS = {
         **_DEVICE_ID_PARAM,
         "url": {"type": "string", "description": "URL to open (https://…, mailto:, …)."},
     },
-    "required": ["device_id", "url"],
+    "required": ["url"],
 }
 
 _OPEN_APP_PARAMS = {
@@ -250,15 +280,17 @@ _OPEN_APP_PARAMS = {
         "app": {"type": "string", "description": "App name ('Safari', 'Messages') or bundle id ('com.apple.Safari')."},
         "args": {"type": "array", "items": {"type": "string"}, "description": "Optional CLI args passed to the app."},
     },
-    "required": ["device_id", "app"],
+    "required": ["app"],
 }
 
 
 async def _t_device_open_url(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
     url = args.get("url")
-    if not device_id or not url:
-        return {"error": "'device_id' and 'url' are required"}
+    if not url:
+        return {"error": "'url' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="shell")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id), "open_url", {"url": str(url)}, timeout=15,
@@ -268,10 +300,12 @@ async def _t_device_open_url(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 async def _t_device_open_app(args: dict[str, Any], ctx: ToolContext) -> Any:
-    device_id = args.get("device_id")
     app = args.get("app")
-    if not device_id or not app:
-        return {"error": "'device_id' and 'app' are required"}
+    if not app:
+        return {"error": "'app' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="shell")
+    if err:
+        return {"error": err}
     try:
         return await _devices_manager(ctx).command(
             str(device_id), "open_app",

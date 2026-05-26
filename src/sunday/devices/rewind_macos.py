@@ -118,7 +118,13 @@ async def _capture() -> tuple[Path, bytes]:
     )
     _out, err = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"screencapture failed: {err.decode('utf-8', errors='replace').strip()}")
+        raw = err.decode("utf-8", errors="replace").strip()
+        if "could not create image" in raw.lower() or not raw:
+            raise PermissionError(
+                "Screen Recording permission not granted to the Sunday satellite. "
+                "System Settings → Privacy & Security → Screen Recording → enable it."
+            )
+        raise RuntimeError(f"screencapture failed: {raw}")
     return path, path.read_bytes()
 
 
@@ -183,7 +189,13 @@ async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            png_path, png_bytes = await _capture()
+            try:
+                png_path, png_bytes = await _capture()
+            except PermissionError as exc:
+                # No point retrying every interval — permission won't appear
+                # mid-loop. Stop cleanly so the user grants it and restarts.
+                log.warning("rewind stopping: screen recording denied", error=str(exc))
+                return
             h = hashlib.sha256(png_bytes).hexdigest()[:HASH_PREFIX_BYTES]
             if h == _last_hash:
                 png_path.unlink(missing_ok=True)
