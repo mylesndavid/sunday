@@ -138,9 +138,25 @@
 
         <section class="set-block" id="sec-model">
           <h2>Model</h2>
-          <p class="set-help">Sunday's brain. Any OpenRouter slug works. Takes effect on the next message.</p>
-          <label><span>Provider</span><input type="text" id="set-provider" class="field mono" disabled></label>
-          <label><span>Model</span><input type="text" id="set-model" class="field mono" placeholder="deepseek/deepseek-v4-flash"></label>
+          <p class="set-help">Sunday's brain. Pick one below or type any OpenRouter slug. Models marked <strong>sees images</strong> can look at screenshots you send — others answer text-only. Takes effect on the next message.</p>
+          <label><span>Choose a model</span>
+            <select id="set-model-preset" class="field">
+              <option value="">— pick a model —</option>
+              <optgroup label="Fast &amp; cheap (text only)">
+                <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
+                <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
+                <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
+              </optgroup>
+              <optgroup label="Sees images">
+                <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash · sees images</option>
+                <option value="openai/gpt-4o-mini">GPT-4o mini · sees images</option>
+                <option value="openai/gpt-4o">GPT-4o · sees images</option>
+                <option value="anthropic/claude-3.7-sonnet">Claude 3.7 Sonnet · sees images</option>
+              </optgroup>
+            </select>
+          </label>
+          <label><span>Model slug</span><input type="text" id="set-model" class="field mono" placeholder="deepseek/deepseek-v4-flash"></label>
+          <input type="text" id="set-provider" hidden>
           <div class="set-actions"><button class="btn btn-primary" id="set-model-save">Save model</button></div>
         </section>
 

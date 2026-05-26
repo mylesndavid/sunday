@@ -91,6 +91,42 @@ def _build_provider(config: SundayConfig, provider_name: str) -> Provider:
     return OpenAICompatProvider(cloned)
 
 
+def _is_image_unsupported(exc: BaseException) -> bool:
+    s = str(exc).lower()
+    return ("image input" in s or "support image" in s or "no endpoints" in s) and (
+        "image" in s or "vision" in s
+    )
+
+
+def _has_images(messages: list[dict[str, Any]]) -> bool:
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list) and any(isinstance(p, dict) and p.get("type") == "image_url" for p in c):
+            return True
+    return False
+
+
+def _strip_images(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace image parts with a short text note so a text-only model can
+    still answer the turn instead of erroring on the image."""
+    out = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, list):
+            parts, dropped = [], 0
+            for p in c:
+                if isinstance(p, dict) and p.get("type") == "image_url":
+                    dropped += 1
+                else:
+                    parts.append(p)
+            if dropped:
+                parts.append({"type": "text", "text": f"[{dropped} image(s) attached — not shown; this model can't view images]"})
+            out.append({**m, "content": parts if parts else "[image omitted]"})
+        else:
+            out.append(m)
+    return out
+
+
 class RouterProvider:
     """Wraps multiple providers, tries them in order, fails over on
     credit/rate-limit errors. Built providers are cached so the inner
@@ -125,12 +161,28 @@ class RouterProvider:
         for provider_name in self._chain:
             try:
                 provider = self._provider(provider_name)
-                result = await provider.complete(
-                    system_prompt=system_prompt,
-                    messages=messages,
-                    tools_schema=tools_schema,
-                    on_delta=on_delta,
-                )
+                try:
+                    result = await provider.complete(
+                        system_prompt=system_prompt,
+                        messages=messages,
+                        tools_schema=tools_schema,
+                        on_delta=on_delta,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # The current model can't accept images. Rather than fail
+                    # this turn — and every later turn that still has the image
+                    # in context (fail forever) — strip images to text notes
+                    # and answer anyway, once.
+                    if _is_image_unsupported(exc) and _has_images(messages):
+                        log.info("model lacks vision — retrying text-only", provider=provider_name)
+                        result = await provider.complete(
+                            system_prompt=system_prompt,
+                            messages=_strip_images(messages),
+                            tools_schema=tools_schema,
+                            on_delta=on_delta,
+                        )
+                    else:
+                        raise
                 if provider_name != self._chain[0]:
                     log.info("provider failover succeeded", used=provider_name, primary=self._chain[0])
                 return result

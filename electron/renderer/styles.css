@@ -297,6 +297,7 @@ textarea#composer::placeholder { color: var(--text-3); }
 .set-help strong { color: var(--text); font-weight: 600; }
 label { display: block; margin-bottom: 14px; }
 label span { display: block; font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); margin-bottom: 7px; }
+select.field { appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23847c6e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 13px center; padding-right: 34px; }
 .set-textarea { width: 100%; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); color: var(--text); font: 13px/1.6 var(--font-mono); padding: 14px; min-height: 280px; resize: vertical; white-space: pre-wrap; }
 .set-textarea:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-tint); }
 .set-prompt-meta { display: flex; justify-content: space-between; margin-top: 8px; font: 11px/1 var(--font-mono); color: var(--text-3); }

@@ -146,47 +146,51 @@ function appendMessage(m) {
   if (role === 'tool')   { placeRow(buildToolRow(m), 'assistant'); return; }
   if (role === 'system') { placeRow(buildSystemRow(m), 'assistant'); return; }
 
+  const side = role === 'user' ? 'user' : 'assistant';
+  const content = (m.content || '').trim();
+  const atts = (m.metadata && m.metadata.attachments) || [];
+  const reasoning = (role === 'sunday' && m.metadata && m.metadata.reasoning_content || '').trim();
+
+  // reasoning leads the bubble (it happened first)
+  if (reasoning) {
+    const det = document.createElement('details');
+    det.className = 'reasoning';
+    det.innerHTML = `<summary><svg class="chev" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>thinking</summary><div class="r-body"></div>`;
+    det.querySelector('.r-body').textContent = reasoning;
+    placeRow(det, side);
+  }
+
+  // No text and no attachments → this was a tool-only step; don't draw an
+  // empty bubble. (Reasoning, if any, already rendered above.)
+  if (!content && !atts.length) { if (role === 'user') lastUserTs = m.created_at; return; }
+
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}`;
 
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.innerHTML = mdLite(m.content || '');
-  // copy button
-  const copy = document.createElement('button');
-  copy.className = 'bubble-copy'; copy.title = 'Copy'; copy.setAttribute('aria-label', 'Copy');
-  copy.innerHTML = copyIcon();
-  copy.onclick = () => navigator.clipboard.writeText(m.content || '').then(() => { copy.innerHTML = checkIcon(); setTimeout(() => copy.innerHTML = copyIcon(), 1300); });
-  bubble.appendChild(copy);
-  wrap.appendChild(bubble);
+  if (content) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.innerHTML = mdLite(m.content || '');
+    const copy = document.createElement('button');
+    copy.className = 'bubble-copy'; copy.title = 'Copy'; copy.setAttribute('aria-label', 'Copy');
+    copy.innerHTML = copyIcon();
+    copy.onclick = () => navigator.clipboard.writeText(m.content || '').then(() => { copy.innerHTML = checkIcon(); setTimeout(() => copy.innerHTML = copyIcon(), 1300); });
+    bubble.appendChild(copy);
+    wrap.appendChild(bubble);
+  }
 
-  // attachments
-  const atts = (m.metadata && m.metadata.attachments) || [];
   if (atts.length) {
     const aw = document.createElement('div'); aw.className = 'msg-attachments';
     for (const a of atts) aw.appendChild(buildAttachment(a));
     wrap.appendChild(aw);
   }
 
-  // meta: finish time + duration (on hover)
-  const meta = document.createElement('div');
-  meta.className = 'msg-meta';
+  // finish time + duration (floats on hover)
   let html = '';
   if (role === 'sunday' && lastUserTs && m.created_at > lastUserTs) html += `<span class="dur">${fmtDur(m.created_at - lastUserTs)}</span>`;
   if (m.created_at) html += `<span class="time" title="${esc(fmtFull(m.created_at))}">${esc(fmtClock(m.created_at))} · ${esc(fmtRel(m.created_at))}</span>`;
-  meta.innerHTML = html;
-  if (html) wrap.appendChild(meta);
+  if (html) { const meta = document.createElement('div'); meta.className = 'msg-meta'; meta.innerHTML = html; wrap.appendChild(meta); }
 
-  const side = role === 'user' ? 'user' : 'assistant';
-  // reasoning leads the bubble (it happened first), tucked just above it
-  const reasoning = role === 'sunday' && m.metadata && m.metadata.reasoning_content;
-  if (reasoning && reasoning.trim()) {
-    const det = document.createElement('details');
-    det.className = 'reasoning';
-    det.innerHTML = `<summary><svg class="chev" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>thinking</summary><div class="r-body"></div>`;
-    det.querySelector('.r-body').textContent = reasoning.trim();
-    placeRow(det, side);
-  }
   placeRow(wrap, side);
 
   if (role === 'user') lastUserTs = m.created_at;
@@ -211,10 +215,21 @@ function buildSystemRow(m) {
   const row = document.createElement('div');
   row.className = 'msg system';
   const p = document.createElement('div');
-  p.className = 'sys-msg' + (/error|failed/i.test(m.content || '') ? ' is-error' : '');
-  p.textContent = m.content || '';
+  const raw = m.content || '';
+  p.className = 'sys-msg' + (/error|failed/i.test(raw) ? ' is-error' : '');
+  p.textContent = friendlyError(raw);
   row.appendChild(p);
   return row;
+}
+
+// Turn raw provider errors into plain language.
+function friendlyError(s) {
+  if (/support image input|image input|vision/i.test(s) && /404|no endpoints/i.test(s)) {
+    return "This model can't look at images. Switch to a vision model in Settings → Model (or send text instead).";
+  }
+  if (/rate.?limit|429/i.test(s)) return 'The model is rate-limited right now — give it a moment and try again.';
+  if (/402|credit|quota|insufficient/i.test(s)) return 'The model provider is out of credit. Check your provider key in Settings.';
+  return s;
 }
 function buildAttachment(a) {
   const kind = a.kind || guessKind(a.mime_type || '');

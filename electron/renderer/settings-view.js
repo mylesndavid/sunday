@@ -35,6 +35,7 @@ export async function loadAll() {
     const c = await res.json();
     $('#set-provider').value = c.model?.provider || '';
     $('#set-model').value = c.model?.name || '';
+    syncModelPreset();
     defaultPrompt = c.identity_prompt?.default || '';
     const eff = c.identity_prompt?.effective || '';
     const custom = !!c.identity_prompt?.custom_present;
@@ -49,6 +50,11 @@ export async function loadAll() {
 }
 
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
+function syncModelPreset() {
+  const cur = $('#set-model').value.trim();
+  const sel = $('#set-model-preset');
+  if (sel) sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
+}
 
 async function refreshSystem() {
   try {
@@ -93,6 +99,8 @@ function wire() {
     await window.sunday.saveConnection({ daemonHttp: http, daemonWs: ws });
     flashSaved();
   });
+  $('#set-model-preset').addEventListener('change', (e) => { if (e.target.value) { $('#set-model').value = e.target.value; } });
+  $('#set-model').addEventListener('input', syncModelPreset);
   $('#set-model-save').addEventListener('click', async () => {
     const model = $('#set-model').value.trim();
     if (!model) { flashError('model name required'); return; }
