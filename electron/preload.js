@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sunday', {
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
   openSettings: () => ipcRenderer.invoke('sunday:open-settings'),
   requestScreen: () => ipcRenderer.invoke('sunday:request-screen'),
+  requestControl: () => ipcRenderer.invoke('sunday:request-control'),
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),

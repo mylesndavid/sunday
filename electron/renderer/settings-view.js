@@ -251,6 +251,15 @@ function wire() {
       else { s.dataset.state = 'fail'; s.textContent = `error: ${r.error || 'unknown'}`; }
     } catch (err) { s.dataset.state = 'fail'; s.textContent = `error: ${err.message}`; }
   });
+  $('#set-control-grant').addEventListener('click', async () => {
+    const s = $('#set-control-status'); s.dataset.state = ''; s.textContent = 'requesting…';
+    try {
+      const r = await window.sunday.requestControl();
+      if (r.status === 'granted') { s.dataset.state = 'ok'; s.textContent = '✓ already allowed'; }
+      else if (r.status === 'prompted') { s.textContent = 'enable “Sunday” in the window that opened, then relaunch'; }
+      else { s.dataset.state = 'fail'; s.textContent = `error: ${r.error || 'unknown'}`; }
+    } catch (err) { s.dataset.state = 'fail'; s.textContent = `error: ${err.message}`; }
+  });
   // section nav
   const links = Array.from(document.querySelectorAll('.set-nav a'));
   const stage = $('#set-stage');
