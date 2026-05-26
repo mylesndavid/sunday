@@ -30,7 +30,7 @@ class ModelConfig:
     own API instead of going through OpenRouter.
     """
     provider: ProviderName = "openrouter"
-    name: str = "deepseek/deepseek-chat"
+    name: str = "deepseek/deepseek-v4-flash"
     base_url: str = "https://openrouter.ai/api/v1"
     # Reasoning costs latency but cleans up multi-step thinking and tool routing.
     # On by default; turn off for ambient conversational replies if it becomes a problem.
