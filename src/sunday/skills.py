@@ -27,10 +27,14 @@ Example:
 
 from __future__ import annotations
 
+import io
+import re
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 
 from sunday.config import SundayConfig
@@ -38,6 +42,17 @@ from sunday.paths import sunday_home
 from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.skills")
+
+# skills.sh — the open Agent Skills directory (vercel-labs/skills). Search
+# returns entries with id="<owner>/<repo>/<skillId>" where skillId matches
+# the frontmatter `name:` of a SKILL.md somewhere in the repo (not
+# necessarily at /skillId/SKILL.md). Install pulls the repo tarball,
+# scans for SKILL.md, and matches by frontmatter name.
+SKILLS_SH_SEARCH    = "https://skills.sh/api/search"
+GITHUB_TARBALL      = "https://codeload.github.com"  # no rate limit
+_BRANCH_CANDIDATES  = ("main", "master")
+_SKILL_FILENAMES    = ("SKILL.md", "skill.md")
+_MAX_TARBALL_BYTES  = 64 * 1024 * 1024   # 64 MB sanity cap
 
 
 def skills_dir() -> Path:
@@ -89,6 +104,150 @@ def load_skill(slug: str) -> Skill | None:
     return _parse(p)
 
 
+# ─── skills.sh directory ─────────────────────────────────────────────────
+
+
+async def search_directory(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Search the open skills.sh directory. Returns one entry per skill
+    with `id` (the full `<owner>/<repo>/<skillDir>` slug), `name`, `source`
+    (the GitHub repo), and `installs` count."""
+    if not query.strip():
+        return []
+    async with httpx.AsyncClient(timeout=15) as client:
+        res = await client.get(SKILLS_SH_SEARCH, params={"q": query, "limit": limit})
+    if res.status_code >= 400:
+        raise RuntimeError(f"skills.sh {res.status_code}: {res.text[:200]}")
+    data = res.json()
+    out = []
+    for s in data.get("skills") or []:
+        out.append({
+            "id":       s.get("id"),
+            "name":     s.get("name") or s.get("skillId"),
+            "skill_id": s.get("skillId"),
+            "source":   s.get("source"),
+            "installs": s.get("installs", 0),
+            "url":      f"https://skills.sh/{s.get('id')}",
+        })
+    return out
+
+
+def _slug_safe(name: str) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_-]+", "-", name.strip().lower())
+    return re.sub(r"-+", "-", s).strip("-") or "skill"
+
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def _parse_frontmatter_name(body: str) -> str | None:
+    m = _FRONTMATTER_RE.match(body)
+    if not m:
+        return None
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if line.startswith("name:"):
+            val = line.split(":", 1)[1].strip().strip("\"'")
+            return val or None
+    return None
+
+
+async def _download_tarball(owner: str, repo: str) -> tuple[str, bytes]:
+    """Try main then master. Returns (branch, raw bytes)."""
+    last_status = 0
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        for branch in _BRANCH_CANDIDATES:
+            url = f"{GITHUB_TARBALL}/{owner}/{repo}/tar.gz/{branch}"
+            res = await client.get(url)
+            if res.status_code == 200:
+                if len(res.content) > _MAX_TARBALL_BYTES:
+                    raise RuntimeError(f"repo tarball is {len(res.content)//1024//1024} MB — over 64 MB cap")
+                return branch, res.content
+            last_status = res.status_code
+    raise FileNotFoundError(f"could not download {owner}/{repo} tarball (last HTTP {last_status})")
+
+
+def _walk_tarball_for_skills(raw: bytes) -> list[dict[str, Any]]:
+    """Return one entry per SKILL.md/skill.md found, with the frontmatter
+    name (if any) and the file body."""
+    out = []
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+        for m in tf.getmembers():
+            if not m.isfile():
+                continue
+            base = m.name.rsplit("/", 1)[-1]
+            if base not in _SKILL_FILENAMES:
+                continue
+            f = tf.extractfile(m)
+            if f is None:
+                continue
+            body = f.read().decode("utf-8", errors="replace")
+            # `m.name` is "<repo>-<sha>/path/to/SKILL.md" — strip the leading
+            # archive root so the path is repo-relative.
+            rel = m.name.split("/", 1)[1] if "/" in m.name else m.name
+            out.append({
+                "path":             rel,
+                "frontmatter_name": _parse_frontmatter_name(body),
+                "body":             body,
+            })
+    return out
+
+
+async def install_from_directory(slug: str) -> dict[str, Any]:
+    """Install a skill by its skills.sh id (`<owner>/<repo>/<skillId>`) or
+    `<owner>/<repo>` for the first skill in a single-skill repo. Downloads
+    the repo tarball, finds the matching SKILL.md by frontmatter name (or
+    directory name if no frontmatter), and writes it to
+    ~/.sunday/skills/<local-slug>.md."""
+    parts = slug.strip().strip("/").split("/")
+    if len(parts) < 2:
+        raise ValueError(
+            f"slug must look like '<owner>/<repo>' or '<owner>/<repo>/<skillId>', got {slug!r}"
+        )
+    owner, repo, *rest = parts
+    wanted = rest[-1] if rest else None
+
+    branch, raw = await _download_tarball(owner, repo)
+    found = _walk_tarball_for_skills(raw)
+    if not found:
+        raise FileNotFoundError(f"no SKILL.md anywhere in {owner}/{repo}@{branch}")
+
+    chosen = None
+    if wanted:
+        # Prefer frontmatter name match; fall back to directory-name match.
+        chosen = next((s for s in found if s["frontmatter_name"] == wanted), None)
+        if chosen is None:
+            chosen = next(
+                (s for s in found if s["path"].split("/")[-2:-1] == [wanted]),
+                None,
+            )
+        if chosen is None:
+            available = [s["frontmatter_name"] or s["path"] for s in found][:8]
+            raise FileNotFoundError(
+                f"skill '{wanted}' not found in {owner}/{repo}. "
+                f"Available: {', '.join(available)}"
+            )
+    else:
+        chosen = found[0]
+
+    local_slug = _slug_safe(chosen["frontmatter_name"] or wanted or chosen["path"].split("/")[-2] or repo)
+    target = skills_dir() / f"{local_slug}.md"
+    target.write_text(chosen["body"], encoding="utf-8")
+    log.info(
+        "skill installed",
+        slug=slug,
+        local_slug=local_slug,
+        source=f"{owner}/{repo}@{branch}:{chosen['path']}",
+        bytes=len(chosen["body"]),
+    )
+    return {
+        "ok":         True,
+        "slug":       local_slug,
+        "source":     f"{owner}/{repo}@{branch}:{chosen['path']}",
+        "path":       str(target),
+        "size_bytes": len(chosen["body"]),
+    }
+
+
 # ─── tools ───────────────────────────────────────────────────────────────
 
 
@@ -116,8 +275,38 @@ async def _t_load_skill(args: dict[str, Any], ctx: ToolContext) -> Any:
         return {"error": "'slug' is required"}
     skill = load_skill(slug)
     if skill is None:
-        return {"error": f"no such skill: {slug}. Use list_skills to see what's installed."}
+        return {
+            "error": (
+                f"no such skill: {slug}. Use list_skills to see what's "
+                "installed, or search_skills + install_skill to pull one "
+                "from the skills.sh directory."
+            )
+        }
     return {"slug": skill.slug, "name": skill.name, "body": skill.body()}
+
+
+async def _t_search_directory(args: dict[str, Any], ctx: ToolContext) -> Any:
+    query = (args.get("query") or "").strip()
+    if not query:
+        return {"error": "'query' is required"}
+    limit = max(1, min(int(args.get("limit") or 10), 25))
+    try:
+        skills = await search_directory(query, limit=limit)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"results": skills, "directory": "https://skills.sh"}
+
+
+async def _t_install_skill(args: dict[str, Any], ctx: ToolContext) -> Any:
+    slug = (args.get("slug") or "").strip()
+    if not slug:
+        return {"error": "'slug' is required (e.g. 'anthropics/skills/frontend-design')"}
+    try:
+        return await install_from_directory(slug)
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
 
 async def _t_save_skill(args: dict[str, Any], ctx: ToolContext) -> Any:
@@ -164,6 +353,48 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "required": ["slug"],
         },
         run=_t_load_skill,
+    ))
+    registry.register(Tool(
+        name="search_skills",
+        description=(
+            "Search the open skills.sh directory for a reusable procedure "
+            "before reinventing one. Returns up to 10 skills sorted by "
+            "popularity, each with a slug like '<owner>/<repo>/<skillDir>'. "
+            "Pair with install_skill to pull one onto disk, then load_skill "
+            "to use it."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Free-text search (e.g. 'remotion', 'gmail triage')."},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["query"],
+        },
+        run=_t_search_directory,
+    ))
+    registry.register(Tool(
+        name="install_skill",
+        description=(
+            "Download a skill from skills.sh by its slug "
+            "('<owner>/<repo>/<skillDir>' or just '<owner>/<repo>'). Fetches "
+            "SKILL.md from GitHub raw, writes it under ~/.sunday/skills/, "
+            "and returns the local slug you can pass to load_skill."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "description": (
+                        "Full skills.sh id like 'anthropics/skills/frontend-design'. "
+                        "Get this from search_skills."
+                    ),
+                },
+            },
+            "required": ["slug"],
+        },
+        run=_t_install_skill,
     ))
     registry.register(Tool(
         name="save_skill",
