@@ -117,6 +117,44 @@ async def _h_cdp_close(params: dict[str, Any]) -> dict[str, Any]:
     return await cdp.close(profile_id=params.get("profile_id", "default"))
 
 
+# ─── desktop control (macOS `open`) ─────────────────────────────────────
+
+
+async def _h_open_url(params: dict[str, Any]) -> dict[str, Any]:
+    url = params.get("url")
+    if not url:
+        return {"error": "'url' is required"}
+    proc = await asyncio.create_subprocess_exec(
+        "open", str(url),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _out, err = await proc.communicate()
+    if proc.returncode != 0:
+        return {"error": err.decode("utf-8", errors="replace").strip()}
+    return {"ok": True, "url": url}
+
+
+async def _h_open_app(params: dict[str, Any]) -> dict[str, Any]:
+    app = params.get("app")
+    if not app:
+        return {"error": "'app' is required (name like 'Safari' or bundle id like 'com.apple.Safari')"}
+    args = params.get("args") or []
+    cmd = ["open", "-a", str(app)]
+    if args:
+        cmd.append("--args")
+        cmd.extend(str(a) for a in args)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _out, err = await proc.communicate()
+    if proc.returncode != 0:
+        return {"error": err.decode("utf-8", errors="replace").strip()}
+    return {"ok": True, "app": app}
+
+
 # ─── iMessage handlers (macOS only) ──────────────────────────────────────
 
 
@@ -149,6 +187,8 @@ async def _h_imessage_send(params: dict[str, Any]) -> dict[str, Any]:
 HANDLERS = {
     "run_command":            _h_run_command,
     "screenshot":             _h_screenshot,
+    "open_url":               _h_open_url,
+    "open_app":               _h_open_app,
     "cdp_launch":             _h_cdp_launch,
     "cdp_navigate":           _h_cdp_navigate,
     "cdp_screenshot":         _h_cdp_screenshot,

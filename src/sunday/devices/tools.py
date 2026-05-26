@@ -234,12 +234,72 @@ async def _t_cdp_evaluate(args: dict[str, Any], ctx: ToolContext) -> Any:
         return {"error": str(exc)}
 
 
+_OPEN_URL_PARAMS = {
+    "type": "object",
+    "properties": {
+        **_DEVICE_ID_PARAM,
+        "url": {"type": "string", "description": "URL to open (https://…, mailto:, …)."},
+    },
+    "required": ["device_id", "url"],
+}
+
+_OPEN_APP_PARAMS = {
+    "type": "object",
+    "properties": {
+        **_DEVICE_ID_PARAM,
+        "app": {"type": "string", "description": "App name ('Safari', 'Messages') or bundle id ('com.apple.Safari')."},
+        "args": {"type": "array", "items": {"type": "string"}, "description": "Optional CLI args passed to the app."},
+    },
+    "required": ["device_id", "app"],
+}
+
+
+async def _t_device_open_url(args: dict[str, Any], ctx: ToolContext) -> Any:
+    device_id = args.get("device_id")
+    url = args.get("url")
+    if not device_id or not url:
+        return {"error": "'device_id' and 'url' are required"}
+    try:
+        return await _devices_manager(ctx).command(
+            str(device_id), "open_url", {"url": str(url)}, timeout=15,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
+async def _t_device_open_app(args: dict[str, Any], ctx: ToolContext) -> Any:
+    device_id = args.get("device_id")
+    app = args.get("app")
+    if not device_id or not app:
+        return {"error": "'device_id' and 'app' are required"}
+    try:
+        return await _devices_manager(ctx).command(
+            str(device_id), "open_app",
+            {"app": str(app), "args": args.get("args") or []},
+            timeout=15,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="device_list",
         description="List satellite devices currently connected to Sunday.",
         parameters={"type": "object", "properties": {}},
         run=_t_device_list,
+    ))
+    registry.register(Tool(
+        name="device_open_url",
+        description="Open a URL on a connected device (launches the default browser or registered handler).",
+        parameters=_OPEN_URL_PARAMS,
+        run=_t_device_open_url,
+    ))
+    registry.register(Tool(
+        name="device_open_app",
+        description="Launch a macOS app by name or bundle id on a connected device.",
+        parameters=_OPEN_APP_PARAMS,
+        run=_t_device_open_app,
     ))
     registry.register(Tool(
         name="device_run_command",

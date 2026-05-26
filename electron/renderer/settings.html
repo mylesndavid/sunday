@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sunday — settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <header class="set-topbar">
+    <span class="set-title">Sunday — settings</span>
+    <span class="set-saved" id="set-saved" hidden>saved</span>
+  </header>
+
+  <main class="set-stage">
+
+    <!-- Connection -->
+    <section class="set-block">
+      <h2>Connection</h2>
+      <p class="set-help">Which Sunday daemon this app talks to. Change either and click Save Connection — the chat window reloads.</p>
+      <label>
+        <span>HTTP URL</span>
+        <input type="text" id="set-http" placeholder="https://sunday.example.com" class="set-input mono">
+      </label>
+      <label>
+        <span>WebSocket URL</span>
+        <input type="text" id="set-ws" placeholder="wss://sunday.example.com/v1/ws" class="set-input mono">
+      </label>
+      <div class="set-actions">
+        <span class="set-verify" id="set-conn-verify"></span>
+        <button class="set-btn ghost" id="set-conn-test">Test</button>
+        <button class="set-btn primary" id="set-conn-save">Save Connection</button>
+      </div>
+    </section>
+
+    <!-- Model -->
+    <section class="set-block">
+      <h2>Model</h2>
+      <p class="set-help">Sunday's brain. Any OpenRouter slug works (or the matching slug for your configured provider). Takes effect on the next turn.</p>
+      <label>
+        <span>Provider</span>
+        <input type="text" id="set-provider" class="set-input mono" disabled>
+      </label>
+      <label>
+        <span>Model</span>
+        <input type="text" id="set-model" class="set-input mono" placeholder="deepseek/deepseek-v4-flash">
+      </label>
+      <div class="set-actions">
+        <button class="set-btn primary" id="set-model-save">Save Model</button>
+      </div>
+    </section>
+
+    <!-- Personality -->
+    <section class="set-block">
+      <h2>Personality</h2>
+      <p class="set-help">
+        Sunday's identity prompt — read by the brain on every turn. Edit freely. Empty = reset to default.
+      </p>
+      <textarea id="set-prompt" class="set-textarea" spellcheck="false" placeholder="Sunday's identity, in your words…"></textarea>
+      <div class="set-prompt-meta">
+        <span id="set-prompt-status">—</span>
+        <span id="set-prompt-chars">0 chars</span>
+      </div>
+      <div class="set-actions">
+        <button class="set-btn ghost" id="set-prompt-reset">Reset to default</button>
+        <button class="set-btn ghost" id="set-prompt-show-default">Show default</button>
+        <button class="set-btn primary" id="set-prompt-save">Save Personality</button>
+      </div>
+    </section>
+
+    <!-- Memory -->
+    <section class="set-block">
+      <h2>Memory</h2>
+      <p class="set-help">Auto-extracted facts about you, stored at <code>~/.sunday/memories.db</code>. Read-only here; manage via the admin panel or the <code>remember</code>/<code>forget</code> tools.</p>
+      <div class="set-stat">
+        <span class="k">Available</span><span class="v" id="set-mem-avail">—</span>
+        <span class="k">Stored facts</span><span class="v" id="set-mem-count">—</span>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="settings.js"></script>
+</body>
+</html>

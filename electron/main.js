@@ -42,6 +42,7 @@ function resolveDaemon() {
 let mainWindow = null;
 let overlayWindow = null;
 let onboardingWindow = null;
+let settingsWindow = null;
 let tray = null;
 
 function createMainWindow() {
@@ -110,6 +111,19 @@ ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label 
   return true;
 });
 
+ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs }) => {
+  savePrefs({ daemonHttp, daemonWs });
+  // Reload the main window so it reconnects to the new daemon URL
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+  rebuildTrayMenu();
+  return true;
+});
+
+ipcMain.handle('sunday:open-settings', () => {
+  createSettingsWindow();
+  return true;
+});
+
 // Check whether the satellite would be able to read iMessage history.
 // We can't ask macOS directly — instead probe a path that requires Full
 // Disk Access. Returns true when readable (i.e. FDA granted to whichever
@@ -159,6 +173,31 @@ ipcMain.on('sunday:overlay-state', (_evt, state) => {
     overlayWindow.webContents.send('sunday:overlay-state', state);
   }
 });
+
+function createSettingsWindow() {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+  settingsWindow = new BrowserWindow({
+    width: 860,
+    height: 720,
+    minWidth: 600,
+    minHeight: 540,
+    backgroundColor: '#0f0e0d',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
+    resizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsWindow.on('closed', () => { settingsWindow = null; });
+}
 
 function createOnboardingWindow() {
   onboardingWindow = new BrowserWindow({
@@ -222,6 +261,7 @@ function rebuildTrayMenu() {
         // mainWindow renderer handles ⌘. — send a message to open the panel
         setTimeout(() => mainWindow?.webContents.send('sunday:open-admin'), 200);
     }},
+    { label: 'Settings…',       accelerator: 'Command+,', click: () => createSettingsWindow() },
     { type: 'separator' },
     { label: 'Reconfigure (re-run onboarding)…', click: () => {
         savePrefs({ onboarded: false });

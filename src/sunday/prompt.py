@@ -62,5 +62,24 @@ Two to three sentences unless the topic warrants more or they ask for depth.
 
 
 def stable_prefix() -> str:
-    """The cacheable identity block. Stable across turns so providers can prompt-cache it."""
+    """The cacheable identity block. Stable across turns so providers can
+    prompt-cache it. If the user has dropped a custom identity at
+    ~/.sunday/identity.md, that wins — full override, you get the
+    personality you wrote. Falls back to SUNDAY_SYSTEM_PROMPT otherwise.
+    """
+    try:
+        from sunday.paths import custom_prompt_path
+        p = custom_prompt_path()
+        if p.exists():
+            text = p.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    except Exception:
+        pass
+    return SUNDAY_SYSTEM_PROMPT
+
+
+def default_prompt() -> str:
+    """Sunday's built-in identity, ignoring any user override. Used by the
+    settings page to show what would be restored on Reset."""
     return SUNDAY_SYSTEM_PROMPT

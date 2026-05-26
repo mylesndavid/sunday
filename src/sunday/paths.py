@@ -34,6 +34,12 @@ def log_path() -> Path:
     return sunday_home() / "logs" / "sunday.log"
 
 
+def custom_prompt_path() -> Path:
+    """User-overridable identity prompt. When present, replaces the built-in
+    SUNDAY_SYSTEM_PROMPT verbatim — full control."""
+    return sunday_home() / "identity.md"
+
+
 def ensure_home() -> Path:
     home = sunday_home()
     for child in (home, home / "logs"):

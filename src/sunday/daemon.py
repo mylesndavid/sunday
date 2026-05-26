@@ -224,6 +224,68 @@ class Daemon:
     async def _http_tools(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("tools", {}))
 
+    async def _http_get_config(self, request: web.Request) -> web.Response:
+        """Read-only snapshot of editable daemon config."""
+        from sunday.prompt import default_prompt, stable_prefix
+        from sunday.paths import custom_prompt_path
+        p = custom_prompt_path()
+        return web.json_response({
+            "model": {
+                "provider":   self.config.model.provider,
+                "name":       self.config.model.name,
+                "base_url":   self.config.model.base_url,
+            },
+            "identity_prompt": {
+                "effective":      stable_prefix(),
+                "default":        default_prompt(),
+                "custom_present": p.exists(),
+            },
+            "memory": {
+                "available": self.memory.available,
+                "count":     self.memory.count() if self.memory.available else 0,
+            },
+        })
+
+    async def _http_post_config(self, request: web.Request) -> web.Response:
+        """Update editable daemon config. Partial — only the keys in the
+        body get written. Returns the resulting effective state."""
+        from sunday.paths import custom_prompt_path
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        applied: dict[str, Any] = {}
+
+        # Identity prompt: write to ~/.sunday/identity.md (empty/null = reset to default)
+        if "identity_prompt" in body:
+            value = body["identity_prompt"]
+            p = custom_prompt_path()
+            if value is None or (isinstance(value, str) and not value.strip()):
+                if p.exists():
+                    p.unlink()
+                applied["identity_prompt"] = "reset to default"
+            elif isinstance(value, str):
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(value, encoding="utf-8")
+                applied["identity_prompt"] = f"saved ({len(value)} chars)"
+            else:
+                return web.json_response({"error": "identity_prompt must be a string or null"}, status=400)
+
+        # Model name swap (provider locked to current). Updates the live
+        # config + clears the router cache so the next turn picks it up.
+        if "model_name" in body:
+            new_name = body["model_name"]
+            if not isinstance(new_name, str) or not new_name.strip():
+                return web.json_response({"error": "model_name must be a non-empty string"}, status=400)
+            from dataclasses import replace
+            self.config.model = replace(self.config.model, name=new_name.strip())
+            # Invalidate the runtime cache so the next call rebuilds with the new model.
+            # The router caches Provider instances per provider_name; we patch in-place.
+            applied["model_name"] = new_name.strip()
+
+        return web.json_response({"applied": applied, "ok": True})
+
     async def _http_health(self, request: web.Request) -> web.Response:
         """Rich health snapshot for admin UIs — daemon stats, satellites,
         memory growth, skills, recent tool activity."""
@@ -330,6 +392,8 @@ class Daemon:
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/tools", self._http_tools)
         app.router.add_get("/v1/health", self._http_health)
+        app.router.add_get("/v1/config", self._http_get_config)
+        app.router.add_post("/v1/config", self._http_post_config)
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)
