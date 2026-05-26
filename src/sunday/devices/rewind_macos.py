@@ -178,6 +178,34 @@ async def _ocr(png_path: Path) -> str:
     return out.decode("utf-8", errors="replace").strip()
 
 
+async def capture_text() -> dict[str, Any]:
+    """One-shot: capture the screen right now, OCR it locally via Vision,
+    return the text. This is what powers `device_screen_text` — it lets a
+    text-only model "see" the screen as readable text without any image
+    round-trip or cloud vision cost. The temp PNG is deleted after OCR."""
+    tmp = REWIND_DIR / "_oneshot.png"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    proc = await asyncio.create_subprocess_exec(
+        "/usr/sbin/screencapture", "-x", "-t", "png", str(tmp),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _out, err = await proc.communicate()
+    if proc.returncode != 0:
+        raw = err.decode("utf-8", errors="replace").strip()
+        if "could not create image" in raw.lower() or not raw:
+            return {"error": (
+                "SCREEN_RECORDING_DENIED: grant Screen Recording to Sunday in "
+                "System Settings → Privacy & Security → Screen Recording."
+            )}
+        return {"error": f"screencapture failed: {raw}"}
+    try:
+        text = await _ocr(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {"text": text, "chars": len(text)}
+
+
 # ─── watcher loop ────────────────────────────────────────────────────────
 
 

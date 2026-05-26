@@ -141,6 +141,19 @@ async def _t_device_screenshot(args: dict[str, Any], ctx: ToolContext) -> Any:
     return {"attachment": att.to_dict()}
 
 
+async def _t_device_screen_text(args: dict[str, Any], ctx: ToolContext) -> Any:
+    """Read what's on the screen as text (local Vision OCR on the device).
+    Use this — not device_screenshot — to actually understand the screen
+    with a text-only model; it returns readable text, not an image."""
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="screen")
+    if err:
+        return {"error": err}
+    try:
+        return await _devices_manager(ctx).command(str(device_id), "screen_text", {}, timeout=30)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
 # ─── CDP tools ───────────────────────────────────────────────────────────
 
 
@@ -443,9 +456,22 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     ))
     registry.register(Tool(
         name="device_screenshot",
-        description="Capture the full screen of a connected device. Returns an image attachment + broadcasts a live frame to WS viewers.",
+        description="Capture the full screen of a connected device as an image. For understanding what's on screen with a text model, prefer device_screen_text. Omit device_id to use the connected device.",
         parameters=_SCREENSHOT_PARAMS,
         run=_t_device_screenshot,
+    ))
+    registry.register(Tool(
+        name="device_screen_text",
+        description=(
+            "Read what's currently on the user's screen as text. Captures the "
+            "screen on the connected Mac and OCRs it locally (free, on-device "
+            "Apple Vision) — returns readable text, not an image, so it works "
+            "with a text-only model. Use this whenever the user asks what's on "
+            "their screen / to read something they're looking at. Omit device_id "
+            "to use the connected device."
+        ),
+        parameters=_SCREENSHOT_PARAMS,
+        run=_t_device_screen_text,
     ))
     registry.register(Tool(
         name="device_cdp_launch",

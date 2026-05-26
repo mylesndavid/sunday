@@ -150,4 +150,21 @@ $('#set-prompt-save').addEventListener('click', async () => {
   }
 });
 
+$('#set-screen-grant').addEventListener('click', async () => {
+  const status = $('#set-screen-status');
+  status.textContent = 'requesting…';
+  try {
+    const r = await window.sunday.requestScreen();
+    if (r.status === 'granted') {
+      status.textContent = '✓ already granted';
+    } else if (r.status === 'prompted') {
+      status.textContent = 'enable “Sunday” in the window that opened, then restart Sunday';
+    } else {
+      status.textContent = `error: ${r.error || 'unknown'}`;
+    }
+  } catch (err) {
+    status.textContent = `error: ${err.message}`;
+  }
+});
+
 loadAll();

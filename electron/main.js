@@ -13,9 +13,10 @@
 // Env vars SUNDAY_DAEMON_HTTP / SUNDAY_DAEMON_WS, when set, win over saved
 // prefs (lets you override without re-onboarding).
 
-const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage, desktopCapturer, systemPreferences } = require('electron');
 const path = require('node:path');
 const fs   = require('node:fs');
+const satellite = require('./satellite');
 
 const PREFS_FILE = () => path.join(app.getPath('userData'), 'prefs.json');
 
@@ -286,10 +287,42 @@ app.whenReady().then(() => {
   }
   createTray();
   Menu.setApplicationMenu(null);
+
+  // Own the satellite as a child process so its macOS TCC grants
+  // (Screen Recording etc.) attribute to "Sunday", not a standalone
+  // Python LaunchAgent. Only when onboarded + not explicitly disabled.
+  const prefs = loadPrefs();
+  if (prefs.onboarded && prefs.embeddedSatellite !== false) {
+    satellite.start(prefs);
+  }
+});
+
+// Trigger the macOS Screen Recording permission prompt for Sunday.app.
+// desktopCapturer.getSources with a screen type forces the system to
+// register Sunday in System Settings → Screen Recording. Once granted,
+// the satellite child (responsible process = Sunday) can screencapture.
+ipcMain.handle('sunday:request-screen', async () => {
+  try {
+    if (systemPreferences.getMediaAccessStatus) {
+      const status = systemPreferences.getMediaAccessStatus('screen');
+      if (status === 'granted') return { status: 'granted' };
+    }
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
+    // Open the pane so the user can flip the toggle if the prompt was
+    // dismissed or already-decided.
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+    return { status: 'prompted' };
+  } catch (err) {
+    return { status: 'error', error: String(err) };
+  }
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  satellite.stop();
 });
 
 app.on('activate', () => {

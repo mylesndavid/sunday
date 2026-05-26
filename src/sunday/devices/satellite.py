@@ -222,6 +222,12 @@ async def _h_rewind_stats(params: dict[str, Any]) -> dict[str, Any]:
     return rewind_macos.stats()
 
 
+async def _h_screen_text(params: dict[str, Any]) -> dict[str, Any]:
+    """Capture the screen and return its text via local Vision OCR — lets a
+    text-only brain read what's on screen without an image round-trip."""
+    return await rewind_macos.capture_text()
+
+
 HANDLERS = {
     "run_command":            _h_run_command,
     "screenshot":             _h_screenshot,
@@ -241,6 +247,7 @@ HANDLERS = {
     "rewind_search":          _h_rewind_search,
     "rewind_recent":          _h_rewind_recent,
     "rewind_stats":           _h_rewind_stats,
+    "screen_text":            _h_screen_text,
 }
 
 
