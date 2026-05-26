@@ -55,6 +55,35 @@ def _find_browser(custom_path: str | None = None) -> str:
     )
 
 
+def _provision_login(dest_user_data_dir: Path) -> None:
+    """Best-effort: seed Sunday's browser profile from the user's real Chrome
+    so it's logged into the same accounts. Cookies are encrypted with the
+    machine's 'Chrome Safe Storage' keychain key, shared across profiles on
+    the same user — so a copied cookie store decrypts fine here. If Chrome
+    is open the DB may be locked; that's fine, the user can log in once and
+    it persists in this profile."""
+    src_root = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+    src_default = src_root / "Default"
+    if not src_default.exists():
+        return
+    dest_default = dest_user_data_dir / "Default"
+    dest_default.mkdir(parents=True, exist_ok=True)
+    # Local State (root) holds the encrypted-key reference.
+    if (src_root / "Local State").exists():
+        shutil.copy2(src_root / "Local State", dest_user_data_dir / "Local State")
+    # Cookies live under Default/Network/ in current Chrome.
+    for rel in ("Network/Cookies", "Network/Cookies-journal"):
+        s = src_default / rel
+        if s.exists():
+            (dest_default / "Network").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(s, dest_default / rel)
+    # Local/Session storage carries token-based logins for many web apps.
+    for d in ("Local Storage", "Session Storage"):
+        s = src_default / d
+        if s.exists():
+            shutil.copytree(s, dest_default / d, dirs_exist_ok=True)
+
+
 async def launch(
     profile_id: str = "default",
     start_url: str | None = None,
@@ -76,8 +105,18 @@ async def launch(
         return {"profile_id": profile_id, "port": session.port, "reused": True}
 
     port = port or (_DEFAULT_PORT + (abs(hash(profile_id)) % 1000))
-    user_data_dir = Path(f"/tmp/sunday-shadow-{profile_id}")
+    # Persistent profile so logins stick across launches (was a throwaway
+    # /tmp dir — never logged in, which is why docs/Loom/Gmail bounced it).
+    user_data_dir = Path.home() / ".sunday" / "chrome" / profile_id
+    fresh = not (user_data_dir / "Default").exists()
     user_data_dir.mkdir(parents=True, exist_ok=True)
+    # On first creation, best-effort copy the user's real Chrome session so
+    # Sunday's browser is logged into the same accounts the user is.
+    if fresh:
+        try:
+            _provision_login(user_data_dir)
+        except Exception:  # noqa: BLE001 — best effort; user can log in once
+            pass
 
     cmd = [
         _find_browser(browser_path),
@@ -199,3 +238,112 @@ async def evaluate(profile_id: str, expression: str) -> dict:
         "Runtime.evaluate",
         {"expression": expression, "returnByValue": True, "awaitPromise": True},
     )
+
+
+async def _eval(profile_id: str, expression: str):
+    """Evaluate JS and return the unwrapped value (raises on JS error)."""
+    res = await evaluate(profile_id, expression)
+    if res.get("exceptionDetails"):
+        raise RuntimeError(res["exceptionDetails"].get("text", "JS error"))
+    return (res.get("result") or {}).get("value")
+
+
+# JS that tags interactive elements with data-snd refs and returns a
+# readable snapshot the model can act on (text + a list of click/type targets).
+_SNAPSHOT_JS = r"""
+(() => {
+  const out = { title: document.title, url: location.href, elements: [] };
+  const sel = 'a,button,input,textarea,select,[role=button],[role=link],[role=textbox],[contenteditable=true],[onclick]';
+  let i = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;       // skip hidden
+    const style = getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none') continue;
+    el.setAttribute('data-snd', String(i));
+    let label = (el.getAttribute('aria-label') || el.placeholder || el.value || el.innerText || el.alt || el.title || '').trim().replace(/\s+/g,' ').slice(0,80);
+    const tag = el.tagName.toLowerCase();
+    const e = { ref: i, tag, label };
+    if (el.type) e.type = el.type;
+    if (el.href) e.href = el.href.slice(0,200);
+    out.elements.push(e);
+    i++;
+    if (i > 200) break;
+  }
+  out.text = (document.body ? document.body.innerText : '').replace(/\n{3,}/g,'\n\n').slice(0, 9000);
+  return out;
+})()
+"""
+
+
+async def read_page(profile_id: str) -> dict:
+    """Return a readable, actionable snapshot of the current page: title, url,
+    visible text, and the interactive elements (each with a `ref` to click/type)."""
+    snap = await _eval(profile_id, _SNAPSHOT_JS)
+    return snap if isinstance(snap, dict) else {"error": "could not read page"}
+
+
+async def click(profile_id: str, ref: int | None = None, selector: str | None = None) -> dict:
+    """Click an element by its snapshot `ref` (preferred) or a CSS selector."""
+    if ref is None and not selector:
+        return {"error": "pass ref (from read_page) or selector"}
+    q = f'[data-snd="{int(ref)}"]' if ref is not None else selector.replace('"', '\\"')
+    js = f"""
+    (() => {{
+      const el = document.querySelector("{q}");
+      if (!el) return {{error: "no element for {q}"}};
+      el.scrollIntoView({{block:'center'}});
+      el.click();
+      return {{ok: true, url: location.href}};
+    }})()
+    """
+    return await _eval(profile_id, js) or {"ok": True}
+
+
+async def type_text(profile_id: str, ref: int | None, text: str, submit: bool = False) -> dict:
+    """Type into an element by snapshot `ref`: focus, set value, fire input
+    events. Optionally press Enter to submit."""
+    if ref is None:
+        return {"error": "ref is required"}
+    safe = json.dumps(text)
+    js = f"""
+    (() => {{
+      const el = document.querySelector('[data-snd="{int(ref)}"]');
+      if (!el) return {{error:"no element"}};
+      el.focus();
+      const v = {safe};
+      if (el.isContentEditable) {{ el.textContent = v; }}
+      else {{ el.value = v; }}
+      el.dispatchEvent(new Event('input', {{bubbles:true}}));
+      el.dispatchEvent(new Event('change', {{bubbles:true}}));
+      return {{ok:true}};
+    }})()
+    """
+    res = await _eval(profile_id, js) or {"ok": True}
+    if submit and not res.get("error"):
+        await press_key(profile_id, "Enter")
+    return res
+
+
+_KEYS = {
+    "Enter": {"key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13},
+    "Tab": {"key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9},
+    "Escape": {"key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27},
+    "Backspace": {"key": "Backspace", "code": "Backspace", "windowsVirtualKeyCode": 8},
+    "ArrowDown": {"key": "ArrowDown", "code": "ArrowDown", "windowsVirtualKeyCode": 40},
+    "ArrowUp": {"key": "ArrowUp", "code": "ArrowUp", "windowsVirtualKeyCode": 38},
+}
+
+
+async def press_key(profile_id: str, key: str) -> dict:
+    """Press a key (Enter/Tab/Escape/…) as a real input event via CDP."""
+    session = _SESSIONS.get(profile_id)
+    if session is None:
+        raise RuntimeError(f"no CDP session for profile: {profile_id}")
+    spec = _KEYS.get(key)
+    if not spec:
+        return {"error": f"unsupported key {key}; supported: {list(_KEYS)}"}
+    ws_url = await _page_target_ws(session)
+    await _cdp_call(ws_url, "Input.dispatchKeyEvent", {"type": "keyDown", **spec})
+    await _cdp_call(ws_url, "Input.dispatchKeyEvent", {"type": "keyUp", **spec})
+    return {"ok": True, "key": key}

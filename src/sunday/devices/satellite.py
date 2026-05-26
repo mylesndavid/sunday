@@ -128,6 +128,34 @@ async def _h_cdp_close(params: dict[str, Any]) -> dict[str, Any]:
     return await cdp.close(profile_id=params.get("profile_id", "default"))
 
 
+async def _h_cdp_read(params: dict[str, Any]) -> dict[str, Any]:
+    return await cdp.read_page(profile_id=params.get("profile_id", "default"))
+
+
+async def _h_cdp_click(params: dict[str, Any]) -> dict[str, Any]:
+    return await cdp.click(
+        profile_id=params.get("profile_id", "default"),
+        ref=params.get("ref"),
+        selector=params.get("selector"),
+    )
+
+
+async def _h_cdp_type(params: dict[str, Any]) -> dict[str, Any]:
+    return await cdp.type_text(
+        profile_id=params.get("profile_id", "default"),
+        ref=params.get("ref"),
+        text=params.get("text", ""),
+        submit=bool(params.get("submit")),
+    )
+
+
+async def _h_cdp_key(params: dict[str, Any]) -> dict[str, Any]:
+    return await cdp.press_key(
+        profile_id=params.get("profile_id", "default"),
+        key=params.get("key", "Enter"),
+    )
+
+
 # ─── desktop control (macOS `open`) ─────────────────────────────────────
 
 
@@ -238,6 +266,10 @@ HANDLERS = {
     "cdp_screenshot":         _h_cdp_screenshot,
     "cdp_evaluate":           _h_cdp_evaluate,
     "cdp_close":              _h_cdp_close,
+    "cdp_read":               _h_cdp_read,
+    "cdp_click":              _h_cdp_click,
+    "cdp_type":               _h_cdp_type,
+    "cdp_key":                _h_cdp_key,
     "imessage_list_threads":  _h_imessage_list_threads,
     "imessage_read_thread":   _h_imessage_read_thread,
     "imessage_read_recent":   _h_imessage_read_recent,

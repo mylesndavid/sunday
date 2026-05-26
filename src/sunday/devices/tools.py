@@ -277,6 +277,46 @@ async def _t_cdp_evaluate(args: dict[str, Any], ctx: ToolContext) -> Any:
         return {"error": str(exc)}
 
 
+async def _cdp_cmd(ctx: ToolContext, method: str, params: dict[str, Any], timeout: float = 30) -> Any:
+    device_id, err = _resolve_device(ctx, params.pop("device_id", None), capability="cdp")
+    if err:
+        return {"error": err}
+    params.setdefault("profile_id", "default")
+    try:
+        return await _devices_manager(ctx).command(str(device_id), method, params, timeout=timeout)
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
+async def _t_browser_read(args: dict[str, Any], ctx: ToolContext) -> Any:
+    return await _cdp_cmd(ctx, "cdp_read", {"device_id": args.get("device_id"), "profile_id": args.get("profile_id", "default")})
+
+
+async def _t_browser_click(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if args.get("ref") is None and not args.get("selector"):
+        return {"error": "pass 'ref' (from browser_read) or 'selector'"}
+    return await _cdp_cmd(ctx, "cdp_click", {
+        "device_id": args.get("device_id"), "profile_id": args.get("profile_id", "default"),
+        "ref": args.get("ref"), "selector": args.get("selector"),
+    })
+
+
+async def _t_browser_type(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if args.get("ref") is None or not args.get("text"):
+        return {"error": "'ref' and 'text' are required"}
+    return await _cdp_cmd(ctx, "cdp_type", {
+        "device_id": args.get("device_id"), "profile_id": args.get("profile_id", "default"),
+        "ref": args.get("ref"), "text": args.get("text"), "submit": bool(args.get("submit")),
+    })
+
+
+async def _t_browser_key(args: dict[str, Any], ctx: ToolContext) -> Any:
+    return await _cdp_cmd(ctx, "cdp_key", {
+        "device_id": args.get("device_id"), "profile_id": args.get("profile_id", "default"),
+        "key": args.get("key", "Enter"),
+    })
+
+
 _OPEN_URL_PARAMS = {
     "type": "object",
     "properties": {
@@ -496,7 +536,39 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     ))
     registry.register(Tool(
         name="device_cdp_evaluate",
-        description="Evaluate a JavaScript expression in the shadow-profile browser on a device. Use for reading page state or driving UI.",
+        description="Evaluate a JavaScript expression in the browser on a device. Low-level escape hatch; prefer browser_read/click/type.",
         parameters=_CDP_EVAL_PARAMS,
         run=_t_cdp_evaluate,
+    ))
+    registry.register(Tool(
+        name="browser_read",
+        description=(
+            "Read the current page in the connected, logged-in browser as text "
+            "you can act on: title, url, visible text, and a list of interactive "
+            "elements each with a numeric `ref`. This is your eyes on the web — "
+            "call it to see what's on screen, then browser_click/browser_type by "
+            "ref. The browser shares the user's logins, so private docs, Gmail, "
+            "Loom transcripts, etc. are all readable. Launch one first with "
+            "device_cdp_launch if none is open."
+        ),
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}}},
+        run=_t_browser_read,
+    ))
+    registry.register(Tool(
+        name="browser_click",
+        description="Click an element in the browser by its `ref` from browser_read (or a CSS `selector`). Re-read the page after to see what changed.",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "ref": {"type": "integer"}, "selector": {"type": "string"}}},
+        run=_t_browser_click,
+    ))
+    registry.register(Tool(
+        name="browser_type",
+        description="Type text into a field in the browser by its `ref` from browser_read. Set submit=true to press Enter after (e.g. search boxes).",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "ref": {"type": "integer"}, "text": {"type": "string"}, "submit": {"type": "boolean"}}, "required": ["ref", "text"]},
+        run=_t_browser_type,
+    ))
+    registry.register(Tool(
+        name="browser_key",
+        description="Press a key in the browser (Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp).",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "key": {"type": "string"}}},
+        run=_t_browser_key,
     ))
