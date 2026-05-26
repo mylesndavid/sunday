@@ -19,6 +19,7 @@ const statusEl     = $('#status');
 const brandDot     = document.querySelector('.brand-dot');
 const dropzoneEl   = $('#dropzone');
 const adminBtn     = $('#admin-btn');
+const settingsBtn  = $('#settings-btn');
 const adminPanel   = $('#admin-panel');
 const adminCloseBtn= $('#admin-close');
 
@@ -521,9 +522,11 @@ function escapeHtml(s) {
 
 adminBtn.addEventListener('click', adminToggle);
 adminCloseBtn.addEventListener('click', adminClose);
+if (settingsBtn) settingsBtn.addEventListener('click', () => window.sunday?.openSettings());
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && adminPanel.classList.contains('open')) adminClose();
   if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); adminToggle(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); window.sunday?.openSettings(); }
 });
 
 // Tray menu can ask us to open the admin panel
