@@ -301,6 +301,106 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         parameters=_OPEN_APP_PARAMS,
         run=_t_device_open_app,
     ))
+
+    # ─── Rewind tools — route through satellites that advertise 'rewind' ──
+
+    def _pick_rewind_device(ctx, explicit=None):
+        mgr = ctx.extras.get("devices")
+        if mgr is None:
+            return None, None
+        for d in mgr.list_devices():
+            if explicit and d["device_id"] != explicit:
+                continue
+            if "rewind" in (d.get("capabilities") or []):
+                return mgr, d["device_id"]
+        return mgr, None
+
+    async def _rewind_proxy(method, params, ctx, explicit=None):
+        mgr, did = _pick_rewind_device(ctx, explicit)
+        if mgr is None:
+            return {"error": "DeviceManager unavailable"}
+        if did is None:
+            return {"error": "no connected satellite advertises 'rewind' (needs macOS + Screen Recording permission)"}
+        try:
+            return await mgr.command(did, method, params, timeout=15)
+        except RuntimeError as exc:
+            return {"error": str(exc)}
+
+    async def _t_rewind_search(args, ctx):
+        q = (args.get("query") or "").strip()
+        if not q: return {"error": "'query' is required"}
+        return await _rewind_proxy("rewind_search", {"query": q, "limit": int(args.get("limit") or 10)}, ctx, args.get("device_id"))
+
+    async def _t_rewind_recent(args, ctx):
+        return await _rewind_proxy("rewind_recent", {"limit": int(args.get("limit") or 10)}, ctx, args.get("device_id"))
+
+    async def _t_rewind_stats(args, ctx):
+        return await _rewind_proxy("rewind_stats", {}, ctx, args.get("device_id"))
+
+    async def _t_rewind_start(args, ctx):
+        params = {"interval_seconds": int(args.get("interval_seconds") or 300)}
+        return await _rewind_proxy("rewind_start", params, ctx, args.get("device_id"))
+
+    async def _t_rewind_stop(args, ctx):
+        return await _rewind_proxy("rewind_stop", {}, ctx, args.get("device_id"))
+
+    registry.register(Tool(
+        name="rewind_search",
+        description=(
+            "Search the user's screen history for frames whose OCR'd text matches the query. "
+            "Use for 'what was on my screen earlier showing X' / 'find the slide that said Y'. "
+            "Returns matching frames with timestamp + OCR text snippet."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Text to search for (FTS5 syntax supported)."},
+                "limit": {"type": "integer", "description": "Max frames to return (default 10)."},
+                "device_id": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+        run=_t_rewind_search,
+    ))
+    registry.register(Tool(
+        name="rewind_recent",
+        description="Return the most recent N captured + OCR'd screen frames in reverse-chronological order.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max frames (default 10)."},
+                "device_id": {"type": "string"},
+            },
+        },
+        run=_t_rewind_recent,
+    ))
+    registry.register(Tool(
+        name="rewind_stats",
+        description="Stats on the user's Rewind index — total frames, oldest/newest timestamp, watcher state.",
+        parameters={"type": "object", "properties": {"device_id": {"type": "string"}}},
+        run=_t_rewind_stats,
+    ))
+    registry.register(Tool(
+        name="rewind_start",
+        description=(
+            "Turn on continuous screen capture + OCR indexing on the connected Mac satellite. "
+            "Frames captured every interval_seconds (default 300). Idempotent."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "interval_seconds": {"type": "integer", "description": "Seconds between captures (default 300)."},
+                "device_id": {"type": "string"},
+            },
+        },
+        run=_t_rewind_start,
+    ))
+    registry.register(Tool(
+        name="rewind_stop",
+        description="Turn off the Rewind watcher. Stored history stays searchable.",
+        parameters={"type": "object", "properties": {"device_id": {"type": "string"}}},
+        run=_t_rewind_stop,
+    ))
     registry.register(Tool(
         name="device_run_command",
         description="Run a shell command on a specific connected device. Returns stdout/stderr/exit_code.",

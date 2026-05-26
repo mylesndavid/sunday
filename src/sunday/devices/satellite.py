@@ -26,17 +26,20 @@ import structlog
 
 from sunday.devices import cdp
 from sunday.devices import imessage_macos
+from sunday.devices import rewind_macos
 from sunday.devices.protocol import event_frame, register_frame, response_frame
 
 log = structlog.get_logger("sunday.satellite")
 
 
 def _capabilities() -> list[str]:
-    """Capabilities this satellite advertises. iMessage is opt-in based on
-    chat.db being readable (so Linux/non-Mac satellites simply don't claim it)."""
+    """Capabilities this satellite advertises. Each is opt-in by environment
+    so Linux/non-Mac satellites simply don't claim them."""
     caps = ["shell", "screen", "cdp"]
     if imessage_macos.is_available():
         caps.append("imessage")
+    if rewind_macos.is_available():
+        caps.append("rewind")
     return caps
 
 
@@ -73,7 +76,7 @@ async def _h_screenshot(params: dict[str, Any]) -> dict[str, Any]:
         return {"error": "screenshot not implemented for this platform yet"}
     out = Path(f"/tmp/sunday-cap-{uuid.uuid4().hex[:8]}.png")
     proc = await asyncio.create_subprocess_exec(
-        "screencapture", "-x", "-t", "png", str(out),
+        "/usr/sbin/screencapture", "-x", "-t", "png", str(out),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -184,6 +187,33 @@ async def _h_imessage_send(params: dict[str, Any]) -> dict[str, Any]:
     return await imessage_macos.send_imessage(str(to), str(body), [str(p) for p in atts])
 
 
+# ─── Rewind handlers (macOS only) ────────────────────────────────────────
+
+
+async def _h_rewind_start(params: dict[str, Any]) -> dict[str, Any]:
+    interval = float(params.get("interval_seconds") or rewind_macos.DEFAULT_INTERVAL_SECONDS)
+    return rewind_macos.start(interval=interval)
+
+
+async def _h_rewind_stop(params: dict[str, Any]) -> dict[str, Any]:
+    return rewind_macos.stop()
+
+
+async def _h_rewind_search(params: dict[str, Any]) -> dict[str, Any]:
+    q = (params.get("query") or "").strip()
+    if not q:
+        return {"error": "'query' is required"}
+    return {"frames": rewind_macos.search(q, int(params.get("limit") or 10))}
+
+
+async def _h_rewind_recent(params: dict[str, Any]) -> dict[str, Any]:
+    return {"frames": rewind_macos.recent(int(params.get("limit") or 10))}
+
+
+async def _h_rewind_stats(params: dict[str, Any]) -> dict[str, Any]:
+    return rewind_macos.stats()
+
+
 HANDLERS = {
     "run_command":            _h_run_command,
     "screenshot":             _h_screenshot,
@@ -198,6 +228,11 @@ HANDLERS = {
     "imessage_read_thread":   _h_imessage_read_thread,
     "imessage_read_recent":   _h_imessage_read_recent,
     "imessage_send":          _h_imessage_send,
+    "rewind_start":           _h_rewind_start,
+    "rewind_stop":            _h_rewind_stop,
+    "rewind_search":          _h_rewind_search,
+    "rewind_recent":          _h_rewind_recent,
+    "rewind_stats":           _h_rewind_stats,
 }
 
 
@@ -237,6 +272,14 @@ async def _serve(server_url: str, device_id: str, token: str | None) -> None:
                     capabilities=caps,
                     platform_name=platform.platform(),
                 )))
+                # Resume Rewind on registration if the user previously opted in.
+                if "rewind" in caps:
+                    try:
+                        result = rewind_macos.auto_start_if_enabled()
+                        if result.get("ok") and result.get("enabled") is not False:
+                            log.info("rewind watcher resumed", interval_s=result.get("interval_s"))
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("rewind auto-start failed", error=str(exc))
 
                 async for raw in ws:
                     try:
