@@ -1,17 +1,18 @@
-"""Native sub-agent — scoped LLM call without the main chat context.
+"""Native sub-agent — a real worker that runs the full agent loop on a
+scoped task, with tools, in its own isolated context.
 
-Sunday's main brain carries a long chat history. For self-contained sub-
-tasks (deep research, a focused analysis, drafting a one-shot piece of
-text) the context dilutes attention. `delegate` spawns a fresh LLM call
-with only the task + optional skill loaded — same model, no chat baggage,
-returns one self-contained answer.
-
-This is the framework-free version of what `delegate_to_hermes` does when
-hermes is installed. Works anywhere Sunday runs.
+`delegate` spawns a fresh agent: its own in-memory chat (no main history,
+no memory writes), the same toolset minus the dangerous/recursive ones
+(it can browse, read, run commands, drive apps — but not spawn more
+sub-agents or send messages/place calls on its own), running to completion
+and returning one self-contained result. Use it to keep multi-step grunt
+work (research a thing, dig through a doc, check N pages) out of the main
+conversation — and run several at once for independent tasks.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -22,76 +23,121 @@ from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.subagent.native")
 
-_DELEGATE_PARAMS = {
-    "type": "object",
-    "properties": {
-        "task": {
-            "type": "string",
-            "description": "Self-contained task. Include all the context the sub-agent needs — it can't see the main chat.",
-        },
-        "context": {
-            "type": "string",
-            "description": "Optional extra context (transcript snippets, links, facts).",
-        },
-        "skill": {
-            "type": "string",
-            "description": "Optional skill slug to load as additional system context (see list_skills).",
-        },
-    },
-    "required": ["task"],
+# Tools a sub-agent must NOT have: spawning more sub-agents (recursion) and
+# irreversible comms / memory mutation it shouldn't do unsupervised.
+_EXCLUDED = {
+    "delegate", "delegate_parallel", "delegate_to_hermes",
+    "imessage_send", "sendblue_send", "call_phone",
+    "remember", "forget",
 }
+
+_WORKER_PROMPT = (
+    "You are a sub-agent dispatched by Sunday for one scoped task. You have "
+    "tools — use them to actually do the work (read pages in the browser, run "
+    "commands, drive apps, search). You do NOT have the main conversation, so "
+    "everything you need is in the task. Work until the task is done, then "
+    "return a single complete, self-contained result: what you found or did, "
+    "with the concrete details (links, values, file paths) the caller needs. "
+    "No chit-chat, no questions back — just do it and report. If you genuinely "
+    "can't, say exactly what blocked you."
+)
+
+
+def _worker_registry(config: SundayConfig) -> ToolRegistry:
+    """A fresh registry with the dangerous/recursive tools stripped."""
+    from sunday.tools import default_registry
+    reg = default_registry(config)
+    for name in _EXCLUDED:
+        reg.remove(name)
+    return reg
+
+
+async def _run_one(task: str, extra: str, skill_slug: str, ctx: ToolContext) -> str:
+    from sunday.brain import respond
+    from sunday.chat import Chat
+
+    system = _WORKER_PROMPT
+    if skill_slug:
+        skill = load_skill(skill_slug)
+        if skill:
+            system += f"\n\n# Skill: {skill.name}\n\n{skill.body()}"
+
+    prompt = task if not extra else f"{task}\n\n# Context\n\n{extra}"
+    sub_chat = Chat(path=":memory:")           # isolated, ephemeral
+    # Pass the parent's tool extras (devices, etc.) so the worker's tools
+    # work — but drop broadcast + memory so it runs silently and writes
+    # nothing to the user's memory.
+    extras = {k: v for k, v in (ctx.extras or {}).items() if k not in ("broadcast", "memory")}
+    reg = _worker_registry(ctx.config)
+    return await respond(
+        sub_chat, prompt, "subagent", ctx.config,
+        registry=reg, extras=extras, system_prompt=system,
+    )
 
 
 async def _t_delegate(args: dict[str, Any], ctx: ToolContext) -> Any:
     task = (args.get("task") or "").strip()
     if not task:
         return {"error": "'task' is required"}
-    extra = (args.get("context") or "").strip()
-    skill_slug = (args.get("skill") or "").strip()
-
-    from sunday.runtime import build_runtime
-
-    system = (
-        "You are a focused sub-agent dispatched by Sunday for a single, "
-        "self-contained task. No tools, no memory, no chat history — just "
-        "the task and any provided context. Be direct, complete, and brief."
-    )
-
-    if skill_slug:
-        skill = load_skill(skill_slug)
-        if skill is None:
-            return {"error": f"no such skill: {skill_slug}"}
-        system += f"\n\n# Skill loaded: {skill.name}\n\n{skill.body()}"
-
-    user_block = task if not extra else f"{task}\n\n# Extra context\n\n{extra}"
-
     try:
-        rt = build_runtime(ctx.config)
-        result = await rt.complete(
-            system_prompt=system,
-            messages=[{"role": "user", "content": user_block}],
-            tools_schema=None,
-        )
+        answer = await _run_one(task, (args.get("context") or "").strip(),
+                                (args.get("skill") or "").strip(), ctx)
     except Exception as exc:  # noqa: BLE001
         log.warning("sub-agent failed", error=str(exc))
         return {"error": f"sub-agent failed: {type(exc).__name__}: {exc}"}
-
-    answer = (result.content or "").strip()
-    log.info("sub-agent answered", task_chars=len(task), answer_chars=len(answer), skill=skill_slug or None)
+    log.info("sub-agent done", task_chars=len(task), answer_chars=len(answer or ""))
     return {"answer": answer}
+
+
+async def _t_delegate_parallel(args: dict[str, Any], ctx: ToolContext) -> Any:
+    tasks = args.get("tasks") or []
+    if not isinstance(tasks, list) or not tasks:
+        return {"error": "'tasks' must be a non-empty list of task strings"}
+    tasks = [str(t).strip() for t in tasks if str(t).strip()][:6]
+    results = await asyncio.gather(
+        *[_run_one(t, "", "", ctx) for t in tasks], return_exceptions=True
+    )
+    out = []
+    for t, r in zip(tasks, results):
+        out.append({"task": t, "error": str(r)} if isinstance(r, Exception) else {"task": t, "answer": r})
+    return {"results": out}
+
+
+_DELEGATE_PARAMS = {
+    "type": "object",
+    "properties": {
+        "task": {"type": "string", "description": "Self-contained task. Include everything the worker needs — it can't see the main chat."},
+        "context": {"type": "string", "description": "Optional extra context (snippets, links, facts)."},
+        "skill": {"type": "string", "description": "Optional skill slug to load as procedure context (see list_skills)."},
+    },
+    "required": ["task"],
+}
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="delegate",
         description=(
-            "Hand off a scoped, self-contained task to a fresh sub-agent that "
-            "has NO access to the main chat history, memory, or tools — just "
-            "the task you give it. Optionally load a skill (see list_skills) "
-            "to give the sub-agent extra procedure context. Returns one "
-            "self-contained answer. Use when you want focused work that "
-            "shouldn't dilute the main conversation."
+            "Hand a scoped multi-step task to a worker sub-agent that runs the "
+            "full agent loop WITH tools (browse, read, run commands, drive apps) "
+            "in its own isolated context — no main chat history, no memory "
+            "writes, can't send messages or spawn sub-agents. Returns one "
+            "complete result. Use it to keep grunt work (research, digging "
+            "through a doc, checking pages) out of the main conversation."
         ),
         parameters=_DELEGATE_PARAMS,
         run=_t_delegate,
+    ))
+    registry.register(Tool(
+        name="delegate_parallel",
+        description=(
+            "Run several independent worker sub-agents at once (each with tools, "
+            "isolated). Pass a list of self-contained task strings; returns all "
+            "their results. Use for fan-out work — e.g. check five links, "
+            "research three options — that doesn't need to be sequential."
+        ),
+        parameters={"type": "object", "properties": {
+            "tasks": {"type": "array", "items": {"type": "string"}, "description": "Up to 6 self-contained tasks to run concurrently."},
+        }, "required": ["tasks"]},
+        run=_t_delegate_parallel,
     ))
