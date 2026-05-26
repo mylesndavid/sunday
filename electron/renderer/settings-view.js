@@ -35,7 +35,8 @@ export async function loadAll() {
     const c = await res.json();
     $('#set-provider').value = c.model?.provider || '';
     $('#set-model').value = c.model?.name || '';
-    syncModelPreset();
+    await loadModels();
+    showCurrentModel();
     defaultPrompt = c.identity_prompt?.default || '';
     const eff = c.identity_prompt?.effective || '';
     const custom = !!c.identity_prompt?.custom_present;
@@ -50,10 +51,61 @@ export async function loadAll() {
 }
 
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
-function syncModelPreset() {
-  const cur = $('#set-model').value.trim();
-  const sel = $('#set-model-preset');
-  if (sel) sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
+
+// ── model picker (searchable OpenRouter catalog) ──
+let allModels = [];
+let modelsLoaded = false;
+
+async function loadModels() {
+  if (modelsLoaded) return;
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/models`);
+    const d = await res.json();
+    allModels = d.models || [];
+    modelsLoaded = allModels.length > 0;
+  } catch { allModels = []; }
+}
+
+function showCurrentModel() {
+  const slug = $('#set-model').value.trim();
+  const cur = $('#set-model-current');
+  $('#set-model-save').disabled = !slug;
+  if (!slug) { cur.hidden = true; return; }
+  const m = allModels.find((x) => x.id === slug);
+  const vision = m?.vision;
+  cur.hidden = false;
+  cur.innerHTML = `<span class="mc-label">Current</span>
+    <span class="mc-name">${esc(m?.name || slug)}</span>
+    ${vision ? '<span class="mc-vision">sees images</span>' : '<span class="mc-text">text only</span>'}
+    <span class="mc-slug">${esc(slug)}</span>`;
+}
+
+function renderModelResults(q) {
+  const box = $('#set-model-results');
+  const query = q.trim().toLowerCase();
+  let list = allModels;
+  if (query) list = allModels.filter((m) => m.id.toLowerCase().includes(query) || (m.name || '').toLowerCase().includes(query));
+  list = list.slice(0, 60);
+  if (!list.length) { box.hidden = true; return; }
+  box.innerHTML = list.map((m) => `
+    <button class="model-row" data-id="${esc(m.id)}">
+      <span class="mr-name">${esc(m.name || m.id)}</span>
+      ${m.vision ? '<span class="mr-vision">sees images</span>' : ''}
+      <span class="mr-slug">${esc(m.id)}</span>
+    </button>`).join('');
+  box.hidden = false;
+  box.querySelectorAll('.model-row').forEach((b) => b.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    pickModel(b.dataset.id);
+  }));
+}
+
+function pickModel(id) {
+  $('#set-model').value = id;
+  $('#set-model-search').value = '';
+  $('#set-model-results').hidden = true;
+  $('#set-model-save').disabled = false;
+  showCurrentModel();
 }
 
 async function refreshSystem() {
@@ -99,11 +151,17 @@ function wire() {
     await window.sunday.saveConnection({ daemonHttp: http, daemonWs: ws });
     flashSaved();
   });
-  $('#set-model-preset').addEventListener('change', (e) => { if (e.target.value) { $('#set-model').value = e.target.value; } });
-  $('#set-model').addEventListener('input', syncModelPreset);
+  const search = $('#set-model-search');
+  search.addEventListener('focus', async () => { await loadModels(); renderModelResults(search.value); });
+  search.addEventListener('input', () => renderModelResults(search.value));
+  search.addEventListener('blur', () => setTimeout(() => { $('#set-model-results').hidden = true; }, 160));
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const v = search.value.trim(); if (v && allModels.some((m) => m.id === v)) pickModel(v); }
+    if (e.key === 'Escape') { $('#set-model-results').hidden = true; }
+  });
   $('#set-model-save').addEventListener('click', async () => {
     const model = $('#set-model').value.trim();
-    if (!model) { flashError('model name required'); return; }
+    if (!model) { flashError('pick a model first'); return; }
     try {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_name: model }) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`); flashSaved();

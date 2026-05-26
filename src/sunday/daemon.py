@@ -329,6 +329,38 @@ class Daemon:
             log.exception("memory graph rebuild failed")
             return web.json_response({"error": str(exc)}, status=500)
 
+    async def _http_models(self, request: web.Request) -> web.Response:
+        """Proxy + trim OpenRouter's public model catalog (cached ~1h) so the
+        app can offer a searchable picker with a 'sees images' flag."""
+        import time as _t
+        cache = getattr(self, "_models_cache", None)
+        if cache and (_t.time() - cache[0] < 3600):
+            return web.json_response({"models": cache[1]})
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as client:
+                res = await client.get("https://openrouter.ai/api/v1/models")
+            raw = res.json().get("data", [])
+            out = []
+            for m in raw:
+                arch = m.get("architecture") or {}
+                ins = arch.get("input_modalities") or ([arch.get("modality", "")] if arch.get("modality") else [])
+                vision = any("image" in str(x).lower() for x in ins)
+                pr = m.get("pricing") or {}
+                out.append({
+                    "id": m.get("id"),
+                    "name": m.get("name") or m.get("id"),
+                    "vision": vision,
+                    "context": m.get("context_length"),
+                    "prompt_price": pr.get("prompt"),
+                })
+            out = [m for m in out if m["id"]]
+            self._models_cache = (_t.time(), out)
+            return web.json_response({"models": out})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("models fetch failed", error=str(exc))
+            return web.json_response({"models": [], "error": str(exc)})
+
     # ─── rewind (screen history) — routes to the satellite advertising it ──
 
     def _rewind_device(self) -> str | None:
@@ -476,6 +508,7 @@ class Daemon:
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
+        app.router.add_get("/v1/models", self._http_models)
         app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
         app.router.add_get("/v1/rewind/state", self._http_rewind_state)
         app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)

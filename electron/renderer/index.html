@@ -138,26 +138,18 @@
 
         <section class="set-block" id="sec-model">
           <h2>Model</h2>
-          <p class="set-help">Sunday's brain. Pick one below or type any OpenRouter slug. Models marked <strong>sees images</strong> can look at screenshots you send — others answer text-only. Takes effect on the next message.</p>
-          <label><span>Choose a model</span>
-            <select id="set-model-preset" class="field">
-              <option value="">— pick a model —</option>
-              <optgroup label="Fast &amp; cheap (text only)">
-                <option value="deepseek/deepseek-v4-flash">DeepSeek V4 Flash</option>
-                <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
-                <option value="meta-llama/llama-3.3-70b-instruct">Llama 3.3 70B</option>
-              </optgroup>
-              <optgroup label="Sees images">
-                <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash · sees images</option>
-                <option value="openai/gpt-4o-mini">GPT-4o mini · sees images</option>
-                <option value="openai/gpt-4o">GPT-4o · sees images</option>
-                <option value="anthropic/claude-3.7-sonnet">Claude 3.7 Sonnet · sees images</option>
-              </optgroup>
-            </select>
-          </label>
-          <label><span>Model slug</span><input type="text" id="set-model" class="field mono" placeholder="deepseek/deepseek-v4-flash"></label>
+          <p class="set-help">Sunday's brain — the full OpenRouter catalog. Search, then click one. Models tagged <strong>sees images</strong> can look at the screenshots you send; the rest answer text-only. Takes effect on the next message.</p>
+          <div class="model-pick">
+            <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
+            <div class="model-results" id="set-model-results" hidden></div>
+          </div>
+          <div class="model-current" id="set-model-current" hidden></div>
+          <input type="text" id="set-model" hidden>
           <input type="text" id="set-provider" hidden>
-          <div class="set-actions"><button class="btn btn-primary" id="set-model-save">Save model</button></div>
+          <div class="set-actions">
+            <span class="set-verify" id="set-model-note"></span>
+            <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
+          </div>
         </section>
 
         <section class="set-block" id="sec-personality">
