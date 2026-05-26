@@ -260,11 +260,11 @@ async def extract_facts(user_text: str, sunday_reply: str, config: SundayConfig)
     Uses OpenRouter (default runtime) so it's cheap and routed through the
     same gateway as the main brain.
     """
-    from sunday.runtime_openai import OpenAIRuntime
+    from sunday.runtime import build_runtime
 
     prompt = f"User said:\n{user_text.strip()}\n\nSunday replied:\n{sunday_reply.strip()}\n\nJSON array of durable facts about the user:"
     try:
-        rt = OpenAIRuntime(config)
+        rt = build_runtime(config)
         result = await rt.complete(
             system_prompt=EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": prompt}],

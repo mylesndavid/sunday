@@ -49,7 +49,7 @@ async def _t_delegate(args: dict[str, Any], ctx: ToolContext) -> Any:
     extra = (args.get("context") or "").strip()
     skill_slug = (args.get("skill") or "").strip()
 
-    from sunday.runtime_openai import OpenAIRuntime
+    from sunday.runtime import build_runtime
 
     system = (
         "You are a focused sub-agent dispatched by Sunday for a single, "
@@ -66,7 +66,7 @@ async def _t_delegate(args: dict[str, Any], ctx: ToolContext) -> Any:
     user_block = task if not extra else f"{task}\n\n# Extra context\n\n{extra}"
 
     try:
-        rt = OpenAIRuntime(ctx.config)
+        rt = build_runtime(ctx.config)
         result = await rt.complete(
             system_prompt=system,
             messages=[{"role": "user", "content": user_block}],
