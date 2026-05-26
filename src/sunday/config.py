@@ -116,9 +116,21 @@ class SundayConfig:
 
 
 def load_config() -> SundayConfig:
-    """Return the default config.
+    """Return the default config, with a couple of env overrides.
 
-    YAML overlay loading (~/.sunday/config.yaml) lands in v0.1 when we
-    actually have something to configure beyond defaults.
+    SUNDAY_HOST / SUNDAY_PORT let the daemon bind somewhere other than
+    127.0.0.1:8765 — needed when it runs in a container (bind 0.0.0.0).
+    YAML overlay loading (~/.sunday/config.yaml) lands later.
     """
-    return SundayConfig()
+    import os
+    cfg = SundayConfig()
+    host = os.environ.get("SUNDAY_HOST")
+    port = os.environ.get("SUNDAY_PORT")
+    if host:
+        cfg.server.host = host
+    if port:
+        try:
+            cfg.server.port = int(port)
+        except ValueError:
+            pass
+    return cfg

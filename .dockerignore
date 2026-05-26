@@ -1,0 +1,11 @@
+.venv
+**/__pycache__
+**/*.pyc
+.git
+electron/node_modules
+electron/dist
+desktop
+*.dmg
+.sunday
+nango-data
+deploy/.env

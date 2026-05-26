@@ -1,0 +1,88 @@
+# Sunday — the whole self-hosted stack in one compose.
+#
+#   cp .env.example .env   # fill in your keys
+#   docker compose up -d
+#
+# Brings up:
+#   sunday        — the agent daemon (HTTP/WS on :8765)
+#   nango-server  — OAuth + token management + API proxy (:3003)
+#   nango-db      — Postgres for Nango
+#   nango-redis   — Redis for Nango
+#
+# Sunday reaches Nango privately over the compose network
+# (http://nango-server:3003); only Nango's public URL (for OAuth
+# callbacks) needs to be reachable from the internet — front it with your
+# reverse proxy (Caddy/nginx) and point a hostname at :3003.
+
+services:
+  sunday:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: sunday:local
+    container_name: sunday
+    restart: unless-stopped
+    environment:
+      SUNDAY_HOST: 0.0.0.0
+      SUNDAY_PORT: 8765
+      # Sunday reads credentials from env first (see credentials.py).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Integrations via the bundled Nango (internal address).
+      NANGO_HOST: http://nango-server:3003
+      NANGO_SECRET_KEY: ${NANGO_SECRET_KEY:-}
+      NANGO_CONNECTION_ID: ${NANGO_CONNECTION_ID:-sunday}
+    volumes:
+      - sunday-data:/data
+    ports:
+      - "${SUNDAY_PORT:-8765}:8765"
+    depends_on:
+      - nango-server
+
+  nango-server:
+    image: nangohq/nango-server:hosted
+    container_name: nango-server
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      - NANGO_ENCRYPTION_KEY=${NANGO_ENCRYPTION_KEY}
+      - NANGO_DB_USER=nango
+      - NANGO_DB_PASSWORD=${NANGO_DB_PASSWORD}
+      - NANGO_DB_HOST=nango-db
+      - NANGO_DB_NAME=nango
+      - RECORDS_DATABASE_URL=postgresql://${NANGO_DB_USER}:${NANGO_DB_PASSWORD}@nango-db:5432/nango
+      - SERVER_PORT=3003
+      - NANGO_SERVER_URL=${NANGO_PUBLIC_URL:-http://localhost:3003}
+      - NANGO_PUBLIC_SERVER_URL=${NANGO_PUBLIC_URL:-http://localhost:3003}
+      - NANGO_REDIS_URL=redis://nango-redis:6379
+      - FLAG_AUTH_ENABLED=${NANGO_AUTH_ENABLED:-true}
+      - NANGO_DASHBOARD_USERNAME=${NANGO_DASHBOARD_USERNAME:-admin}
+      - NANGO_DASHBOARD_PASSWORD=${NANGO_DASHBOARD_PASSWORD}
+      - NANGO_LOGS_ENABLED=false
+      - FLAG_SERVE_CONNECT_UI=true
+      - TELEMETRY=false
+    ports:
+      - "3003:3003"
+    depends_on:
+      - nango-db
+      - nango-redis
+
+  nango-db:
+    image: postgres:16.0-alpine
+    container_name: nango-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nango
+      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD}
+      POSTGRES_DB: nango
+    volumes:
+      - nango-data:/var/lib/postgresql/data
+
+  nango-redis:
+    image: redis:7.2.4
+    container_name: nango-redis
+    restart: unless-stopped
+
+volumes:
+  sunday-data:
+  nango-data:
