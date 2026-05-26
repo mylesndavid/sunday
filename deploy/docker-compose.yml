@@ -34,6 +34,8 @@ services:
       NANGO_CONNECTION_ID: ${NANGO_CONNECTION_ID:-sunday}
       NANGO_PUBLIC_URL: ${NANGO_PUBLIC_URL:-}
       NANGO_PUBLIC_KEY: ${NANGO_PUBLIC_KEY:-}
+      # Public URL of Nango's Connect UI (port 3009) — where users approve.
+      NANGO_CONNECT_URL: ${NANGO_CONNECT_URL:-}
       # OAuth client creds — set these and Sunday auto-provisions the Nango
       # integrations on startup (no dashboard clicking).
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -69,6 +71,7 @@ services:
       - TELEMETRY=false
     ports:
       - "3003:3003"
+      - "3009:3009"   # Connect UI
     depends_on:
       - nango-db
       - nango-redis

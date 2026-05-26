@@ -117,15 +117,15 @@ async def get_integration(key: str) -> dict | None:
     if not configured():
         return None
     async with httpx.AsyncClient(timeout=15) as client:
-        res = await client.get(f"{host()}/config/{key}", headers=_headers())
+        res = await client.get(f"{host()}/integrations/{key}", headers=_headers())
     if res.status_code == 200:
-        return res.json().get("config", res.json())
+        return res.json().get("data", res.json())
     return None
 
 
 async def ensure_integration(provider: str) -> dict[str, Any]:
     """Declaratively create the Nango integration from env-held OAuth client
-    creds, if it doesn't already exist. Idempotent."""
+    creds, if it doesn't already exist. Idempotent. (Nango 0.70.x API.)"""
     p = PROVIDERS.get(provider)
     if not p:
         return {"error": f"unknown provider {provider}"}
@@ -139,14 +139,17 @@ async def ensure_integration(provider: str) -> dict[str, Any]:
     if not client_id or not client_secret:
         return {"skipped": True, "reason": f"set {p['client_id_env']} + {p['client_secret_env']}"}
     body = {
-        "provider_config_key": key,
         "provider": p["template"],
-        "oauth_client_id": client_id,
-        "oauth_client_secret": client_secret,
-        "oauth_scopes": ",".join(p["scopes"]),
+        "unique_key": key,
+        "credentials": {
+            "type": "OAUTH2",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scopes": ",".join(p["scopes"]),
+        },
     }
     async with httpx.AsyncClient(timeout=15) as client:
-        res = await client.post(f"{host()}/config", headers=_headers(), json=body)
+        res = await client.post(f"{host()}/integrations", headers=_headers(), json=body)
     if res.status_code >= 400:
         return {"error": f"create integration failed ({res.status_code}): {res.text[:200]}"}
     log.info("nango integration provisioned", provider=provider, key=key)
@@ -167,13 +170,21 @@ async def provision_from_env() -> dict[str, Any]:
     return out
 
 
+def connect_url_base() -> str | None:
+    u = get_credential("NANGO_CONNECT_URL")
+    return u.rstrip("/") if u else None
+
+
 async def create_connect_session(provider: str, end_user: dict | None = None) -> dict[str, Any]:
-    # make sure the integration exists (env-driven) before connecting
-    await ensure_integration(provider)
-    """Current Nango flow: mint a connect session token the Connect UI uses.
-    Returns {token, connect_url} best-effort."""
+    """Mint a connect session and return the public Connect UI URL the user
+    opens in a browser. Ensures the integration exists first (env-driven)."""
     if not configured():
-        return {"error": "Nango isn't configured. Set NANGO_HOST + NANGO_SECRET_KEY in Settings."}
+        return {"error": "Nango isn't configured. Set NANGO_HOST + NANGO_SECRET_KEY."}
+    ens = await ensure_integration(provider)
+    if ens.get("error"):
+        return {"error": ens["error"]}
+    if ens.get("skipped"):
+        return {"error": f"{PROVIDERS[provider]['label']} has no OAuth client configured yet — {ens['reason']}."}
     key = provider_key(provider)
     body = {
         "end_user": end_user or {"id": connection_id()},
@@ -183,16 +194,13 @@ async def create_connect_session(provider: str, end_user: dict | None = None) ->
         res = await client.post(f"{host()}/connect/sessions", headers=_headers(), json=body)
     if res.status_code >= 400:
         return {"error": f"nango connect session failed ({res.status_code}): {res.text[:200]}"}
-    token = (res.json().get("data") or {}).get("token")
-    out = {"token": token, "provider_config_key": key}
-    # Reliable no-SDK path: the OAuth-connect URL the user opens in a
-    # browser. Nango runs the consent + handles the callback.
-    if public_url() and public_key():
-        out["connect_url"] = (
-            f"{public_url()}/oauth/connect/{key}"
-            f"?connection_id={connection_id()}&public_key={public_key()}"
-        )
-    return out
+    data = res.json().get("data") or {}
+    token = data.get("token")
+    # Nango's connect_link points at the internal connect-ui host
+    # (localhost:3009); rebuild it against the public Connect UI URL.
+    base = connect_url_base()
+    link = f"{base}/?session_token={token}" if base else data.get("connect_link", "")
+    return {"token": token, "provider_config_key": key, "connect_url": link}
 
 
 async def proxy(
