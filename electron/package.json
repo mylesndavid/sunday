@@ -1,8 +1,8 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.0.1",
-  "description": "Sunday — a personal AI that knows you.",
+  "version": "0.0.3",
+  "description": "Sunday \u2014 a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -34,15 +34,27 @@
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
-        { "target": "dmg",  "arch": ["arm64", "x64"] },
-        { "target": "zip",  "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Sunday uses the microphone for voice input + the \"Hey Sunday\" wake word.",
+        "NSMicrophoneUsageDescription": "Sunday uses the microphone for the one-shot mic button in chat. There is no always-on listener.",
         "NSCameraUsageDescription": "Sunday does not use the camera.",
         "ITSAppUsesNonExemptEncryption": false
       },
@@ -52,8 +64,16 @@
       "title": "Sunday ${version}",
       "writeUpdateInfo": false,
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     }
   }

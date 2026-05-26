@@ -1,12 +1,11 @@
 // Sunday desktop — renderer.
 //
 // One WS to the daemon, one chat rendered in order, one composer that
-// sends text + attachments. Voice goes through the browser's
-// SpeechRecognition for now (Whisper via the daemon is the upgrade path).
-// "Hey Sunday" wake word is a continuous SpeechRecognition listener that
-// hands focus to the composer and arms an immediate voice utterance.
-
-import { initWakeWord, stopWakeWord } from './wake.js';
+// sends text + attachments. The mic button in the composer triggers a
+// one-shot SpeechRecognition utterance. There is no always-on "Hey
+// Sunday" wake word — that listener pinned the mic open and lit the
+// menu-bar indicator constantly. If we bring it back it'll be opt-in
+// from settings, not on by default.
 
 const $ = (sel) => document.querySelector(sel);
 const chatEl       = $('#chat');
@@ -39,7 +38,6 @@ async function boot() {
   await refreshLog();
   await refreshStatus();
   connectWs();
-  initWakeWord({ onTrigger: handleWakeTrigger });
 }
 
 function setOnline(state) {
@@ -330,7 +328,7 @@ async function addFiles(files) {
   renderAttachmentChips();
 }
 
-// ─── voice + wake word ─────────────────────────────────────────────────
+// ─── voice (one-shot via the mic button) ───────────────────────────────
 
 let recog = null;
 let listening = false;
@@ -370,11 +368,6 @@ function startVoice(immediate = false) {
 
 function stopVoice() {
   if (recog && listening) recog.stop();
-}
-
-function handleWakeTrigger() {
-  composerEl.focus();
-  startVoice(true);
 }
 
 // ─── interactions ──────────────────────────────────────────────────────
