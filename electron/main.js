@@ -192,6 +192,10 @@ ipcMain.handle('sunday:rewind-image', async (_evt, p) => {
   }
 });
 
+ipcMain.handle('sunday:open-external', (_evt, url) => {
+  try { shell.openExternal(String(url)); return true; } catch { return false; }
+});
+
 ipcMain.on('sunday:overlay-state', (_evt, state) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('sunday:overlay-state', state);
