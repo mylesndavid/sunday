@@ -1,7 +1,8 @@
-/* Sunday HUD — a notch-anchored ambient overlay. The compact bar visually
- * extends the MacBook notch (black, rounded bottom); the physical notch sits
- * in the center gap. Sunday mark on the left, live agent count on the right.
- * Click → a Jarvis-y glass card drops down with what's running. */
+/* Sunday HUD — notch-integrated, ambient. Recedes to nothing when idle;
+ * grows out of the notch when Sunday is working (sub-agents running), with
+ * the count beside the notch + a warm underglow. Click → a glass card.
+ * Shape mirrors BetterBot: square top corners (flush to the screen edge so
+ * it merges with the notch), rounded bottom. */
 
 * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
 html, body {
@@ -11,82 +12,70 @@ html, body {
   overflow: hidden;
   color: #f4eee3;
 }
+:root { --notch-h: 38px; --amber: #e8932e; --ok: #93c9a1; --err: #e08a6e; }
 
-:root {
-  --notch-h: 38px;          /* overwritten by JS to the real inset */
-  --amber: #e8932e;
-  --ok: #93c9a1;
-  --err: #e08a6e;
-}
+.notch { display: flex; flex-direction: column; align-items: center; }
 
-.notch { position: relative; display: flex; flex-direction: column; align-items: center; }
-
-/* ── compact bar: extends the notch ── */
+/* the notch shape: square top, rounded bottom, black to merge with the notch */
 .bar {
   height: var(--notch-h);
   width: 100%;
   background: #000;
-  border-radius: 0 0 16px 16px;
-  display: flex; align-items: center;
-  padding: 0 12px;
+  border-radius: 0 0 15px 15px;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 14px;
   cursor: pointer;
-  transition: filter 160ms ease;
+  /* idle → invisible + collapsed; active → fades in */
+  opacity: 0;
+  transition: opacity 260ms ease;
 }
-.bar:hover { filter: brightness(1.25); }
-.gap { flex: 1; }                 /* the physical notch lives here */
-.shoulder { display: flex; align-items: center; gap: 7px; height: 100%; min-width: 78px; }
-.shoulder.left { justify-content: flex-start; }
-.shoulder.right { justify-content: flex-end; }
+.notch[data-mode="active"] .bar,
+.notch[data-mode="expanded"] .bar { opacity: 1; }
 
-.mark { width: 17px; height: 17px; border-radius: 5px; opacity: 0.92; }
+/* warm underglow only while working */
+.notch[data-mode="active"] .bar::after,
+.notch[data-mode="expanded"] .bar::after {
+  content: ""; position: absolute; left: 10%; right: 10%; bottom: -1px; height: 3px;
+  background: var(--amber); border-radius: 3px;
+  filter: blur(5px); opacity: 0.8;
+  animation: glow 2.4s ease-in-out infinite;
+}
+@keyframes glow { 0%,100%{opacity:.5} 50%{opacity:.95} }
 
-.agents { display: inline-flex; align-items: center; gap: 5px; }
-.agents[hidden] { display: none; }
+/* the live agent count, sitting on the right shoulder beside the notch */
+.agents { display: inline-flex; align-items: center; gap: 6px; }
 .agents .spin {
   width: 9px; height: 9px; border-radius: 50%;
   border: 1.6px solid rgba(232,147,46,0.35); border-top-color: var(--amber);
   animation: spin 0.8s linear infinite;
 }
-.agents .count { font: 600 12px/1 var(--font-mono, "SF Mono", ui-monospace, monospace); color: var(--amber); font-variant-numeric: tabular-nums; }
+.agents .count { font: 600 12px/1 "SF Mono", ui-monospace, monospace; color: var(--amber); font-variant-numeric: tabular-nums; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.conn { width: 7px; height: 7px; border-radius: 50%; background: #847c6e; transition: background 200ms ease, box-shadow 200ms ease; }
-.conn[data-state="online"] { background: var(--ok); }
-.conn[data-state="offline"] { background: var(--err); }
-.conn[data-state="connecting"] { background: var(--amber); animation: pulse 1.4s ease-in-out infinite; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-
-/* ── expanded glass HUD card ── */
+/* ── expanded glass card ── */
 .hud {
-  width: 340px;
-  margin-top: 8px;
-  background: rgba(18, 15, 11, 0.72);
+  width: 340px; margin-top: 8px;
+  background: rgba(18, 15, 11, 0.74);
   backdrop-filter: blur(22px) saturate(1.3);
   border: 1px solid rgba(244, 238, 227, 0.10);
   border-radius: 18px;
   box-shadow: 0 18px 50px rgba(0,0,0,0.5);
   padding: 14px 16px 16px;
-  opacity: 0; transform: translateY(-10px) scale(0.98);
-  pointer-events: none;
+  opacity: 0; transform: translateY(-10px) scale(0.98); pointer-events: none;
   transition: opacity 220ms cubic-bezier(0.16,1,0.3,1), transform 220ms cubic-bezier(0.16,1,0.3,1);
 }
 .notch[data-mode="expanded"] .hud { opacity: 1; transform: none; pointer-events: auto; }
-.notch[data-mode="expanded"] .bar { border-radius: 0 0 16px 16px; }
 
 .mono { font-family: "SF Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
-
 .hud-head { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid rgba(244,238,227,0.08); }
 .hud-mark { width: 22px; height: 22px; border-radius: 6px; }
 .hud-name { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; }
 .hud-conn { margin-left: auto; font-size: 11px; color: #b6aea0; }
-
-.hud-agents { padding: 12px 0; min-height: 30px; }
+.hud-agents { padding: 12px 0; min-height: 28px; }
 .hud-empty { font-size: 13px; color: #847c6e; }
 .hud-agent-list { list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .hud-agent-list li { display: flex; align-items: center; gap: 9px; font-size: 13px; color: #ece4d6; line-height: 1.35; }
-.hud-agent-list .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(232,147,46,0.18); animation: pulse 1.4s ease-in-out infinite; }
-
-.hud-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding-top: 12px; border-top: 1px solid rgba(244,238,227,0.08); font-size: 11.5px; color: #b6aea0; }
-.hud-stats .k { color: #847c6e; }
-.hud-stats .v { color: #f4eee3; text-align: right; }
+.hud-agent-list .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(232,147,46,0.18); }
+.hud-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding-top: 12px; border-top: 1px solid rgba(244,238,227,0.08); font-size: 11.5px; }
 .hud-stats .row { display: flex; justify-content: space-between; }
+.hud-stats .k { color: #847c6e; } .hud-stats .v { color: #f4eee3; }

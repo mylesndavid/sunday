@@ -8,18 +8,13 @@
 <body>
   <!-- compact: a bar that extends the notch. center is the physical notch
        (empty); Sunday mark on the left shoulder, agent count on the right. -->
-  <div class="notch" id="notch" data-mode="compact">
+  <div class="notch" id="notch" data-mode="idle">
+    <!-- compact bar: invisible when idle, fades in beside the notch when
+         working, with the live agent count on the right shoulder. -->
     <div class="bar" id="bar">
-      <div class="shoulder left">
-        <img class="mark" src="../renderer/sunday-mark.png" alt="Sunday">
-      </div>
-      <div class="gap"></div>
-      <div class="shoulder right">
-        <div class="agents" id="agents-badge" hidden>
-          <span class="spin"></span>
-          <span class="count" id="agents-count">0</span>
-        </div>
-        <span class="conn" id="conn" data-state="connecting"></span>
+      <div class="agents" id="agents-badge">
+        <span class="spin"></span>
+        <span class="count" id="agents-count">0</span>
       </div>
     </div>
 
