@@ -21,7 +21,7 @@ html, body {
   height: var(--notch-h);
   width: 100%;
   background: #000;
-  border-radius: 0 0 15px 15px;
+  border-radius: 0 0 14px 14px;   /* matches BetterBot's notchRadius */
   display: flex; align-items: center; justify-content: flex-end;
   padding: 0 14px;
   cursor: pointer;
