@@ -112,7 +112,22 @@ async def respond(
 
     rt = runtime or build_runtime(config)
     ctx = ToolContext(chat=chat, config=config, modality=modality, extras=extras or {})
-    tool_schema = registry.as_openai_schema() if (registry and registry.list_tools()) else None
+
+    # Tiered tools: when the caller opts in (extras['active_tools'] is a set),
+    # send only the lean core + whatever find_tools has activated — keeps the
+    # per-turn schema small no matter how many MCP servers are connected.
+    # Subagents / other callers (no active_tools) get the full schema.
+    from sunday.tools import CORE_TOOLS
+    _active = (extras or {}).get("active_tools")
+
+    def _schema():
+        if not (registry and registry.list_tools()):
+            return None
+        if _active is None:
+            return registry.as_openai_schema()
+        return registry.as_openai_schema(names=set(CORE_TOOLS) | set(_active))
+
+    tool_schema = _schema()
 
     broadcast = (extras or {}).get("broadcast")
     memory    = (extras or {}).get("memory")
@@ -171,7 +186,7 @@ async def respond(
         result = await rt.complete(
             system_prompt=system_prompt or stable_prefix(),
             messages=_context_messages(chat, memory_block=memory_block),
-            tools_schema=tool_schema,
+            tools_schema=_schema(),   # rebuilt each iteration — find_tools grows it mid-turn
             on_delta=_emit_delta,
         )
 
