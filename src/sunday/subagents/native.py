@@ -23,6 +23,26 @@ from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.subagent.native")
 
+# Live registry of running sub-agents — powers the notch HUD's agent count.
+import itertools
+_ACTIVE: dict[int, str] = {}
+_AGENT_SEQ = itertools.count(1)
+
+
+def active_agents() -> list[dict[str, Any]]:
+    """Currently-running sub-agents (id + short task label). Read by the
+    daemon's /v1/status for the HUD."""
+    return [{"id": i, "task": t} for i, t in _ACTIVE.items()]
+
+
+async def _broadcast_agents(ctx: ToolContext) -> None:
+    bc = (ctx.extras or {}).get("broadcast")
+    if bc:
+        try:
+            await bc({"type": "agents", "active": active_agents()})
+        except Exception:  # noqa: BLE001
+            pass
+
 # Tools a sub-agent must NOT have: spawning more sub-agents (recursion) and
 # irreversible comms / memory mutation it shouldn't do unsupervised.
 _EXCLUDED = {
@@ -69,10 +89,17 @@ async def _run_one(task: str, extra: str, skill_slug: str, ctx: ToolContext) -> 
     # nothing to the user's memory.
     extras = {k: v for k, v in (ctx.extras or {}).items() if k not in ("broadcast", "memory")}
     reg = _worker_registry(ctx.config)
-    return await respond(
-        sub_chat, prompt, "subagent", ctx.config,
-        registry=reg, extras=extras, system_prompt=system,
-    )
+    agent_id = next(_AGENT_SEQ)
+    _ACTIVE[agent_id] = (task[:60] + "…") if len(task) > 60 else task
+    await _broadcast_agents(ctx)
+    try:
+        return await respond(
+            sub_chat, prompt, "subagent", ctx.config,
+            registry=reg, extras=extras, system_prompt=system,
+        )
+    finally:
+        _ACTIVE.pop(agent_id, None)
+        await _broadcast_agents(ctx)
 
 
 async def _t_delegate(args: dict[str, Any], ctx: ToolContext) -> Any:

@@ -2,13 +2,40 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Sunday</title>
+  <title>Sunday HUD</title>
   <link rel="stylesheet" href="overlay.css">
 </head>
 <body>
-  <div class="pill" id="pill" data-state="idle">
-    <div class="dot"></div>
-    <div class="label" id="label">Sunday</div>
+  <!-- compact: a bar that extends the notch. center is the physical notch
+       (empty); Sunday mark on the left shoulder, agent count on the right. -->
+  <div class="notch" id="notch" data-mode="compact">
+    <div class="bar" id="bar">
+      <div class="shoulder left">
+        <img class="mark" src="../renderer/sunday-mark.png" alt="Sunday">
+      </div>
+      <div class="gap"></div>
+      <div class="shoulder right">
+        <div class="agents" id="agents-badge" hidden>
+          <span class="spin"></span>
+          <span class="count" id="agents-count">0</span>
+        </div>
+        <span class="conn" id="conn" data-state="connecting"></span>
+      </div>
+    </div>
+
+    <!-- expanded: glass HUD card dropping from the notch -->
+    <div class="hud" id="hud">
+      <div class="hud-head">
+        <img class="hud-mark" src="../renderer/sunday-mark.png" alt="">
+        <span class="hud-name">Sunday</span>
+        <span class="hud-conn mono" id="hud-conn">—</span>
+      </div>
+      <div class="hud-agents">
+        <div class="hud-empty" id="hud-empty">Nothing running</div>
+        <ul class="hud-agent-list" id="hud-agent-list"></ul>
+      </div>
+      <div class="hud-stats mono" id="hud-stats"></div>
+    </div>
   </div>
   <script src="overlay.js"></script>
 </body>

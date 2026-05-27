@@ -137,6 +137,11 @@ class Daemon:
             return {"messages": [m.to_json() for m in self.chat.recent(limit=limit)]}
 
         if method == "status":
+            try:
+                from sunday.subagents.native import active_agents
+                agents = active_agents()
+            except Exception:  # noqa: BLE001
+                agents = []
             return {
                 "version": __version__,
                 "model": f"{self.config.model.provider}/{self.config.model.name}",
@@ -144,6 +149,7 @@ class Daemon:
                 "memories": self.memory.count() if self.memory.available else None,
                 "tools": self.registry.names(),
                 "devices": self.devices.list_devices(),
+                "agents": agents,
                 "server": {"host": self.config.server.host, "port": self.config.server.port},
             }
 

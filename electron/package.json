@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "description": "Sunday \u2014 a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -30,7 +30,8 @@
       "satellite.js",
       "renderer/**/*",
       "overlay/**/*",
-      "build/entitlements.mac.plist"
+      "build/entitlements.mac.plist",
+      "build/icon.icns"
     ],
     "mac": {
       "category": "public.app-category.productivity",
@@ -59,7 +60,8 @@
         "NSCameraUsageDescription": "Sunday does not use the camera.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "notarize": false
+      "notarize": false,
+      "icon": "build/icon.icns"
     },
     "dmg": {
       "title": "Sunday ${version}",
