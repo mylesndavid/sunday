@@ -49,6 +49,29 @@ export async function loadAll() {
   }
   refreshSystem();
   loadConnections();
+  loadMcp();
+}
+
+async function loadMcp() {
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/mcp`)).json();
+    const cfg = d.config && Object.keys(d.config.mcpServers || {}).length ? d.config : null;
+    if (cfg && !$('#mcp-config').value.trim()) $('#mcp-config').value = JSON.stringify(cfg, null, 2);
+    renderMcpServers(d.servers || []);
+  } catch {}
+}
+
+function renderMcpServers(servers) {
+  const ul = $('#mcp-servers');
+  if (!servers.length) { ul.innerHTML = ''; return; }
+  ul.innerHTML = servers.map((s) => `
+    <li class="conn-row">
+      <span class="conn-ico"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>
+      <span class="conn-name">${esc(s.name)}</span>
+      ${s.connected
+        ? `<span class="conn-on">${(s.tools || []).length} tools</span>`
+        : `<span class="set-verify" data-state="fail" style="flex:0">${esc((s.error || 'failed').slice(0, 60))}</span>`}
+    </li>`).join('');
 }
 
 const CONN_ICON = {
@@ -251,6 +274,22 @@ function wire() {
       else { s.dataset.state = 'fail'; s.textContent = `error: ${r.error || 'unknown'}`; }
     } catch (err) { s.dataset.state = 'fail'; s.textContent = `error: ${err.message}`; }
   });
+  $('#mcp-save').addEventListener('click', async () => {
+    const s = $('#mcp-status'); s.dataset.state = ''; s.textContent = 'connecting…';
+    let cfg;
+    try { cfg = JSON.parse($('#mcp-config').value); }
+    catch (e) { s.dataset.state = 'fail'; s.textContent = 'invalid JSON'; return; }
+    try {
+      const res = await fetch(`${DAEMON_HTTP}/v1/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: cfg }) });
+      const d = await res.json();
+      if (d.error) { s.dataset.state = 'fail'; s.textContent = d.error.slice(0, 80); return; }
+      const ok = (d.servers || []).filter((x) => x.connected).length;
+      const tools = (d.servers || []).reduce((a, x) => a + (x.tools || []).length, 0);
+      s.dataset.state = 'ok'; s.textContent = `connected ${ok} server(s), ${tools} tools`;
+      renderMcpServers(d.servers || []);
+    } catch (err) { s.dataset.state = 'fail'; s.textContent = err.message; }
+  });
+
   $('#set-control-grant').addEventListener('click', async () => {
     const s = $('#set-control-status'); s.dataset.state = ''; s.textContent = 'requesting…';
     try {

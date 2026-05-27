@@ -366,6 +366,28 @@ class Daemon:
         from sunday.integrations import nango
         return web.json_response(await nango.provision_from_env())
 
+    async def _http_mcp_get(self, request: web.Request) -> web.Response:
+        from sunday import mcp
+        return web.json_response({
+            "config": mcp.load_config(),
+            "servers": list(mcp.STATUS.values()),
+        })
+
+    async def _http_mcp_post(self, request: web.Request) -> web.Response:
+        from sunday import mcp
+        body = await request.json()
+        raw = body.get("config")
+        try:
+            mcp.save_config(raw)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": f"couldn't parse config: {exc}"}, status=400)
+        # Reconnect against the new config (tools land on the next turn).
+        try:
+            status = await mcp.connect_all(self.registry, self.config)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "servers": list(status.values())})
+
     async def _http_models(self, request: web.Request) -> web.Response:
         """Proxy + trim OpenRouter's public model catalog (cached ~1h) so the
         app can offer a searchable picker with a 'sees images' flag."""
@@ -548,6 +570,8 @@ class Daemon:
         app.router.add_get("/v1/integrations", self._http_integrations)
         app.router.add_post("/v1/integrations/connect", self._http_integrations_connect)
         app.router.add_post("/v1/integrations/provision", self._http_integrations_provision)
+        app.router.add_get("/v1/mcp", self._http_mcp_get)
+        app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)
         app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
         app.router.add_get("/v1/rewind/state", self._http_rewind_state)
@@ -609,6 +633,16 @@ class Daemon:
             except Exception as exc:  # noqa: BLE001
                 log.warning("integration provisioning failed", error=str(exc))
         self._bg_tasks.append(asyncio.create_task(_provision_integrations()))
+
+        # Connect configured MCP servers + register their tools (next turn).
+        async def _connect_mcp():
+            try:
+                from sunday import mcp
+                if (mcp.load_config().get("mcpServers") or {}):
+                    await mcp.connect_all(self.registry, self.config)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("mcp connect failed", error=str(exc))
+        self._bg_tasks.append(asyncio.create_task(_connect_mcp()))
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
