@@ -72,12 +72,38 @@ function createMainWindow() {
   });
 }
 
+// The notch HUD: a frameless, transparent, non-activating window pinned
+// flush to the top-center of the primary display (over/around the notch),
+// raised above the menu bar. Compact = a bar extending the notch; expanded
+// = a glass card. Sizes from notchMetrics(); resized on demand.
+const NOTCH = {
+  compact: { w: 260 },
+  expanded: { w: 360, h: 320 },
+};
+
+function notchMetrics() {
+  const { screen } = require('electron');
+  const d = screen.getPrimaryDisplay();
+  const topInset = Math.max(d.workArea.y - d.bounds.y, 0);
+  const notchHeight = topInset > 0 ? topInset : 32;
+  return { display: d, notchHeight };
+}
+
+function positionNotch(mode) {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const { display, notchHeight } = notchMetrics();
+  const w = (mode === 'expanded' ? NOTCH.expanded.w : NOTCH.compact.w);
+  const h = (mode === 'expanded' ? NOTCH.expanded.h : notchHeight + 10);
+  const x = Math.round(display.bounds.x + display.bounds.width / 2 - w / 2);
+  const y = display.bounds.y;   // absolute top — over the notch
+  overlayWindow.setBounds({ x, y, width: w, height: h });
+}
+
 function createOverlayWindow() {
+  const { notchHeight } = notchMetrics();
   overlayWindow = new BrowserWindow({
-    width: 220,
-    height: 64,
-    x: 24,
-    y: 24,
+    width: NOTCH.compact.w,
+    height: notchHeight + 10,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -85,6 +111,7 @@ function createOverlayWindow() {
     resizable: false,
     focusable: false,
     hasShadow: false,
+    fullscreenable: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -92,11 +119,16 @@ function createOverlayWindow() {
       sandbox: true,
     },
   });
-  overlayWindow.setAlwaysOnTop(true, 'floating');
+  // Above the menu bar, on every space incl. fullscreen.
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWindow.loadFile(path.join(__dirname, 'overlay', 'index.html'));
   overlayWindow.on('closed', () => { overlayWindow = null; });
+  positionNotch('compact');
 }
+
+ipcMain.handle('sunday:notch-metrics', () => ({ notchHeight: notchMetrics().notchHeight }));
+ipcMain.on('sunday:notch-resize', (_evt, mode) => positionNotch(mode === 'expanded' ? 'expanded' : 'compact'));
 
 ipcMain.handle('sunday:config', () => {
   const { daemonHttp, daemonWs } = resolveDaemon();
@@ -274,6 +306,12 @@ function rebuildTrayMenu() {
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
     { label: 'Settings…', accelerator: 'Command+,', click: () => switchToView('settings') },
     { type: 'separator' },
+    { label: (overlayWindow && !overlayWindow.isDestroyed()) ? 'Hide notch HUD' : 'Show notch HUD', click: () => {
+        if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.close(); savePrefs({ hud: false }); }
+        else { createOverlayWindow(); savePrefs({ hud: true }); }
+        rebuildTrayMenu();
+    }},
+    { type: 'separator' },
     { label: 'Reconfigure (re-run onboarding)…', click: () => {
         savePrefs({ onboarded: false });
         if (mainWindow) mainWindow.close();
@@ -291,9 +329,9 @@ app.whenReady().then(() => {
     createOnboardingWindow();
   } else {
     createMainWindow();
-    // Overlay pill is opt-in — most users don't want a persistent
-    // always-on-top indicator. The tray icon conveys presence + state.
-    // Toggle via the tray menu when we wire it (not in this commit).
+    // The notch HUD is on by default — ambient agent count + status that
+    // extends the notch. Toggle from the tray. Opt out with prefs.hud=false.
+    if (loadPrefs().hud !== false) createOverlayWindow();
   }
   createTray();
   Menu.setApplicationMenu(null);
