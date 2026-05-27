@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('sunday', {
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
   notchMetrics: () => ipcRenderer.invoke('sunday:notch-metrics'),
-  notchResize: (mode) => ipcRenderer.send('sunday:notch-resize', mode),
+  notchMode: (mode) => ipcRenderer.send('sunday:notch-mode', mode),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),
   openFDASettings: () => ipcRenderer.invoke('sunday:open-fda-settings'),
   setOverlayState: (state) => ipcRenderer.send('sunday:overlay-state', state),

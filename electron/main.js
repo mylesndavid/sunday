@@ -76,8 +76,12 @@ function createMainWindow() {
 // flush to the top-center of the primary display (over/around the notch),
 // raised above the menu bar. Compact = a bar extending the notch; expanded
 // = a glass card. Sizes from notchMetrics(); resized on demand.
+// idle  = invisible footprint over the notch, click-through;
+// active = grows wider so the agent count shows beside the notch;
+// expanded = full glass card.
 const NOTCH = {
-  compact: { w: 260 },
+  idle:     { w: 200 },
+  active:   { w: 300 },
   expanded: { w: 360, h: 320 },
 };
 
@@ -92,18 +96,22 @@ function notchMetrics() {
 function positionNotch(mode) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
   const { display, notchHeight } = notchMetrics();
-  const w = (mode === 'expanded' ? NOTCH.expanded.w : NOTCH.compact.w);
-  const h = (mode === 'expanded' ? NOTCH.expanded.h : notchHeight + 10);
+  const m = NOTCH[mode] || NOTCH.idle;
+  const w = m.w;
+  const h = mode === 'expanded' ? m.h : notchHeight + 8;
   const x = Math.round(display.bounds.x + display.bounds.width / 2 - w / 2);
   const y = display.bounds.y;   // absolute top — over the notch
   overlayWindow.setBounds({ x, y, width: w, height: h });
+  // Idle is a transparent, click-through footprint so it never eats clicks
+  // on the menu bar; active/expanded are interactive.
+  overlayWindow.setIgnoreMouseEvents(mode === 'idle', { forward: true });
 }
 
 function createOverlayWindow() {
   const { notchHeight } = notchMetrics();
   overlayWindow = new BrowserWindow({
-    width: NOTCH.compact.w,
-    height: notchHeight + 10,
+    width: NOTCH.idle.w,
+    height: notchHeight + 8,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -124,11 +132,11 @@ function createOverlayWindow() {
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWindow.loadFile(path.join(__dirname, 'overlay', 'index.html'));
   overlayWindow.on('closed', () => { overlayWindow = null; });
-  positionNotch('compact');
+  positionNotch('idle');
 }
 
 ipcMain.handle('sunday:notch-metrics', () => ({ notchHeight: notchMetrics().notchHeight }));
-ipcMain.on('sunday:notch-resize', (_evt, mode) => positionNotch(mode === 'expanded' ? 'expanded' : 'compact'));
+ipcMain.on('sunday:notch-mode', (_evt, mode) => positionNotch(['idle', 'active', 'expanded'].includes(mode) ? mode : 'idle'));
 
 ipcMain.handle('sunday:config', () => {
   const { daemonHttp, daemonWs } = resolveDaemon();
