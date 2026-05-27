@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "description": "Sunday \u2014 a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -78,6 +78,12 @@
           "path": "/Applications"
         }
       ]
-    }
+    },
+    "extraResources": [
+      {
+        "from": "build/notch-metrics",
+        "to": "notch-metrics"
+      }
+    ]
   }
 }

@@ -76,31 +76,50 @@ function createMainWindow() {
 // flush to the top-center of the primary display (over/around the notch),
 // raised above the menu bar. Compact = a bar extending the notch; expanded
 // = a glass card. Sizes from notchMetrics(); resized on demand.
-// idle  = invisible footprint over the notch, click-through;
-// active = grows wider so the agent count shows beside the notch;
-// expanded = full glass card.
+// Widths follow BetterBot (fixed; the black square-top bar merges with the
+// notch regardless). idle = invisible footprint sized to the real notch;
+// active = wider so the count shows beside it; expanded = glass card.
+const NOTCH_RADIUS = 14;       // bottom corners, matches BetterBot
 const NOTCH = {
-  idle:     { w: 200 },
   active:   { w: 300 },
   expanded: { w: 360, h: 320 },
 };
 
+// Exact notch geometry from macOS (safeAreaInsets + auxiliary areas) via the
+// native helper — Electron's screen API can't see the notch. Cached.
+let _notch = null;
 function notchMetrics() {
+  if (_notch) return _notch;
   const { screen } = require('electron');
   const d = screen.getPrimaryDisplay();
-  const topInset = Math.max(d.workArea.y - d.bounds.y, 0);
-  const notchHeight = topInset > 0 ? topInset : 32;
-  return { display: d, notchHeight };
+  let notchHeight = Math.max(d.workArea.y - d.bounds.y, 0) || 32;
+  let notchWidth = 200, hasNotch = false;
+  try {
+    const bin = app.isPackaged
+      ? path.join(process.resourcesPath, 'notch-metrics')
+      : path.join(__dirname, 'build', 'notch-metrics');
+    const out = require('node:child_process').execFileSync(bin, [], { timeout: 3000 }).toString();
+    const m = JSON.parse(out);
+    if (m.notchHeight > 0) notchHeight = m.notchHeight;
+    if (m.hasNotch && m.notchWidth > 0) { notchWidth = m.notchWidth; hasNotch = true; }
+  } catch { /* fall back to the workArea inset + 200 */ }
+  _notch = { display: d, notchHeight, notchWidth, hasNotch };
+  return _notch;
+}
+
+function notchSize(mode) {
+  const { notchHeight, notchWidth } = notchMetrics();
+  if (mode === 'expanded') return { w: NOTCH.expanded.w, h: NOTCH.expanded.h };
+  if (mode === 'active')   return { w: notchWidth + 160, h: notchHeight + 8 };  // shoulders beside the notch
+  return { w: notchWidth, h: notchHeight };                                     // idle: exactly the notch
 }
 
 function positionNotch(mode) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  const { display, notchHeight } = notchMetrics();
-  const m = NOTCH[mode] || NOTCH.idle;
-  const w = m.w;
-  const h = mode === 'expanded' ? m.h : notchHeight + 8;
+  const { display } = notchMetrics();
+  const { w, h } = notchSize(mode);
   const x = Math.round(display.bounds.x + display.bounds.width / 2 - w / 2);
-  const y = display.bounds.y;   // absolute top — over the notch
+  const y = display.bounds.y;   // absolute top — flush, over the notch
   overlayWindow.setBounds({ x, y, width: w, height: h });
   // Idle is a transparent, click-through footprint so it never eats clicks
   // on the menu bar; active/expanded are interactive.
@@ -108,10 +127,10 @@ function positionNotch(mode) {
 }
 
 function createOverlayWindow() {
-  const { notchHeight } = notchMetrics();
+  const init = notchSize('idle');
   overlayWindow = new BrowserWindow({
-    width: NOTCH.idle.w,
-    height: notchHeight + 8,
+    width: init.w,
+    height: init.h,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
