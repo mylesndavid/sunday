@@ -67,6 +67,8 @@ class Daemon:
         else:
             log.info("memory disabled (sqlite-vec or OPENAI_API_KEY missing)")
         self.registry = default_registry(self.config)
+        # Tools find_tools has activated this session (beyond the core set).
+        self._active_tools: set[str] = set()
         self.devices = DeviceManager(broadcast=self._broadcast_lazy)
         self._unix_server: asyncio.Server | None = None
         self._http_runner: web.AppRunner | None = None
@@ -94,6 +96,10 @@ class Daemon:
                 "broadcast": self._broadcast,
                 "devices":   self.devices,
                 "memory":    self.memory,
+                # tiered tools: lean core + whatever find_tools has pulled in
+                # this session (persists across turns until the daemon restarts)
+                "registry":      self.registry,
+                "active_tools":  self._active_tools,
             },
         )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
