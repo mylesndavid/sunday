@@ -203,6 +203,125 @@ async def create_connect_session(provider: str, end_user: dict | None = None) ->
     return {"token": token, "provider_config_key": key, "connect_url": link}
 
 
+# ─── catalog: read Nango's bundled provider list (the 830-entry yaml) ──────
+
+# Cached so we don't refetch on every keystroke in the search box. Nango's
+# /providers list is static across a release, refreshes on container restart.
+_PROVIDER_CACHE: dict[str, Any] = {"data": None, "ts": 0.0}
+
+
+async def list_providers(force: bool = False) -> list[dict[str, Any]]:
+    """Fetch Nango's full provider catalog. Each entry carries display_name,
+    categories, auth_mode, docs URLs, credentials schema — everything the
+    setup card needs. Cached for 1h."""
+    import time
+    if not configured():
+        return []
+    if not force and _PROVIDER_CACHE["data"] is not None and (time.time() - _PROVIDER_CACHE["ts"] < 3600):
+        return _PROVIDER_CACHE["data"]
+    async with httpx.AsyncClient(timeout=20) as client:
+        res = await client.get(f"{host()}/providers", headers=_headers())
+    if res.status_code >= 400:
+        log.warning("nango list providers failed", status=res.status_code)
+        return []
+    body = res.json()
+    data = body.get("data", body) if isinstance(body, dict) else body
+    # Normalize: Nango may return either a list or a dict-of-name->entry.
+    if isinstance(data, dict):
+        items = [{"name": k, **v} for k, v in data.items() if isinstance(v, dict)]
+    else:
+        items = data
+    _PROVIDER_CACHE.update({"data": items, "ts": time.time()})
+    return items
+
+
+async def get_provider(name: str) -> dict[str, Any] | None:
+    """Fetch a single provider entry. Resolves the `alias` chain so OAuth2
+    fields (authorization_url, token_url, scopes) defined on the parent
+    template are present on the child (Gmail inherits from Google, etc).
+    """
+    items = await list_providers()
+    by_name = {p.get("name"): p for p in items if p.get("name")}
+    target = by_name.get(name)
+    if target is None:
+        return None
+    # Walk alias chain; child wins on key collisions.
+    merged: dict[str, Any] = {}
+    chain: list[str] = []
+    cursor: dict[str, Any] | None = target
+    seen: set[str] = set()
+    while cursor and cursor.get("name") not in seen:
+        seen.add(cursor.get("name", ""))
+        chain.append(cursor.get("name", ""))
+        # Merge parent first (older becomes base), then layer child on top.
+        alias = cursor.get("alias")
+        if alias and alias in by_name:
+            cursor = by_name[alias]
+        else:
+            cursor = None
+    # Apply in reverse so the deepest ancestor is the base, target overrides.
+    for nm in reversed(chain):
+        for k, v in by_name[nm].items():
+            merged[k] = v
+    merged["_chain"] = chain
+    return merged
+
+
+async def provision(
+    provider_template: str,
+    unique_key: str,
+    credentials: dict[str, Any],
+    connection_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a Nango integration from caller-supplied credentials. Generic
+    over auth_mode: caller passes the credentials dict that matches the
+    template's auth_mode (OAUTH2 → client_id/client_secret/scopes; API_KEY →
+    apiKey; BASIC → username/password; etc).
+
+    Idempotent: returns the existing integration if one already exists under
+    `unique_key`.
+    """
+    if not configured():
+        return {"error": "Nango isn't configured."}
+    existing = await get_integration(unique_key)
+    if existing:
+        return {"ok": True, "existed": True, "key": unique_key, "integration": existing}
+    body: dict[str, Any] = {
+        "provider": provider_template,
+        "unique_key": unique_key,
+        "credentials": credentials,
+    }
+    if connection_config:
+        body["connection_config"] = connection_config
+    async with httpx.AsyncClient(timeout=20) as client:
+        res = await client.post(f"{host()}/integrations", headers=_headers(), json=body)
+    if res.status_code >= 400:
+        return {"error": f"create integration failed ({res.status_code}): {res.text[:300]}"}
+    log.info("nango integration provisioned (dynamic)", provider=provider_template, key=unique_key)
+    return {"ok": True, "created": True, "key": unique_key, "integration": res.json().get("data")}
+
+
+async def create_connect_session_for_key(unique_key: str, end_user: dict | None = None) -> dict[str, Any]:
+    """Mint a Connect UI session for a Nango integration that's already been
+    provisioned (skips the env-driven `ensure_integration` step). Used by the
+    dynamic-card flow where the user has just supplied their own creds."""
+    if not configured():
+        return {"error": "Nango isn't configured."}
+    body = {
+        "end_user": end_user or {"id": connection_id()},
+        "allowed_integrations": [unique_key],
+    }
+    async with httpx.AsyncClient(timeout=15) as client:
+        res = await client.post(f"{host()}/connect/sessions", headers=_headers(), json=body)
+    if res.status_code >= 400:
+        return {"error": f"nango connect session failed ({res.status_code}): {res.text[:300]}"}
+    data = res.json().get("data") or {}
+    token = data.get("token")
+    base = connect_url_base()
+    link = f"{base}/?session_token={token}" if base else data.get("connect_link", "")
+    return {"token": token, "provider_config_key": unique_key, "connect_url": link}
+
+
 async def proxy(
     method: str,
     endpoint: str,

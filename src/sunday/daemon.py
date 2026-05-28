@@ -656,6 +656,90 @@ class Daemon:
         from sunday.integrations import nango
         return web.json_response(await nango.provision_from_env())
 
+    # ─── catalog: dynamic provider browsing + per-provider setup card ─────
+
+    async def _http_integrations_catalog(self, request: web.Request) -> web.Response:
+        """Browse the 830 Nango providers, filtered by category/auth_mode/q.
+        Returns lean records (name, display_name, categories, auth_mode) for
+        the list view — the full setup spec comes from /setup/:name.
+        """
+        from sunday.integrations import nango
+        category = request.query.get("category")
+        auth_mode = request.query.get("auth_mode")
+        q = (request.query.get("q") or "").strip().lower()
+        try:
+            items = await nango.list_providers()
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=502)
+        out = []
+        for p in items:
+            cats = p.get("categories") or []
+            if category and category not in cats:
+                continue
+            if auth_mode and p.get("auth_mode") != auth_mode:
+                continue
+            name = p.get("name") or ""
+            display = p.get("display_name") or name
+            if q and q not in name.lower() and q not in display.lower():
+                continue
+            out.append({
+                "name": name,
+                "display_name": display,
+                "categories": cats,
+                "auth_mode": p.get("auth_mode") or "INHERITED",
+            })
+        # Stable sort: popular first, then alphabetical.
+        out.sort(key=lambda r: (0 if "popular" in r["categories"] else 1, r["display_name"].lower()))
+        return web.json_response({"providers": out, "total": len(out)})
+
+    async def _http_integrations_setup(self, request: web.Request) -> web.Response:
+        """The setup card spec for ONE provider — display_name, docs URLs,
+        credentials + connection_config schemas, auth_mode resolved through
+        the alias chain. Front-end renders a form from this.
+        """
+        from sunday.integrations import nango
+        name = request.match_info.get("name", "")
+        try:
+            entry = await nango.get_provider(name)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=502)
+        if not entry:
+            return web.json_response({"error": f"unknown provider: {name}"}, status=404)
+        # Keep the payload focused on what the renderer needs.
+        slim = {k: entry.get(k) for k in (
+            "name", "display_name", "categories", "auth_mode",
+            "docs", "docs_connect", "setup_guide_url",
+            "authorization_url", "token_url",
+            "default_scopes", "credentials", "connection_config",
+            "_chain",
+        ) if k in entry or k == "name"}
+        slim["redirect_uri"] = f"{nango.public_url()}/oauth/callback" if nango.public_url() else None
+        return web.json_response(slim)
+
+    async def _http_integrations_provision_one(self, request: web.Request) -> web.Response:
+        """Provision one Nango integration with user-supplied credentials,
+        then mint a Connect session URL the user opens in their browser.
+        Body: {provider, unique_key?, credentials, connection_config?}
+        """
+        from sunday.integrations import nango
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        provider = (body.get("provider") or "").strip()
+        if not provider:
+            return web.json_response({"error": "provider required"}, status=400)
+        unique_key = (body.get("unique_key") or provider).strip()
+        credentials = body.get("credentials") or {}
+        connection_config = body.get("connection_config") or {}
+        prov = await nango.provision(provider, unique_key, credentials, connection_config)
+        if prov.get("error"):
+            return web.json_response(prov, status=400)
+        session = await nango.create_connect_session_for_key(unique_key)
+        if session.get("error"):
+            return web.json_response({"provisioned": prov, "session_error": session["error"]}, status=502)
+        return web.json_response({"provisioned": prov, "connect_url": session["connect_url"]})
+
     async def _http_mcp_get(self, request: web.Request) -> web.Response:
         from sunday import mcp
         return web.json_response({
@@ -872,6 +956,9 @@ class Daemon:
         app.router.add_get("/v1/integrations", self._http_integrations)
         app.router.add_post("/v1/integrations/connect", self._http_integrations_connect)
         app.router.add_post("/v1/integrations/provision", self._http_integrations_provision)
+        app.router.add_get("/v1/integrations/catalog", self._http_integrations_catalog)
+        app.router.add_get("/v1/integrations/setup/{name}", self._http_integrations_setup)
+        app.router.add_post("/v1/integrations/provision_one", self._http_integrations_provision_one)
         app.router.add_get("/v1/mcp", self._http_mcp_get)
         app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)

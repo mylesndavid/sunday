@@ -174,8 +174,16 @@
 
         <section class="set-block" id="sec-connections">
           <h2>Connections</h2>
-          <p class="set-help">Let Sunday work with your accounts. Click Connect, approve in your browser, and the matching tools (email, calendar) turn on. <span id="conn-unconfigured" hidden>Integrations aren't set up on your server yet — see setup notes.</span></p>
-          <ul class="conn-list" id="conn-list"><li class="conn-loading">loading…</li></ul>
+          <p class="set-help">Connect Sunday to any of 800+ services. Pick one — Sunday walks you through getting the keys, then handles OAuth for you. <span id="conn-unconfigured" hidden>Integrations server (Nango) isn't reachable yet.</span></p>
+
+          <div class="conn-browse">
+            <input type="text" id="conn-search" class="set-input conn-search" placeholder="Search 800+ services (gmail, slack, notion, stripe, …)" autocomplete="off">
+            <div class="conn-cats" id="conn-cats"></div>
+          </div>
+
+          <ul class="conn-list" id="conn-list"><li class="conn-loading">loading providers…</li></ul>
+
+          <div class="conn-card" id="conn-card" hidden></div>
         </section>
 
         <section class="set-block" id="sec-mcp">

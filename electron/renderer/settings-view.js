@@ -74,62 +74,216 @@ function renderMcpServers(servers) {
     </li>`).join('');
 }
 
-const CONN_ICON = {
-  gmail: '<path d="M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z"/><path d="m3 7 9 6 9-6"/>',
-  calendar: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
-  slack: '<path d="M9 12a2 2 0 1 1-2-2h2zM12 9a2 2 0 1 1 2-2v2zM15 12a2 2 0 1 1 2 2h-2zM12 15a2 2 0 1 1-2 2v-2z"/>',
-};
+// ── dynamic connections: drive the 800+ Nango catalog directly ────────────
+
+const CONN_CATS = ['popular', 'productivity', 'communication', 'crm', 'dev-tools', 'marketing', 'accounting', 'payment'];
+let connState = { providers: [], cat: 'popular', q: '', connected: new Set() };
+let connSearchTimer = null;
 
 async function loadConnections() {
-  const ul = document.querySelector('#conn-list');
+  renderConnCats();
+  $('#conn-search').oninput = (e) => {
+    connState.q = e.target.value.trim().toLowerCase();
+    clearTimeout(connSearchTimer);
+    connSearchTimer = setTimeout(refreshConnList, 120);
+  };
+  // Refresh which providers are already connected so we can badge them.
   try {
-    const res = await fetch(`${DAEMON_HTTP}/v1/integrations`);
-    const d = await res.json();
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/integrations`)).json();
     document.querySelector('#conn-unconfigured').hidden = !!d.configured;
-    ul.innerHTML = (d.providers || []).map((p) => `
-      <li class="conn-row" data-id="${p.id}">
-        <span class="conn-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${CONN_ICON[p.id] || ''}</svg></span>
-        <span class="conn-name">${esc(p.label)}</span>
-        ${p.connected
-          ? '<span class="conn-on">connected</span>'
-          : `<button class="btn conn-connect" data-id="${p.id}" ${d.configured ? '' : 'disabled'}>Connect</button>`}
-      </li>`).join('');
-    ul.querySelectorAll('.conn-connect').forEach((b) => b.addEventListener('click', () => connectProvider(b.dataset.id, b)));
+    connState.connected = new Set((d.providers || []).filter((p) => p.connected).map((p) => p.id));
   } catch {
-    ul.innerHTML = '<li class="conn-loading">couldn\'t reach the daemon</li>';
+    document.querySelector('#conn-unconfigured').hidden = false;
+  }
+  refreshConnList();
+}
+
+function renderConnCats() {
+  const wrap = $('#conn-cats');
+  wrap.innerHTML = CONN_CATS.map((c) => `
+    <button class="conn-cat ${c === connState.cat ? 'on' : ''}" data-cat="${c}">${c}</button>
+  `).join('');
+  wrap.querySelectorAll('.conn-cat').forEach((b) => b.addEventListener('click', () => {
+    connState.cat = b.dataset.cat;
+    renderConnCats();
+    refreshConnList();
+  }));
+}
+
+async function refreshConnList() {
+  const ul = $('#conn-list');
+  ul.innerHTML = '<li class="conn-loading">loading…</li>';
+  const params = new URLSearchParams();
+  // When the user is searching, span everything; otherwise scope to category.
+  if (connState.q) params.set('q', connState.q);
+  else if (connState.cat) params.set('category', connState.cat);
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/catalog?${params}`);
+    const d = await res.json();
+    const items = (d.providers || []).slice(0, 60);
+    if (!items.length) { ul.innerHTML = '<li class="conn-loading">no matches.</li>'; return; }
+    ul.innerHTML = items.map((p) => {
+      const connected = connState.connected.has(p.name);
+      return `
+        <li class="conn-row" data-name="${p.name}">
+          <span class="conn-name">${esc(p.display_name)}</span>
+          <span class="conn-mode">${esc(p.auth_mode || '')}</span>
+          ${connected
+            ? '<span class="conn-on">connected</span>'
+            : `<button class="btn conn-pick" data-name="${p.name}">Set up</button>`}
+        </li>`;
+    }).join('');
+    ul.querySelectorAll('.conn-pick').forEach((b) => b.addEventListener('click', () => openConnCard(b.dataset.name)));
+  } catch (err) {
+    ul.innerHTML = `<li class="conn-loading">couldn't reach the daemon: ${esc(err.message)}</li>`;
   }
 }
 
-async function connectProvider(provider, btn) {
-  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'opening…';
+// ── dynamic setup card ────────────────────────────────────────────────────
+
+async function openConnCard(name) {
+  const card = $('#conn-card');
+  card.hidden = false;
+  card.innerHTML = '<div class="conn-card-loading">loading setup…</div>';
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  let spec;
   try {
-    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
+    spec = await (await fetch(`${DAEMON_HTTP}/v1/integrations/setup/${encodeURIComponent(name)}`)).json();
+  } catch (err) {
+    card.innerHTML = `<div class="conn-card-err">couldn't load: ${esc(err.message)}</div>`;
+    return;
+  }
+  if (spec.error) {
+    card.innerHTML = `<div class="conn-card-err">${esc(spec.error)}</div>`;
+    return;
+  }
+  card.innerHTML = renderConnCard(spec);
+
+  // Wire up controls inside the rendered card.
+  card.querySelector('.conn-card-close')?.addEventListener('click', () => { card.hidden = true; });
+  card.querySelectorAll('.conn-copy').forEach((el) => el.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(el.dataset.copy); el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 1200); }
+    catch {}
+  }));
+  card.querySelectorAll('.conn-link').forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.sunday.openExternal(el.dataset.href);
+  }));
+  card.querySelector('.conn-submit')?.addEventListener('click', () => submitConnCard(spec, card));
+}
+
+function renderConnCard(spec) {
+  const oauth = (spec.auth_mode || '').startsWith('OAUTH');
+  const setupLink = spec.setup_guide_url || spec.docs;
+
+  // Resolve the field schema we're going to render.
+  const fields = [];
+  if (oauth) {
+    // Standard OAuth2 needs the user's own OAuth client.
+    fields.push({ name: 'client_id',     title: 'Client ID',     description: `Your OAuth client ID from ${spec.display_name}.`,     secret: false, group: 'credentials' });
+    fields.push({ name: 'client_secret', title: 'Client Secret', description: `Your OAuth client secret from ${spec.display_name}.`, secret: true,  group: 'credentials' });
+  } else if (spec.credentials) {
+    for (const [k, v] of Object.entries(spec.credentials)) {
+      fields.push({ name: k, title: v.title || k, description: v.description, secret: v.secret || /key|secret|token|password/i.test(k), example: v.example, group: 'credentials' });
+    }
+  }
+  if (spec.connection_config) {
+    for (const [k, v] of Object.entries(spec.connection_config)) {
+      fields.push({ name: k, title: v.title || k, description: v.description, secret: false, example: v.example, group: 'connection_config' });
+    }
+  }
+
+  const fieldHtml = fields.map((f) => `
+    <label class="conn-field">
+      <span class="conn-field-title">${esc(f.title)}</span>
+      ${f.description ? `<span class="conn-field-desc">${esc(f.description)}</span>` : ''}
+      <input type="${f.secret ? 'password' : 'text'}"
+             class="set-input conn-input"
+             data-name="${esc(f.name)}"
+             data-group="${esc(f.group)}"
+             ${f.example ? `placeholder="${esc(f.example)}"` : ''}
+             autocomplete="off" spellcheck="false">
+    </label>`).join('');
+
+  return `
+    <div class="conn-card-head">
+      <h3>${esc(spec.display_name)}</h3>
+      <span class="conn-mode">${esc(spec.auth_mode || '')}</span>
+      <button class="btn conn-card-close" aria-label="close">×</button>
+    </div>
+
+    ${oauth ? `
+      <ol class="conn-steps">
+        ${setupLink ? `<li>Open <a class="conn-link" data-href="${esc(setupLink)}" href="#">${spec.display_name}'s setup guide</a> and create an OAuth client.</li>` : ''}
+        ${spec.redirect_uri ? `<li>When asked for an authorized redirect URI, paste <span class="conn-copy" data-copy="${esc(spec.redirect_uri)}" title="click to copy"><code>${esc(spec.redirect_uri)}</code></span></li>` : ''}
+        <li>Copy the resulting <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below.</li>
+      </ol>` : ''}
+    ${(!oauth && setupLink) ? `<p class="conn-card-help">See the <a class="conn-link" data-href="${esc(setupLink)}" href="#">${spec.display_name} setup guide</a> for where to find these values.</p>` : ''}
+
+    <div class="conn-fields">${fieldHtml || '<p class="conn-card-help">No fields needed — click Connect to start the OAuth flow.</p>'}</div>
+
+    <div class="conn-card-actions">
+      <button class="btn conn-submit">Save &amp; Connect</button>
+      <span class="conn-card-status" id="conn-card-status"></span>
+    </div>
+  `;
+}
+
+async function submitConnCard(spec, card) {
+  const inputs = card.querySelectorAll('.conn-input');
+  const credentials = { type: spec.auth_mode };
+  const connection_config = {};
+  for (const inp of inputs) {
+    const val = inp.value.trim();
+    if (!val) continue;
+    if (inp.dataset.group === 'connection_config') connection_config[inp.dataset.name] = val;
+    else credentials[inp.dataset.name] = val;
+  }
+  // OAuth2 requires the default_scopes from the catalog; Nango fills these
+  // in if we omit them, but if the catalog has them, send them.
+  if ((spec.auth_mode || '').startsWith('OAUTH') && spec.default_scopes && Array.isArray(spec.default_scopes)) {
+    credentials.scopes = spec.default_scopes.join(',');
+  }
+  const status = card.querySelector('#conn-card-status');
+  const btn = card.querySelector('.conn-submit');
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'provisioning…';
+  status.textContent = '';
+  try {
+    const body = { provider: spec.name, unique_key: spec.name, credentials, connection_config };
+    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/provision_one`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await res.json();
     if (d.connect_url) {
-      await window.sunday.openExternal(d.connect_url);
       btn.textContent = 'approve in browser…';
-      // poll for the connection landing
-      pollConnected(provider, 0);
+      await window.sunday.openExternal(d.connect_url);
+      status.textContent = "I'll let you know when you've approved it.";
+      pollProviderConnected(spec.name, 0);
     } else {
-      btn.textContent = orig; btn.disabled = false;
-      flashError(d.error ? friendlyConn(d.error) : 'couldn\'t start the connect flow');
+      btn.disabled = false; btn.textContent = orig;
+      status.textContent = d.error || d.session_error || 'something went wrong';
+      status.dataset.state = 'fail';
     }
-  } catch (err) { btn.textContent = orig; btn.disabled = false; flashError(err.message); }
+  } catch (err) {
+    btn.disabled = false; btn.textContent = orig;
+    status.textContent = err.message; status.dataset.state = 'fail';
+  }
 }
 
-function friendlyConn(e) {
-  if (/integration does not exist/i.test(e)) return 'That service isn\'t set up on your Nango server yet (see setup notes).';
-  return e;
-}
-
-function pollConnected(provider, n) {
-  if (n > 40) { loadConnections(); return; }
+function pollProviderConnected(name, n) {
+  if (n > 60) return;  // ~90s of patience
   setTimeout(async () => {
     try {
       const d = await (await fetch(`${DAEMON_HTTP}/v1/integrations`)).json();
-      if ((d.providers || []).find((p) => p.id === provider && p.connected)) { loadConnections(); flashSaved(); }
-      else pollConnected(provider, n + 1);
-    } catch { pollConnected(provider, n + 1); }
+      const hit = (d.providers || []).find((p) => p.id === name && p.connected);
+      if (hit) {
+        connState.connected.add(name);
+        $('#conn-card').hidden = true;
+        refreshConnList();
+        flashSaved();
+      } else {
+        pollProviderConnected(name, n + 1);
+      }
+    } catch { pollProviderConnected(name, n + 1); }
   }, 1500);
 }
 
