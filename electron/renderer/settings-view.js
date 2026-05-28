@@ -76,7 +76,11 @@ function renderMcpServers(servers) {
 
 // ── dynamic connections: drive the 800+ Nango catalog directly ────────────
 
-const CONN_CATS = ['popular', 'productivity', 'communication', 'crm', 'dev-tools', 'marketing', 'accounting', 'payment'];
+// Curated default category set — Nango carries 30+, that's too many. These
+// are the ones a personal-AI user actually reaches for. Anything outside the
+// list is reachable via search.
+const CONN_CATS = ['popular', 'productivity', 'communication', 'dev-tools'];
+const CONN_LIST_MAX = 12;
 let connState = { providers: [], cat: 'popular', q: '', connected: new Set() };
 let connSearchTimer = null;
 
@@ -87,15 +91,81 @@ async function loadConnections() {
     clearTimeout(connSearchTimer);
     connSearchTimer = setTimeout(refreshConnList, 120);
   };
-  // Refresh which providers are already connected so we can badge them.
+  await loadPinnedConnectors();
+  refreshConnList();
+}
+
+// Top section: every connected provider gets a row + toggle (when we ship
+// tools for it). Driven by /v1/connectors which already joins Nango's
+// connection list with our connector toggle state.
+async function loadPinnedConnectors() {
+  const ul = $('#conn-pinned');
   try {
-    const d = await (await fetch(`${DAEMON_HTTP}/v1/integrations`)).json();
-    document.querySelector('#conn-unconfigured').hidden = !!d.configured;
-    connState.connected = new Set((d.providers || []).filter((p) => p.connected).map((p) => p.id));
-  } catch {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/connectors`)).json();
+    const conns = d.connectors || [];
+    document.querySelector('#conn-unconfigured').hidden = true;
+    // Track which provider keys are connected, for the catalog list below.
+    connState.connected = new Set(conns.map((c) => c.provider));
+    if (!conns.length) {
+      ul.innerHTML = '<li class="conn-pinned-empty">No connectors yet. Add one below to start.</li>';
+      return;
+    }
+    ul.innerHTML = conns.map((c) => {
+      const label = PROVIDER_LABEL[c.provider] || c.provider;
+      if (!c.has_tools) {
+        return `
+          <li class="conn-pinned-row">
+            <span class="conn-name">${esc(label)}</span>
+            <span class="conn-pinned-note">connected — tools coming soon</span>
+          </li>`;
+      }
+      return `
+        <li class="conn-pinned-row" data-provider="${c.provider}">
+          <span class="conn-name">${esc(label)}</span>
+          <span class="conn-pinned-hint">${c.enabled ? 'pinned to every chat' : 'on demand via find_tools'}</span>
+          <label class="toggle">
+            <input type="checkbox" class="conn-toggle" data-provider="${c.provider}" ${c.enabled ? 'checked' : ''}>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </li>`;
+    }).join('');
+    ul.querySelectorAll('.conn-toggle').forEach((cb) => {
+      cb.addEventListener('change', () => toggleConnector(cb.dataset.provider, cb.checked, cb));
+    });
+  } catch (err) {
+    ul.innerHTML = `<li class="conn-pinned-empty">couldn't reach the daemon: ${esc(err.message)}</li>`;
     document.querySelector('#conn-unconfigured').hidden = false;
   }
-  refreshConnList();
+}
+
+// Small lookup so the pinned row reads "Gmail" not "google-mail". Falls back
+// to the raw key if unknown — won't break, just less pretty.
+const PROVIDER_LABEL = {
+  'google-mail':     'Gmail',
+  'google-calendar': 'Google Calendar',
+  'fireflies':       'Fireflies',
+};
+
+async function toggleConnector(provider, on, cb) {
+  // Optimistic UI — flip the hint text immediately, revert on error.
+  const row = cb.closest('.conn-pinned-row');
+  const hint = row?.querySelector('.conn-pinned-hint');
+  if (hint) hint.textContent = on ? 'pinned to every chat' : 'on demand via find_tools';
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/connectors/toggle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, on }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${res.status}`);
+    }
+    flashSaved();
+  } catch (err) {
+    cb.checked = !on;
+    if (hint) hint.textContent = !on ? 'pinned to every chat' : 'on demand via find_tools';
+    flashError(err.message);
+  }
 }
 
 function renderConnCats() {
@@ -120,7 +190,7 @@ async function refreshConnList() {
   try {
     const res = await fetch(`${DAEMON_HTTP}/v1/integrations/catalog?${params}`);
     const d = await res.json();
-    const items = (d.providers || []).slice(0, 60);
+    const items = (d.providers || []).slice(0, CONN_LIST_MAX);
     if (!items.length) { ul.innerHTML = '<li class="conn-loading">no matches.</li>'; return; }
     ul.innerHTML = items.map((p) => {
       const connected = connState.connected.has(p.name);
@@ -232,7 +302,7 @@ function renderConnCard(spec) {
 
 async function submitConnCard(spec, card) {
   const inputs = card.querySelectorAll('.conn-input');
-  const credentials = { type: spec.auth_mode };
+  const credentials = {};
   const connection_config = {};
   for (const inp of inputs) {
     const val = inp.value.trim();
@@ -240,29 +310,51 @@ async function submitConnCard(spec, card) {
     if (inp.dataset.group === 'connection_config') connection_config[inp.dataset.name] = val;
     else credentials[inp.dataset.name] = val;
   }
-  // OAuth2 requires the default_scopes from the catalog; Nango fills these
-  // in if we omit them, but if the catalog has them, send them.
-  if ((spec.auth_mode || '').startsWith('OAUTH') && spec.default_scopes && Array.isArray(spec.default_scopes)) {
+  // OAuth2: pass the catalog's default_scopes if we have them (Nango fills
+  // in defaults otherwise).
+  if ((spec.auth_mode || '').startsWith('OAUTH') && Array.isArray(spec.default_scopes)) {
     credentials.scopes = spec.default_scopes.join(',');
   }
+
   const status = card.querySelector('#conn-card-status');
   const btn = card.querySelector('.conn-submit');
-  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'provisioning…';
-  status.textContent = '';
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'connecting…';
+  status.textContent = ''; delete status.dataset.state;
+
   try {
-    const body = { provider: spec.name, unique_key: spec.name, credentials, connection_config };
-    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/provision_one`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const body = {
+      provider: spec.name,
+      unique_key: spec.name,
+      auth_mode: spec.auth_mode,
+      credentials,
+      connection_config,
+    };
+    const res = await fetch(`${DAEMON_HTTP}/v1/integrations/provision_one`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
     const d = await res.json();
+
+    if (d.flow === 'direct' && d.connected) {
+      // Non-OAuth: connection was created server-side, no browser needed.
+      connState.connected.add(spec.name);
+      $('#conn-card').hidden = true;
+      loadPinnedConnectors();   // surface the new row in the pinned section
+      refreshConnList();
+      flashSaved();
+      return;
+    }
     if (d.connect_url) {
       btn.textContent = 'approve in browser…';
       await window.sunday.openExternal(d.connect_url);
-      status.textContent = "I'll let you know when you've approved it.";
+      status.textContent = "I'll mark it connected as soon as you approve.";
       pollProviderConnected(spec.name, 0);
-    } else {
-      btn.disabled = false; btn.textContent = orig;
-      status.textContent = d.error || d.session_error || 'something went wrong';
-      status.dataset.state = 'fail';
+      return;
     }
+    btn.disabled = false; btn.textContent = orig;
+    status.textContent = d.error || d.session_error || d.connection_error || 'something went wrong';
+    status.dataset.state = 'fail';
   } catch (err) {
     btn.disabled = false; btn.textContent = orig;
     status.textContent = err.message; status.dataset.state = 'fail';
@@ -278,6 +370,7 @@ function pollProviderConnected(name, n) {
       if (hit) {
         connState.connected.add(name);
         $('#conn-card').hidden = true;
+        loadPinnedConnectors();
         refreshConnList();
         flashSaved();
       } else {

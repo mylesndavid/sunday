@@ -327,41 +327,274 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .conn-ico { width: 32px; height: 32px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 .conn-name { font-weight: 600; font-size: 14px; flex: 1; }
 .conn-on { font: 600 10.5px/1 var(--font-sans); letter-spacing: 0.03em; text-transform: uppercase; color: var(--ok); background: var(--ok-tint); padding: 5px 10px; border-radius: var(--r-pill); }
-.conn-connect, .conn-pick { padding: 7px 16px; }
+.conn-connect, .conn-pick { padding: 6px 14px; font: 500 12px/1 var(--font-sans); }
 #conn-unconfigured { color: var(--warn); }
-.conn-mode { font: 600 10px/1 var(--font-mono); letter-spacing: 0.05em; color: var(--text-3); padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r-pill); }
 
-/* Catalog browser */
-.conn-browse { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
-.conn-search { width: 100%; }
+/* ─── pinned connector list (top of Connections panel) ──────────────────── */
+.conn-pinned { list-style: none; margin: 4px 0 22px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.conn-pinned-empty {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  text-align: center;
+}
+.conn-pinned-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.conn-pinned-row .conn-name { flex: 1; }
+.conn-pinned-hint, .conn-pinned-note {
+  font: 400 12px/1.2 var(--font-sans);
+  color: var(--text-3);
+}
+.conn-pinned-note { font-style: italic; }
+.conn-subhead {
+  font-size: 14px; font-weight: 650; letter-spacing: -0.005em;
+  margin: 8px 0 4px;
+  color: var(--text-2);
+}
+.conn-subhelp { margin: 0 0 12px; font-size: 12.5px; }
+
+/* ─── iOS-style toggle component ────────────────────────────────────────── */
+/* Belt-and-suspenders dimensions: the inline-block label can pick up
+   line-height/baseline space from surrounding text, which silently makes
+   the visual track taller than declared and shoves the thumb off-center.
+   `line-height: 0; font-size: 0; vertical-align: middle` neutralizes all
+   of that; the thumb itself uses 50% + margin-top to center regardless
+   of any residual height drift. */
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 22px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  vertical-align: middle;
+  line-height: 0;
+  font-size: 0;
+}
+.toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: var(--line-strong);
+  border-radius: 999px;
+  transition: background 160ms ease;
+}
+.toggle-thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.toggle input:checked ~ .toggle-track { background: var(--accent); }
+.toggle input:checked ~ .toggle-track .toggle-thumb { transform: translateX(14px); }
+.toggle input:focus-visible ~ .toggle-track { box-shadow: 0 0 0 3px var(--accent-tint); }
+.toggle input:disabled ~ .toggle-track { opacity: 0.4; cursor: not-allowed; }
+
+/* ─── in-chat connectors popover (anchored to composer button) ─────────── */
+.connectors-pop {
+  position: fixed;
+  z-index: 200;
+  width: 320px;
+  max-height: 420px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgba(40, 30, 10, 0.18);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+/* `hidden` attribute loses the cascade fight against `display: flex` above
+   without a more specific selector — without this, the popover is visible
+   on page load before any positioning, pinned at the viewport origin. */
+.connectors-pop[hidden] { display: none; }
+
+.connectors-pop-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 8px 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.connectors-pop-head .set-input { flex: 1; font-size: 13px; padding: 7px 10px; }
+.connectors-pop-close {
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: 18px; line-height: 1;
+  cursor: pointer;
+}
+.connectors-pop-close:hover { color: var(--text); background: var(--surface-2); }
+
+.connectors-pop-list {
+  list-style: none; margin: 0; padding: 6px;
+  flex: 1; overflow-y: auto;
+}
+.connectors-pop-empty {
+  padding: 18px 14px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  text-align: center;
+}
+.connectors-pop-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  min-height: 36px;
+}
+.connectors-pop-row:hover { background: var(--surface-2); }
+.connectors-pop-name { flex: 1; font-size: 13px; color: var(--text); line-height: 1.3; }
+.connectors-pop-kind {
+  font: 600 9px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-transform: uppercase;
+  padding: 3px 6px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+}
+.connectors-pop-row:hover .connectors-pop-kind { background: var(--surface-3); }
+.connectors-pop-foot { padding: 6px; border-top: 1px solid var(--line); background: var(--surface-2); }
+.connectors-pop-add {
+  width: 100%;
+  font: 500 12.5px/1 var(--font-sans);
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--accent-press);
+  border: 0; cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.connectors-pop-add:hover { background: var(--accent-tint); }
+.conn-mode { font: 600 9.5px/1 var(--font-mono); letter-spacing: 0.06em; color: var(--text-3); padding: 4px 7px; background: var(--surface-2); border-radius: var(--r-sm); }
+
+/* ─── shared input + button bases (used by conn + future settings forms) ── */
+.set-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: 14px/1.4 var(--font-sans);
+  padding: 10px 12px;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.set-input::placeholder { color: var(--text-3); }
+.set-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+/* ─── catalog browser ──────────────────────────────────────────────────── */
+.conn-browse { display: flex; flex-direction: column; gap: 12px; margin: 4px 0 14px; }
+.conn-search { font-size: 13.5px; padding: 9px 12px; }
 .conn-cats { display: flex; flex-wrap: wrap; gap: 6px; }
-.conn-cat { font: 500 11.5px/1 var(--font-sans); padding: 6px 11px; border-radius: var(--r-pill); border: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer; }
-.conn-cat:hover { color: var(--text); border-color: var(--text-3); }
-.conn-cat.on { background: var(--surface-2); color: var(--text); border-color: var(--text-2); }
+.conn-cat {
+  font: 500 11.5px/1 var(--font-sans);
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.conn-cat:hover { background: var(--surface-2); color: var(--text); }
+.conn-cat.on {
+  background: var(--accent-tint);
+  color: var(--text);
+  border-color: var(--accent-line);
+}
 
-/* Dynamic setup card */
-.conn-card { margin-top: 16px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
-.conn-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.conn-card-head h3 { margin: 0; font-size: 16px; flex: 1; }
-.conn-card-close { width: 28px; height: 28px; padding: 0; font-size: 18px; line-height: 1; background: transparent; border: 0; color: var(--text-3); cursor: pointer; border-radius: var(--r-sm); }
+/* override the base conn-row for the catalog list — flatter, lighter */
+.conn-list .conn-row {
+  padding: 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.conn-list .conn-row:hover { border-color: var(--line-strong); }
+.conn-list .conn-name { font-weight: 500; font-size: 13.5px; }
+
+/* ─── dynamic setup card ───────────────────────────────────────────────── */
+.conn-card {
+  margin-top: 18px;
+  padding: 18px 20px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-1);
+}
+.conn-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.conn-card-head h3 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; flex: 1; }
+.conn-card-close {
+  width: 26px; height: 26px; padding: 0;
+  font-size: 18px; line-height: 1;
+  background: transparent; border: 0;
+  color: var(--text-3); cursor: pointer;
+  border-radius: var(--r-sm);
+}
 .conn-card-close:hover { color: var(--text); background: var(--surface-2); }
-.conn-card-loading, .conn-card-err, .conn-card-help { color: var(--text-3); font-size: 13px; padding: 4px 0; }
-.conn-card-err { color: var(--warn); }
-.conn-steps { margin: 6px 0 14px 0; padding-left: 22px; color: var(--text-2); font-size: 13px; line-height: 1.7; }
-.conn-steps li { margin-bottom: 2px; }
-.conn-link { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
-.conn-link:hover { border-bottom-style: solid; }
+.conn-card-loading, .conn-card-err, .conn-card-help { color: var(--text-3); font-size: 12.5px; padding: 6px 0; }
+.conn-card-err { color: var(--error); }
+.conn-steps {
+  margin: 10px 0 16px;
+  padding-left: 22px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.75;
+}
+.conn-steps li { margin-bottom: 3px; }
+.conn-steps li::marker { color: var(--text-3); }
+.conn-link {
+  color: var(--accent-press);
+  text-decoration: none;
+  border-bottom: 1px solid var(--accent-line);
+  cursor: pointer;
+}
+.conn-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .conn-copy { display: inline-block; cursor: pointer; }
-.conn-copy code { background: var(--surface-2); padding: 2px 6px; border-radius: var(--r-sm); font-size: 11.5px; color: var(--text); }
-.conn-copy.copied code::after { content: ' ✓ copied'; color: var(--ok); font-weight: 600; }
-.conn-fields { display: flex; flex-direction: column; gap: 12px; }
-.conn-field { display: flex; flex-direction: column; gap: 5px; }
-.conn-field-title { font: 600 12px/1.2 var(--font-sans); color: var(--text-2); }
-.conn-field-desc  { font: 400 12px/1.4 var(--font-sans); color: var(--text-3); }
-.conn-input { width: 100%; }
-.conn-card-actions { margin-top: 16px; display: flex; align-items: center; gap: 14px; }
+.conn-copy code {
+  background: var(--surface-2);
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  font: 500 11.5px/1.4 var(--font-mono);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.conn-copy:hover code { background: var(--surface-3); }
+.conn-copy.copied code::after { content: ' ✓'; color: var(--ok); font-weight: 700; margin-left: 4px; }
+
+.conn-fields { display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.conn-field { display: flex; flex-direction: column; gap: 4px; }
+.conn-field-title { font: 600 12px/1.2 var(--font-sans); color: var(--text); letter-spacing: -0.005em; }
+.conn-field-desc  { font: 400 12px/1.45 var(--font-sans); color: var(--text-3); margin-bottom: 2px; }
+.conn-input { font-family: var(--font-mono); font-size: 12.5px; }
+.conn-card-actions { margin-top: 18px; display: flex; align-items: center; gap: 14px; }
+.conn-submit { padding: 8px 18px; }
 .conn-card-status { font-size: 12px; color: var(--text-3); }
-.conn-card-status[data-state="fail"] { color: var(--warn); }
+.conn-card-status[data-state="fail"] { color: var(--error); }
 
 .sys-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; font-size: 13px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
 .sys-grid .k { color: var(--text-3); } .sys-grid .v { color: var(--text); word-break: break-all; }

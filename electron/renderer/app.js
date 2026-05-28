@@ -12,6 +12,7 @@ const composerEl = $('#composer');
 const sendBtn    = $('#send-btn');
 const micBtn     = $('#mic-btn');
 const attachBtn  = $('#attach-btn');
+const connBtn    = $('#connectors-btn');
 const fileInput  = $('#file-input');
 const attachEl   = $('#attachments');
 const statusEl   = $('#status');
@@ -430,6 +431,125 @@ sendBtn.addEventListener('click', send);
 composerEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 composerEl.addEventListener('input', () => { resize(); updateSend(); });
 attachBtn.addEventListener('click', () => fileInput.click());
+
+// ─── connectors popover (in-chat toggle menu) ─────────────────────────────
+// Small searchable popover anchored to the composer. Lists the user's
+// currently-installed connectors (MCP servers + pinned Nango providers),
+// each with an on/off toggle. Adding a new connector links to Settings.
+const connPop      = $('#connectors-pop');
+const connPopList  = $('#connectors-pop-list');
+const connPopQ     = $('#connectors-pop-search');
+const connPopAdd   = $('#connectors-pop-add');
+let connPopOpen = false;
+let connPopRows = [];   // last-fetched [{provider, label, kind, enabled, has_tools}]
+
+function positionConnPop() {
+  const r = connBtn.getBoundingClientRect();
+  // Anchor above the composer button, growing upward.
+  connPop.style.left   = `${Math.round(r.left)}px`;
+  connPop.style.bottom = `${Math.round(window.innerHeight - r.top + 8)}px`;
+}
+
+function renderConnPop(filter = '') {
+  const f = filter.trim().toLowerCase();
+  const items = connPopRows.filter((r) => !f || r.label.toLowerCase().includes(f) || (r.provider || '').toLowerCase().includes(f));
+  if (!items.length) {
+    connPopList.innerHTML = `<li class="connectors-pop-empty">${
+      connPopRows.length ? 'no matches.' : "you haven't connected anything yet."
+    }</li>`;
+    return;
+  }
+  connPopList.innerHTML = items.map((r) => `
+    <li class="connectors-pop-row" data-provider="${r.provider}">
+      <span class="connectors-pop-name">${(r.label || r.provider).replace(/[<>&]/g, '')}</span>
+      <span class="connectors-pop-kind">${r.kind === 'mcp' ? 'mcp' : ''}</span>
+      <label class="toggle">
+        <input type="checkbox" class="connectors-pop-toggle" data-provider="${r.provider}" ${r.enabled ? 'checked' : ''} ${r.has_tools ? '' : 'disabled'}>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+    </li>
+  `).join('');
+  connPopList.querySelectorAll('.connectors-pop-toggle').forEach((cb) => {
+    cb.addEventListener('change', () => toggleConnPop(cb.dataset.provider, cb.checked, cb));
+  });
+}
+
+async function loadConnPop() {
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/connectors`)).json();
+    connPopRows = (d.connectors || []).map((c) => ({
+      provider: c.provider,
+      label:    c.label || c.provider,
+      kind:     c.kind || 'nango',
+      enabled:  !!c.enabled,
+      has_tools: c.has_tools !== false,
+    }));
+    renderConnPop(connPopQ.value);
+  } catch (err) {
+    connPopList.innerHTML = `<li class="connectors-pop-empty">couldn't load: ${err.message}</li>`;
+  }
+}
+
+async function toggleConnPop(provider, on, cb) {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/connectors/toggle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, on }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${res.status}`);
+    }
+    const row = connPopRows.find((r) => r.provider === provider);
+    if (row) row.enabled = on;
+  } catch (err) {
+    cb.checked = !on;  // revert
+    console.warn('toggle failed:', err);
+  }
+}
+
+function openConnPop() {
+  positionConnPop();
+  connPop.hidden = false;
+  connPopOpen = true;
+  loadConnPop();
+  setTimeout(() => connPopQ.focus(), 0);
+}
+
+function closeConnPop() {
+  connPop.hidden = true;
+  connPopOpen = false;
+  connPopQ.value = '';
+}
+
+connBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  connPopOpen ? closeConnPop() : openConnPop();
+});
+
+connPopQ.addEventListener('input', (e) => renderConnPop(e.target.value));
+
+// Explicit close button (×).
+$('#connectors-pop-close').addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeConnPop();
+});
+
+// Close on outside click / Escape / window resize.
+document.addEventListener('click', (e) => {
+  if (connPopOpen && !connPop.contains(e.target) && e.target !== connBtn && !connBtn.contains(e.target)) closeConnPop();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && connPopOpen) closeConnPop();
+});
+window.addEventListener('resize', () => connPopOpen && positionConnPop());
+
+// "+ Add a connector" deeplinks into Settings → Connections.
+connPopAdd.addEventListener('click', () => {
+  closeConnPop();
+  document.querySelector('.tab[data-view="settings"]')?.click();
+  setTimeout(() => document.querySelector('#sec-connections')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+});
 fileInput.addEventListener('change', (e) => addFiles(e.target.files));
 composerEl.addEventListener('paste', async (e) => { const items = e.clipboardData?.items || []; const fs = []; for (const it of items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) fs.push(f); } if (fs.length) { e.preventDefault(); await addFiles(fs); } });
 micBtn.addEventListener('click', () => (listening ? recog?.stop() : startVoice()));

@@ -31,6 +31,9 @@
         <button id="attach-btn" class="iconbtn" title="Attach files" aria-label="Attach">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05 12.25 20.24a6 6 0 1 1-8.49-8.49L13.4 1.6a4 4 0 0 1 5.66 5.66L9.41 16.91a2 2 0 0 1-2.83-2.83l8.46-8.46"/></svg>
         </button>
+        <button id="connectors-btn" class="iconbtn" title="Connectors" aria-label="Connectors">
+          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        </button>
         <input id="file-input" type="file" multiple hidden>
         <textarea id="composer" rows="1" placeholder="Message Sunday…" aria-label="Message"></textarea>
         <button id="mic-btn" class="iconbtn" title="Voice (one-shot)" aria-label="Voice">
@@ -174,10 +177,15 @@
 
         <section class="set-block" id="sec-connections">
           <h2>Connections</h2>
-          <p class="set-help">Connect Sunday to any of 800+ services. Pick one — Sunday walks you through getting the keys, then handles OAuth for you. <span id="conn-unconfigured" hidden>Integrations server (Nango) isn't reachable yet.</span></p>
+          <p class="set-help">Toggle a connector <strong>on</strong> to pin its tools to every chat. Toggle <strong>off</strong> and they're still findable on demand — Sunday will discover them when relevant. <span id="conn-unconfigured" hidden>Integrations server (Nango) isn't reachable yet.</span></p>
+
+          <ul class="conn-pinned" id="conn-pinned"><li class="conn-loading">loading…</li></ul>
+
+          <h3 class="conn-subhead">Add a new connection</h3>
+          <p class="set-help conn-subhelp">Pick from 800+ services — Sunday walks you through getting the keys, then handles OAuth for you.</p>
 
           <div class="conn-browse">
-            <input type="text" id="conn-search" class="set-input conn-search" placeholder="Search 800+ services (gmail, slack, notion, stripe, …)" autocomplete="off">
+            <input type="text" id="conn-search" class="set-input conn-search" placeholder="Search gmail, slack, notion, stripe, …" autocomplete="off">
             <div class="conn-cats" id="conn-cats"></div>
           </div>
 
@@ -249,6 +257,20 @@
       <span>Drop to attach</span>
     </div>
   </section>
+
+  <!-- In-chat connectors popover. Hidden by default; toggled by the composer button. -->
+  <div id="connectors-pop" class="connectors-pop" hidden>
+    <div class="connectors-pop-head">
+      <input type="text" id="connectors-pop-search" class="set-input" placeholder="Search your connectors…" autocomplete="off">
+      <button class="connectors-pop-close" id="connectors-pop-close" aria-label="Close">×</button>
+    </div>
+    <ul id="connectors-pop-list" class="connectors-pop-list">
+      <li class="connectors-pop-empty">loading…</li>
+    </ul>
+    <div class="connectors-pop-foot">
+      <button class="connectors-pop-add" id="connectors-pop-add">+ Add a connector</button>
+    </div>
+  </div>
 
   <script type="module" src="app.js"></script>
 </body>

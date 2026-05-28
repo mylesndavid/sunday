@@ -404,6 +404,52 @@ async def _t_device_open_app(args: dict[str, Any], ctx: ToolContext) -> Any:
         return {"error": str(exc)}
 
 
+# ─── Electron app CDP dispatchers (daemon-side, routes to the satellite) ──
+
+async def _t_electron_launch(args: dict[str, Any], ctx: ToolContext) -> Any:
+    name = (args.get("name") or "").strip()
+    if not name:
+        return {"error": "'name' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
+    try:
+        # 30s timeout because launching Slack-class apps + CDP handshake can
+        # take 10-20s on first launch.
+        return await _devices_manager(ctx).command(
+            str(device_id), "app_launch", {"name": name}, timeout=45,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
+async def _t_electron_close(args: dict[str, Any], ctx: ToolContext) -> Any:
+    name = (args.get("name") or "").strip()
+    if not name:
+        return {"error": "'name' is required"}
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
+    try:
+        return await _devices_manager(ctx).command(
+            str(device_id), "app_close", {"name": name}, timeout=15,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
+async def _t_electron_list_known(args: dict[str, Any], ctx: ToolContext) -> Any:
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="cdp")
+    if err:
+        return {"error": err}
+    try:
+        return await _devices_manager(ctx).command(
+            str(device_id), "app_list_known", {}, timeout=10,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+
+
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="device_list",
@@ -636,4 +682,44 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         description="Press a key or combo on the Mac: 'enter', 'tab', 'escape', 'cmd+t', 'cmd+shift+4', 'cmd+c', etc. Drives menus and shortcuts in any app.",
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "combo": {"type": "string"}}, "required": ["combo"]},
         run=_t_app_key,
+    ))
+
+    # ─── Electron app control via CDP ────────────────────────────────────
+    # Slack, Discord, VS Code, Cursor, Notion desktop, Linear, Spotify, …
+    # Every Electron app accepts --remote-debugging-port at launch; we
+    # restart the app with the flag, then drive it through the SAME
+    # browser_read / browser_click / browser_type tools above using
+    # profile_id="app:<name>".
+    registry.register(Tool(
+        name="electron_launch",
+        description=(
+            "Launch a desktop app (Slack, Discord, VS Code, Cursor, Notion, "
+            "Linear, Spotify, Figma, Obsidian, Claude) with Chrome DevTools "
+            "enabled, then drive it like a browser: pass the returned "
+            "profile_id to browser_read / browser_click / browser_type. "
+            "If the app is already running, Sunday quits and relaunches it "
+            "so the debug flag applies — give the user a heads-up first if "
+            "they might lose drafts. Uses the app's NATIVE data directory, "
+            "so all the user's logins and workspaces come along."
+        ),
+        parameters={"type": "object", "properties": {
+            **_DEVICE_ID_PARAM,
+            "name": {"type": "string", "description": "App key: slack, discord, vscode, cursor, notion, linear, spotify, figma, obsidian, claude."},
+        }, "required": ["name"]},
+        run=_t_electron_launch,
+    ))
+    registry.register(Tool(
+        name="electron_close",
+        description="Quit an electron app Sunday launched via electron_launch.",
+        parameters={"type": "object", "properties": {
+            **_DEVICE_ID_PARAM,
+            "name": {"type": "string"},
+        }, "required": ["name"]},
+        run=_t_electron_close,
+    ))
+    registry.register(Tool(
+        name="electron_list_known",
+        description="List the desktop apps Sunday knows how to launch + drive via CDP, and which are actually installed on this Mac.",
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM}},
+        run=_t_electron_list_known,
     ))

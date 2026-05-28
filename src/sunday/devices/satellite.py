@@ -131,6 +131,31 @@ async def _h_cdp_close(params: dict[str, Any]) -> dict[str, Any]:
     return await cdp.close(profile_id=params.get("profile_id", "default"))
 
 
+# ─── Electron app control via CDP ─────────────────────────────────────────
+# These piggyback on the cdp.py session model. Launching an Electron app
+# registers a CdpSession under `app:<name>`, so the existing _h_cdp_read /
+# _h_cdp_click / _h_cdp_type handlers work against it with no changes — the
+# agent just passes profile_id="app:slack" (or whatever) and drives it like
+# any other Chromium target.
+
+async def _h_app_launch(params: dict[str, Any]) -> dict[str, Any]:
+    from sunday.devices import electron_apps
+    return await electron_apps.launch_app(
+        name=params.get("name", ""),
+        port=params.get("port"),
+    )
+
+
+async def _h_app_close(params: dict[str, Any]) -> dict[str, Any]:
+    from sunday.devices import electron_apps
+    return await electron_apps.close_app(name=params.get("name", ""))
+
+
+async def _h_app_list_known(params: dict[str, Any]) -> dict[str, Any]:
+    from sunday.devices import electron_apps
+    return {"apps": electron_apps.list_known()}
+
+
 async def _h_cdp_read(params: dict[str, Any]) -> dict[str, Any]:
     return await cdp.read_page(profile_id=params.get("profile_id", "default"))
 
@@ -292,6 +317,9 @@ HANDLERS = {
     "cdp_click":              _h_cdp_click,
     "cdp_type":               _h_cdp_type,
     "cdp_key":                _h_cdp_key,
+    "app_launch":             _h_app_launch,
+    "app_close":              _h_app_close,
+    "app_list_known":         _h_app_list_known,
     "imessage_list_threads":  _h_imessage_list_threads,
     "imessage_read_thread":   _h_imessage_read_thread,
     "imessage_read_recent":   _h_imessage_read_recent,

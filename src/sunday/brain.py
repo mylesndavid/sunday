@@ -162,6 +162,7 @@ async def respond(
     # per-turn schema small no matter how many MCP servers are connected.
     # Subagents / other callers (no active_tools) get the full schema.
     from sunday.tools import CORE_TOOLS
+    from sunday import connectors as _connectors
     _active = (extras or {}).get("active_tools")
 
     def _schema():
@@ -169,7 +170,13 @@ async def respond(
             return None
         if _active is None:
             return registry.as_openai_schema()
-        return registry.as_openai_schema(names=set(CORE_TOOLS) | set(_active))
+        # Connector toggles: every provider the user has pinned in
+        # Settings → Connections has its tools promoted into the always-on
+        # set, alongside CORE_TOOLS and whatever find_tools has surfaced
+        # this turn. Re-read each turn — cheap, and lets a flip take effect
+        # on the very next message without restart.
+        pinned = _connectors.active_tool_names(registry)
+        return registry.as_openai_schema(names=set(CORE_TOOLS) | set(_active) | pinned)
 
     tool_schema = _schema()
 

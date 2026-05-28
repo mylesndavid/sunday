@@ -270,13 +270,19 @@ async def get_provider(name: str) -> dict[str, Any] | None:
 async def provision(
     provider_template: str,
     unique_key: str,
-    credentials: dict[str, Any],
+    credentials: dict[str, Any] | None = None,
     connection_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a Nango integration from caller-supplied credentials. Generic
-    over auth_mode: caller passes the credentials dict that matches the
-    template's auth_mode (OAUTH2 → client_id/client_secret/scopes; API_KEY →
-    apiKey; BASIC → username/password; etc).
+    """Create a Nango integration. Body shape depends on auth_mode:
+
+      OAuth2 family (OAUTH2, OAUTH2_CC, APP, …) — `credentials` carries the
+        DEVELOPER's app credentials (client_id + client_secret + scopes),
+        stored at the integration level. The user's tokens land on the
+        connection later via the Connect flow.
+
+      API_KEY / BASIC / TWO_STEP / etc. — the integration itself stores
+        NO credentials. The user's actual key/password lands on the
+        connection during Connect. So we omit the credentials field entirely.
 
     Idempotent: returns the existing integration if one already exists under
     `unique_key`.
@@ -289,16 +295,58 @@ async def provision(
     body: dict[str, Any] = {
         "provider": provider_template,
         "unique_key": unique_key,
-        "credentials": credentials,
     }
-    if connection_config:
-        body["connection_config"] = connection_config
+    if credentials:
+        body["credentials"] = credentials
     async with httpx.AsyncClient(timeout=20) as client:
         res = await client.post(f"{host()}/integrations", headers=_headers(), json=body)
     if res.status_code >= 400:
         return {"error": f"create integration failed ({res.status_code}): {res.text[:300]}"}
     log.info("nango integration provisioned (dynamic)", provider=provider_template, key=unique_key)
     return {"ok": True, "created": True, "key": unique_key, "integration": res.json().get("data")}
+
+
+def _camel_to_snake(name: str) -> str:
+    out = []
+    for i, ch in enumerate(name):
+        if ch.isupper() and i > 0:
+            out.append("_")
+        out.append(ch.lower())
+    return "".join(out)
+
+
+async def create_connection_direct(
+    unique_key: str,
+    connection_id_val: str,
+    auth_mode: str,
+    user_credentials: dict[str, Any],
+    connection_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create a Nango connection directly (no browser hop) for auth modes
+    where the user already has the credential in hand — API_KEY, BASIC,
+    TWO_STEP, etc. The integration must already exist under `unique_key`.
+
+    Nango's catalog names credential fields in camelCase (`apiKey`); the
+    connection API expects them in snake_case (`api_key`). We convert here
+    so callers can just pass whatever the catalog gave them.
+    """
+    if not configured():
+        return {"error": "Nango isn't configured."}
+    body: dict[str, Any] = {
+        "connection_id": connection_id_val,
+        "provider_config_key": unique_key,
+    }
+    # Flatten + normalize: camelCase → snake_case.
+    for k, v in user_credentials.items():
+        body[_camel_to_snake(k)] = v
+    if connection_config:
+        body["connection_config"] = connection_config
+    async with httpx.AsyncClient(timeout=20) as client:
+        res = await client.post(f"{host()}/connection", headers=_headers(), json=body)
+    if res.status_code >= 400:
+        return {"error": f"nango connection create failed ({res.status_code}): {res.text[:300]}"}
+    log.info("nango connection created (direct)", key=unique_key, auth_mode=auth_mode)
+    return {"ok": True, "direct": True}
 
 
 async def create_connect_session_for_key(unique_key: str, end_user: dict | None = None) -> dict[str, Any]:

@@ -198,6 +198,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",
         "sunday.integrations.google",
+        "sunday.integrations.fireflies",
     ):
         try:
             mod = __import__(module_path, fromlist=["register"])

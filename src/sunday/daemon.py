@@ -716,10 +716,201 @@ class Daemon:
         slim["redirect_uri"] = f"{nango.public_url()}/oauth/callback" if nango.public_url() else None
         return web.json_response(slim)
 
+    # ─── MCP Registry: browse + install + uninstall ────────────────────
+
+    async def _http_mcp_registry(self, request: web.Request) -> web.Response:
+        """Browse the official MCP Registry. Query param `q` is a free-text
+        search across server name + title + description (server-side). The
+        UI uses this to populate the 'Add a connector' search box."""
+        from sunday import mcp_registry
+        q = request.query.get("q", "")
+        try:
+            limit = int(request.query.get("limit") or 30)
+        except (TypeError, ValueError):
+            limit = 30
+        items = await mcp_registry.list_servers(q=q, limit=limit)
+        return web.json_response({"servers": items, "count": len(items)})
+
+    async def _http_mcp_install(self, request: web.Request) -> web.Response:
+        """Install one MCP server from the registry.
+
+        Body: {name, secrets?}.
+
+        First call with just `name` — if the server's auth headers need
+        user-supplied values (e.g. an API key for Smithery), we return
+        {missing_fields, fields} so the UI can render a form. Second call
+        with `secrets: {placeholder_key: value}` does the actual install.
+        """
+        from sunday import mcp, mcp_registry
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        name = (body.get("name") or "").strip()
+        if not name:
+            return web.json_response({"error": "name required"}, status=400)
+        server = await mcp_registry.get_server(name)
+        if not server:
+            return web.json_response({"error": f"server '{name}' not found in registry"}, status=404)
+
+        cfg = mcp.load_config()
+        out = mcp_registry.install_remote(server, cfg, secrets=body.get("secrets"))
+        if out.get("missing_fields"):
+            # Tell the UI what to ask for; don't write anything yet.
+            return web.json_response({
+                "needs_fields": True,
+                "fields": out["fields"],
+                "title": server.get("title"),
+                "description": server.get("description"),
+            })
+        if out.get("error"):
+            return web.json_response(out, status=400)
+        mcp.save_config(out["config"])
+        try:
+            status = await mcp.connect_all(self.registry, self.config)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("mcp connect failed after install")
+            return web.json_response({"installed": out["slug"], "connect_error": str(exc)}, status=502)
+        return web.json_response({"ok": True, "slug": out["slug"], "servers": list(status.values())})
+
+    async def _http_mcp_inspect(self, request: web.Request) -> web.Response:
+        """Get the field schema for one server without installing — so the
+        UI can render its setup form."""
+        from sunday import mcp_registry
+        name = request.match_info.get("name", "")
+        server = await mcp_registry.get_server(name)
+        if not server:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response({
+            "name": server.get("name"),
+            "title": server.get("title"),
+            "description": server.get("description"),
+            "kind": server.get("kind"),
+            "fields": mcp_registry.required_fields(server),
+            "remotes_count": len(server.get("remotes") or []),
+        })
+
+    async def _http_mcp_uninstall(self, request: web.Request) -> web.Response:
+        """Remove an installed MCP server by slug + reconnect."""
+        from sunday import mcp, mcp_registry
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        slug = (body.get("slug") or "").strip()
+        if not slug:
+            return web.json_response({"error": "slug required"}, status=400)
+        cfg = mcp.load_config()
+        out = mcp_registry.uninstall(slug, cfg)
+        if out.get("error"):
+            return web.json_response(out, status=400)
+        mcp.save_config(out["config"])
+        try:
+            status = await mcp.connect_all(self.registry, self.config)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"removed": slug, "connect_error": str(exc)}, status=502)
+        return web.json_response({"ok": True, "slug": slug, "servers": list(status.values())})
+
+    async def _http_connectors_get(self, request: web.Request) -> web.Response:
+        """The unified list of the user's connectors, of two kinds:
+
+          • MCP servers (kind="mcp")    — installed from the MCP Registry.
+                Their tools are auto-discovered via Sunday's MCP plumbing.
+          • Nango providers (kind="nango") — services connected via Nango's
+                OAuth proxy. Tools come from hand-written modules (gmail,
+                fireflies, …) or the auto-generated use_<provider>_api fallback.
+
+        Each row carries `enabled` (toggled-on for always-on schema),
+        `has_tools` (does Sunday have any tool registered for this connector?),
+        and a friendly `label`.
+        """
+        from sunday.integrations import nango
+        from sunday import connectors, mcp
+        enabled = connectors.load()
+        with_tools = set(connectors.providers_with_tools())
+        out: list[dict] = []
+
+        # --- MCP servers (installed from the registry) -----------------
+        # Read mcp.json directly; cross-reference live connection status so
+        # we can flag servers that are configured but failing to connect.
+        mcp_cfg = mcp.load_config()
+        mcp_servers = (mcp_cfg.get("mcpServers") or {})
+        # mcp.STATUS keys by server name; values are dicts holding name/tools.
+        for slug, _spec in mcp_servers.items():
+            live = mcp.STATUS.get(slug) or {}
+            tool_count = len(live.get("tools") or [])
+            out.append({
+                "kind":      "mcp",
+                "provider":  slug,
+                "label":     slug.replace("-", " ").title(),
+                "connected": bool(live.get("connected") or tool_count > 0),
+                "has_tools": tool_count > 0,
+                # MCP servers are always-on by design when installed — their
+                # tools are already in the registry. The toggle in the popover
+                # is informational; uninstall to remove.
+                "enabled":   tool_count > 0,
+                "tool_count": tool_count,
+            })
+
+        # --- Nango providers (per-service OAuth connections) -----------
+        try:
+            conns = await nango.list_connections()
+        except Exception:  # noqa: BLE001
+            conns = []
+        catalog_labels: dict[str, str] = {}
+        try:
+            for p in await nango.list_providers():
+                if p.get("name"):
+                    catalog_labels[p["name"]] = p.get("display_name") or p["name"]
+        except Exception:  # noqa: BLE001
+            pass
+        connected_keys = sorted({c.get("provider_config_key") for c in conns if c.get("provider_config_key")})
+        for key in connected_keys:
+            out.append({
+                "kind":      "nango",
+                "provider":  key,
+                "label":     catalog_labels.get(key, key),
+                "connected": True,
+                "has_tools": key in with_tools,
+                "enabled":   key in enabled,
+            })
+
+        return web.json_response({
+            "connectors": out,
+            "enabled":   sorted(enabled),
+            "with_tools": sorted(with_tools),
+        })
+
+    async def _http_connectors_toggle(self, request: web.Request) -> web.Response:
+        """Flip one connector on/off. Body: {provider, on}. Returns the new
+        enabled set. Effect is immediate on the next chat turn — no restart."""
+        from sunday import connectors
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        provider = (body.get("provider") or "").strip()
+        if not provider:
+            return web.json_response({"error": "provider required"}, status=400)
+        if provider not in connectors.PROVIDER_TOOL_PREFIXES:
+            return web.json_response({"error": f"no tools shipped for {provider} yet"}, status=400)
+        on = bool(body.get("on"))
+        new_state = connectors.toggle(provider, on)
+        log.info("connector toggled", provider=provider, on=on, total_enabled=len(new_state))
+        return web.json_response({"ok": True, "enabled": sorted(new_state)})
+
     async def _http_integrations_provision_one(self, request: web.Request) -> web.Response:
-        """Provision one Nango integration with user-supplied credentials,
-        then mint a Connect session URL the user opens in their browser.
-        Body: {provider, unique_key?, credentials, connection_config?}
+        """Provision one Nango integration with user-supplied credentials.
+
+        Branches on auth_mode:
+          - OAuth-family → store the developer's client_id/secret as
+            integration credentials, mint a Connect session URL for the
+            user to approve in their browser.
+          - API_KEY / BASIC / TWO_STEP → create the integration with no
+            credentials, then POST the user's actual key directly to
+            /connection. No browser hop.
+
+        Body: {provider, unique_key?, auth_mode, credentials, connection_config?}
         """
         from sunday.integrations import nango
         try:
@@ -730,15 +921,38 @@ class Daemon:
         if not provider:
             return web.json_response({"error": "provider required"}, status=400)
         unique_key = (body.get("unique_key") or provider).strip()
+        auth_mode = (body.get("auth_mode") or "").upper()
         credentials = body.get("credentials") or {}
         connection_config = body.get("connection_config") or {}
-        prov = await nango.provision(provider, unique_key, credentials, connection_config)
+
+        oauth_modes = {"OAUTH2", "OAUTH2_CC", "OAUTH1", "APP", "MCP_OAUTH2", "MCP_OAUTH2_GENERIC"}
+        if auth_mode in oauth_modes:
+            # Pass the developer's app creds (client_id/secret/scopes) as
+            # integration credentials. Nango ignores 'type' if we omit it.
+            integration_creds = {"type": "OAUTH2", **credentials}
+            prov = await nango.provision(provider, unique_key, integration_creds, connection_config)
+            if prov.get("error"):
+                return web.json_response(prov, status=400)
+            session = await nango.create_connect_session_for_key(unique_key)
+            if session.get("error"):
+                return web.json_response({"provisioned": prov, "session_error": session["error"]}, status=502)
+            return web.json_response({"provisioned": prov, "connect_url": session["connect_url"], "flow": "oauth"})
+
+        # Non-OAuth: provision empty integration, then POST the user's
+        # credential to /connection directly.
+        prov = await nango.provision(provider, unique_key, None, None)
         if prov.get("error"):
             return web.json_response(prov, status=400)
-        session = await nango.create_connect_session_for_key(unique_key)
-        if session.get("error"):
-            return web.json_response({"provisioned": prov, "session_error": session["error"]}, status=502)
-        return web.json_response({"provisioned": prov, "connect_url": session["connect_url"]})
+        # Always use the daemon-wide NANGO_CONNECTION_ID so every provider's
+        # connection lives under the same handle ("sunday"). That's what the
+        # per-provider tool modules (fireflies, google, …) send when proxying
+        # — if we generate a different id per provider here, the tools point
+        # at a connection that doesn't exist.
+        cid = body.get("connection_id") or nango.connection_id()
+        conn = await nango.create_connection_direct(unique_key, cid, auth_mode, credentials, connection_config)
+        if conn.get("error"):
+            return web.json_response({"provisioned": prov, "connection_error": conn["error"]}, status=502)
+        return web.json_response({"provisioned": prov, "connected": True, "flow": "direct"})
 
     async def _http_mcp_get(self, request: web.Request) -> web.Response:
         from sunday import mcp
@@ -959,6 +1173,12 @@ class Daemon:
         app.router.add_get("/v1/integrations/catalog", self._http_integrations_catalog)
         app.router.add_get("/v1/integrations/setup/{name}", self._http_integrations_setup)
         app.router.add_post("/v1/integrations/provision_one", self._http_integrations_provision_one)
+        app.router.add_get("/v1/connectors", self._http_connectors_get)
+        app.router.add_post("/v1/connectors/toggle", self._http_connectors_toggle)
+        app.router.add_get("/v1/mcp/registry", self._http_mcp_registry)
+        app.router.add_get("/v1/mcp/inspect/{name:.+}", self._http_mcp_inspect)
+        app.router.add_post("/v1/mcp/install", self._http_mcp_install)
+        app.router.add_post("/v1/mcp/uninstall", self._http_mcp_uninstall)
         app.router.add_get("/v1/mcp", self._http_mcp_get)
         app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)
