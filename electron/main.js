@@ -16,6 +16,7 @@
 const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage, desktopCapturer, systemPreferences } = require('electron');
 const path = require('node:path');
 const fs   = require('node:fs');
+const os   = require('node:os');
 const satellite = require('./satellite');
 
 const PREFS_FILE = () => path.join(app.getPath('userData'), 'prefs.json');
@@ -433,33 +434,124 @@ app.on('before-quit', () => {
   stopObserver();
 });
 
-// ── ambient observer (Python child: mic → Whisper → LLM → POST /v1/observer/now) ──
-let observerChild = null;
-function startObserver() {
-  if (observerChild) return;
-  try {
-    const { daemonHttp } = resolveDaemon();
-    const script = app.isPackaged
-      ? path.join(process.resourcesPath, 'observer.py')
-      : path.join(__dirname, 'build', 'observer.py');
-    const py = process.env.PYTHON || '/usr/bin/python3';
-    observerChild = require('node:child_process').spawn(py, [script, daemonHttp, '3600', '30'], {
-      stdio: 'ignore',
-      env: { ...process.env, PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` },
-    });
-    observerChild.on('exit', () => { observerChild = null; });
-  } catch { observerChild = null; }
-}
-function stopObserver() {
-  try { observerChild?.kill(); } catch { /* already gone */ }
-  observerChild = null;
+// ── ambient observer ──────────────────────────────────────────────────────
+// Capture runs INSIDE Sunday (a hidden BrowserWindow using getUserMedia), so
+// the macOS mic prompt is attributed to "Sunday" — not a detached Python
+// child that the user (rightly) refuses. The hidden window records ~30s
+// chunks, hands them to main, main transcribes via Whisper and POSTs the
+// transcript to the daemon's /v1/observer/tick (where the brain lives).
+let captureWindow = null;
+let observerState = { active: false, error: null, lastChunkAt: null };
+
+function micStatus() {
+  try { return systemPreferences.getMediaAccessStatus('microphone'); }
+  catch { return 'unknown'; }
 }
 
-ipcMain.handle('sunday:observer-status', () => ({ running: !!observerChild }));
-ipcMain.handle('sunday:observer-set', (_evt, on) => {
-  if (on) { startObserver(); savePrefs({ observer: true }); }
-  else    { stopObserver();  savePrefs({ observer: false }); }
-  return { running: !!observerChild };
+async function startObserver() {
+  if (captureWindow) return;
+  // Request mic the honest way — this prompt says "Sunday", and the grant
+  // (which the app already has the entitlement for) actually applies.
+  let status = micStatus();
+  if (status === 'not-determined') {
+    try { await systemPreferences.askForMediaAccess('microphone'); } catch { /* user dismissed */ }
+    status = micStatus();
+  }
+  if (status !== 'granted') {
+    observerState = { active: false, error: `mic-${status}`, lastChunkAt: null };
+    return;
+  }
+  captureWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-capture.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,   // keep capturing when not focused / tray
+    },
+  });
+  captureWindow.loadFile(path.join(__dirname, 'renderer', 'capture.html'));
+  captureWindow.on('closed', () => { captureWindow = null; observerState.active = false; });
+}
+
+function stopObserver() {
+  try { captureWindow?.close(); } catch { /* already gone */ }
+  captureWindow = null;
+  observerState = { active: false, error: null, lastChunkAt: null };
+}
+
+// Read OPENAI key the same way the daemon credential store does: env →
+// ~/.sunday/credentials.env → keychain. Main-process only; never the renderer.
+function readOpenAIKey() {
+  if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  try {
+    const envPath = path.join(os.homedir(), '.sunday', 'credentials.env');
+    const txt = fs.readFileSync(envPath, 'utf8');
+    const m = txt.match(/^OPENAI_API_KEY=(.+)$/m);
+    if (m) return m[1].trim();
+  } catch { /* fall through */ }
+  try {
+    return require('node:child_process')
+      .execSync('security find-generic-password -s OPENAI_API_KEY -w', { encoding: 'utf8' })
+      .trim();
+  } catch { return null; }
+}
+
+async function transcribeChunk(bytes) {
+  const key = readOpenAIKey();
+  if (!key) return null;
+  try {
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: 'audio/webm' }), 'chunk.webm');
+    form.append('model', 'whisper-1');
+    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data.text || '').trim();
+  } catch { return null; }
+}
+
+ipcMain.handle('sunday:observer-status', () => ({
+  running: !!(captureWindow && observerState.active),
+  mic: micStatus(),
+  error: observerState.error,
+  lastChunkAt: observerState.lastChunkAt,
+}));
+
+ipcMain.handle('sunday:observer-set', async (_evt, on) => {
+  if (on) { await startObserver(); savePrefs({ observer: true }); }
+  else    { stopObserver();        savePrefs({ observer: false }); }
+  return {
+    running: !!(captureWindow && observerState.active),
+    mic: micStatus(),
+    error: observerState.error,
+  };
+});
+
+// The capture window reports whether it actually got the mic stream.
+ipcMain.on('sunday:observer-capture-state', (_evt, state) => {
+  observerState.active = !!(state && state.active);
+  observerState.error = (state && state.error) || null;
+});
+
+// A finished ~30s chunk arrives from the capture window → transcribe → tick.
+ipcMain.handle('sunday:observer-chunk', async (_evt, bytes) => {
+  observerState.lastChunkAt = Date.now();
+  const transcript = await transcribeChunk(bytes);
+  try {
+    const { daemonHttp } = resolveDaemon();
+    await fetch(`${daemonHttp}/v1/observer/tick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript: transcript || '', silent: !transcript }),
+    });
+  } catch { /* daemon unreachable; drop this tick */ }
+  return { ok: true, transcribed: !!transcript };
 });
 
 // ── native notch HUD helper (Swift) ──────────────────────────────────────

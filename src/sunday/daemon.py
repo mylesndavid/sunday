@@ -95,6 +95,14 @@ class Daemon:
         # summary, and posts it here; atoms born during the window get linked.
         from sunday.conversations import ConversationStore
         self.conversations = ConversationStore()
+        # Observer conversation buffer — transcripts accumulate here across
+        # ticks; on a run of silent ticks we close + summarize the window.
+        # (Capture happens in Sunday.app on the Mac; transcripts arrive via
+        # /v1/observer/tick.)
+        self._obs_buffer: list[tuple[float, str]] = []   # (ts, transcript)
+        self._obs_silent_streak: int = 0
+        self._obs_conv_started: float | None = None
+        self._obs_silent_to_close = 4   # ~2min at 30s chunks
         # Serializes agent turns (user-initiated + sub-agent wake turns) so the
         # single chat log never interleaves two concurrent respond() loops.
         self._turn_lock = asyncio.Lock()
@@ -459,6 +467,129 @@ class Daemon:
             self._now = {"now": text, "since": now_ts, "updated_at": now_ts}
         log.info("observer now", text=text[:80], same_as_last=same)
         return web.json_response({"ok": True, "since": self._now["since"]})
+
+    async def _http_observer_tick(self, request: web.Request) -> web.Response:
+        """The observation tick. Sunday.app on the Mac captures ~30s of mic,
+        transcribes it locally, and POSTs {transcript} here. We run the tick
+        brain → create/update atoms, refresh the "now" line, and buffer the
+        transcript so we can close + summarize a conversation on silence.
+
+        Body: {transcript: str, silent?: bool}
+        Returns: {now, atoms_created, atoms_updated, conversation_closed?}
+        """
+        from sunday import observer as obs
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        transcript = (body.get("transcript") or "").strip()
+        now_ts = time.time()
+        # The Mac flags a chunk as silent when transcription returns nothing
+        # meaningful; treat short noise as silence too.
+        silent = bool(body.get("silent")) or len(transcript) < 8
+
+        if silent:
+            self._obs_silent_streak += 1
+            closed = None
+            # Close the open conversation after enough quiet.
+            if self._obs_silent_streak >= self._obs_silent_to_close and self._obs_buffer:
+                closed = await self._close_observer_conversation()
+            return web.json_response({"now": self._now.get("now"), "silent": True, "conversation_closed": closed})
+
+        self._obs_silent_streak = 0
+        if self._obs_conv_started is None:
+            self._obs_conv_started = now_ts
+        self._obs_buffer.append((now_ts, transcript))
+
+        # Run the tick brain over the open working atoms.
+        open_atoms = self.atoms.list(state="active", limit=20)
+        try:
+            tick = await obs.run_tick(transcript, open_atoms, self.config)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("observer tick failed", error=str(exc))
+            return web.json_response({"error": str(exc)}, status=502)
+
+        # Update the "now" line.
+        now_line = (tick.get("now") or "").strip()
+        if now_line:
+            same = bool(tick.get("same_as_last"))
+            if same and self._now.get("since"):
+                self._now["now"] = now_line
+                self._now["updated_at"] = now_ts
+            else:
+                self._now = {"now": now_line, "since": now_ts, "updated_at": now_ts}
+
+        # Create new atoms; remember index→id so supersede-by-"new:N" resolves.
+        new_ids: list[int] = []
+        for na in (tick.get("new_atoms") or []):
+            aid = self.atoms.add(
+                text=na.get("text") or "",
+                kind=na.get("kind"),
+                owner=na.get("owner"),
+                completion_signal=na.get("completion_signal"),
+                evidence=transcript[:200],
+                source="observer",
+            )
+            if aid:
+                new_ids.append(aid)
+
+        # Apply updates to existing atoms.
+        updated = 0
+        for u in (tick.get("atom_updates") or []):
+            try:
+                aid = int(u.get("id"))
+            except (TypeError, ValueError):
+                continue
+            sup = u.get("superseded_by")
+            if isinstance(sup, str) and sup.startswith("new:"):
+                try:
+                    sup = new_ids[int(sup.split(":")[1])]
+                except (ValueError, IndexError):
+                    sup = None
+            self.atoms.apply_update(
+                aid,
+                action=u.get("action") or "reinforced",
+                state=u.get("state"),
+                evidence=u.get("evidence"),
+                confidence=u.get("confidence"),
+                superseded_by=sup if isinstance(sup, int) else None,
+            )
+            updated += 1
+
+        return web.json_response({
+            "now": self._now.get("now"),
+            "atoms_created": len(new_ids),
+            "atoms_updated": updated,
+        })
+
+    async def _close_observer_conversation(self) -> dict[str, Any] | None:
+        """Summarize the buffered transcript window, store it, link atoms born
+        during the window, and reset the buffer."""
+        from sunday import observer as obs
+        if not self._obs_buffer:
+            return None
+        started = self._obs_conv_started or self._obs_buffer[0][0]
+        ended = self._obs_buffer[-1][0]
+        transcript = "\n".join(t for _, t in self._obs_buffer)
+        # Reset buffer immediately so a slow summary doesn't double-close.
+        self._obs_buffer = []
+        self._obs_conv_started = None
+        self._obs_silent_streak = 0
+        try:
+            summary = await obs.summarize_conversation(transcript, self.config)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("observer conversation summary failed", error=str(exc))
+            return None
+        cid = self.conversations.add(
+            started_at=started, ended_at=ended,
+            title=summary["title"], summary=summary["summary"],
+            category=summary["category"], participants=summary["participants"],
+            transcript=transcript, source="observer",
+        )
+        linked = self.atoms.link_to_conversation(cid, since=started, until=ended)
+        log.info("observer conversation closed", id=cid, title=summary["title"][:50], atoms_linked=linked)
+        return {"id": cid, "title": summary["title"], "atoms_linked": linked}
 
     async def _http_tools(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("tools", {}))
@@ -1149,6 +1280,7 @@ class Daemon:
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_post("/v1/observer/now", self._http_observer_now)
+        app.router.add_post("/v1/observer/tick", self._http_observer_tick)
         app.router.add_get("/v1/atoms", self._http_atoms_list)
         app.router.add_post("/v1/atoms", self._http_atoms_add)
         app.router.add_post("/v1/atoms/{id:[0-9]+}", self._http_atoms_update)

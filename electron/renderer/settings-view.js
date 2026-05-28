@@ -466,24 +466,59 @@ export function stopSystemPolling() { if (sysTimer) { clearInterval(sysTimer); s
 
 function wire() {
   // ── ambient observer toggle ──
+  // Honest status: "listening" ONLY when capture is genuinely live. If the
+  // mic was denied we say so and point at System Settings, instead of the
+  // old green lie. Re-polls while on so a mid-session capture death surfaces.
+  let observerPoll = null;
+  function setObserverUI(s) {
+    const statusEl = $('#set-observer-status');
+    const btn = $('#set-observer-toggle');
+    const mic = s.mic || 'unknown';
+    if (s.running) {
+      statusEl.dataset.state = 'ok';
+      statusEl.textContent = 'on — listening';
+      btn.textContent = 'Turn off';
+    } else if (s.error && s.error.startsWith('mic-denied')) {
+      statusEl.dataset.state = 'fail';
+      statusEl.textContent = 'mic permission denied — enable Sunday in System Settings → Privacy → Microphone';
+      btn.textContent = 'Turn on';
+    } else if (s.error && s.error.startsWith('mic-')) {
+      statusEl.dataset.state = 'fail';
+      statusEl.textContent = `mic not available (${mic})`;
+      btn.textContent = 'Turn on';
+    } else if (s.error) {
+      statusEl.dataset.state = 'fail';
+      statusEl.textContent = `couldn't start: ${s.error}`;
+      btn.textContent = 'Turn on';
+    } else {
+      statusEl.dataset.state = '';
+      statusEl.textContent = 'off';
+      btn.textContent = 'Turn on';
+    }
+  }
   async function refreshObserverUI() {
-    try {
-      const s = await window.sunday.observerStatus();
-      const on = !!s.running;
-      $('#set-observer-status').dataset.state = on ? 'ok' : '';
-      $('#set-observer-status').textContent = on ? 'on — listening' : 'off';
-      $('#set-observer-toggle').textContent = on ? 'Turn off' : 'Turn on';
-    } catch {}
+    try { setObserverUI(await window.sunday.observerStatus()); } catch {}
+  }
+  function startObserverPolling() {
+    if (observerPoll) return;
+    observerPoll = setInterval(refreshObserverUI, 4000);
+  }
+  function stopObserverPolling() {
+    if (observerPoll) { clearInterval(observerPoll); observerPoll = null; }
   }
   $('#set-observer-toggle').addEventListener('click', async () => {
     const btn = $('#set-observer-toggle'); btn.disabled = true;
     try {
       const s = await window.sunday.observerStatus();
-      await window.sunday.observerSet(!s.running);
-      await refreshObserverUI();
+      const result = await window.sunday.observerSet(!s.running);
+      setObserverUI(result);
+      if (result.running) startObserverPolling(); else stopObserverPolling();
     } finally { btn.disabled = false; }
   });
-  refreshObserverUI();
+  refreshObserverUI().then(() => {
+    // If it claims to be on at load, keep polling to catch silent death.
+    window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
+  });
 
   $('#set-conn-test').addEventListener('click', async () => {
     const url = $('#set-http').value.trim().replace(/\/+$/, '');
