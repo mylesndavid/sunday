@@ -54,18 +54,18 @@ services:
     restart: unless-stopped
     environment:
       - NANGO_ENCRYPTION_KEY=${NANGO_ENCRYPTION_KEY}
-      - NANGO_DB_USER=nango
-      - NANGO_DB_PASSWORD=${NANGO_DB_PASSWORD}
+      - NANGO_DB_USER=${NANGO_DB_USER:?set NANGO_DB_USER in .env}
+      - NANGO_DB_PASSWORD=${NANGO_DB_PASSWORD:?set NANGO_DB_PASSWORD in .env}
       - NANGO_DB_HOST=nango-db
-      - NANGO_DB_NAME=nango
-      - RECORDS_DATABASE_URL=postgresql://${NANGO_DB_USER}:${NANGO_DB_PASSWORD}@nango-db:5432/nango
+      - NANGO_DB_NAME=${NANGO_DB_USER}
+      - RECORDS_DATABASE_URL=postgresql://${NANGO_DB_USER}:${NANGO_DB_PASSWORD}@nango-db:5432/${NANGO_DB_USER}
       - SERVER_PORT=3003
       - NANGO_SERVER_URL=${NANGO_PUBLIC_URL:-http://localhost:3003}
       - NANGO_PUBLIC_SERVER_URL=${NANGO_PUBLIC_URL:-http://localhost:3003}
       - NANGO_REDIS_URL=redis://nango-redis:6379
       - FLAG_AUTH_ENABLED=${NANGO_AUTH_ENABLED:-false}
       - NANGO_DASHBOARD_USERNAME=${NANGO_DASHBOARD_USERNAME:-admin}
-      - NANGO_DASHBOARD_PASSWORD=${NANGO_DASHBOARD_PASSWORD}
+      - NANGO_DASHBOARD_PASSWORD=${NANGO_DASHBOARD_PASSWORD:?set NANGO_DASHBOARD_PASSWORD in .env}
       - NANGO_LOGS_ENABLED=false
       - FLAG_SERVE_CONNECT_UI=true
       - TELEMETRY=false
@@ -81,9 +81,9 @@ services:
     container_name: nango-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: nango
-      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD}
-      POSTGRES_DB: nango
+      POSTGRES_USER: ${NANGO_DB_USER:?set NANGO_DB_USER in .env}
+      POSTGRES_PASSWORD: ${NANGO_DB_PASSWORD:?set NANGO_DB_PASSWORD in .env}
+      POSTGRES_DB: ${NANGO_DB_USER}
     volumes:
       - nango-data:/var/lib/postgresql/data
 
