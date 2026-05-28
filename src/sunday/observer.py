@@ -58,7 +58,7 @@ Confidence (required on closed/dropped/superseded; 0.0–1.0)
   ≥ 0.85: strong direct signal. 0.6–0.85: plausible inference. < 0.6: do NOT close.
 
 You also produce the "now" line for the hub:
-  • "now": one short present-tense line, 4–10 words. "Idle / no clear activity" if unclear. "Watching/listening to a video about X" if system audio rather than them.
+  • "now": one short present-tense line, 4–10 words, describing the CURRENT activity. If there is no clear activity — silence, ambient noise, filler, nothing meaningful — return "" (empty string). NEVER invent an "idle" or "no clear activity" label; absence of activity is an empty string, not a state. "Watching/listening to a video about X" if it's clearly system audio rather than them speaking.
   • "same_as_last": TRUE if continues prior `now`; FALSE on a real shift.
 
 Be calm and sparing. Chit-chat, pleasantries, filler → no atoms. Silence/noise → empty arrays.

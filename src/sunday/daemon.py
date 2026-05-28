@@ -539,6 +539,11 @@ class Daemon:
         # overlaps the current line — and in that case keep the ORIGINAL text +
         # since, so nothing flickers.
         now_line = (tick.get("now") or "").strip()
+        # "idle" is not an activity — it's the absence of one. Treat any idle/
+        # no-activity phrasing as no signal: hold the last real activity and
+        # let staleness clear it. Never store or surface an idle label.
+        if now_line and ("idle" in now_line.lower() or "no clear activity" in now_line.lower()):
+            now_line = ""
         if now_line:
             same = bool(tick.get("same_as_last"))
             prev = (self._now.get("now") or "").strip()
