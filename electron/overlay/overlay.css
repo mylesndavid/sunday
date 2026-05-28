@@ -11,10 +11,14 @@ html, body {
   font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
   overflow: hidden;
   color: #f4eee3;
+  height: 100%;   /* fill the window so body catches clicks across the idle lip */
+  width: 100%;
 }
 :root { --notch-h: 38px; --amber: #e8932e; --ok: #93c9a1; --err: #e08a6e; }
 
-.notch { display: flex; flex-direction: column; align-items: center; }
+/* fills the window so a click anywhere in idle (incl. the transparent lip
+   below the bar) lands on a real element and opens the HUD */
+.notch { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 100%; }
 
 /* the notch shape: square top, rounded bottom, black to merge with the notch */
 .bar {

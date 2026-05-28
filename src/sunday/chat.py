@@ -178,5 +178,68 @@ class Chat:
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 
+    def max_id(self) -> int:
+        row = self._conn.execute("SELECT MAX(id) FROM messages").fetchone()
+        return row[0] or 0
+
+    def range(self, after_id: int, before_id: int, limit: int = 400) -> list[Message]:
+        """Messages with after_id < id <= before_id, oldest first — used by
+        compaction to fold aged-out turns into the running summary."""
+        rows = self._conn.execute(
+            "SELECT id, role, modality, content, created_at, metadata "
+            "FROM messages WHERE id > ? AND id <= ? ORDER BY id ASC LIMIT ?",
+            (after_id, before_id, limit),
+        ).fetchall()
+        return [
+            Message(id=r[0], role=r[1], modality=r[2], content=r[3],
+                    created_at=r[4], metadata=json.loads(r[5]) if r[5] else None)
+            for r in rows
+        ]
+
+    def search(self, query: str, limit: int = 8, roles: tuple[str, ...] = ("user", "sunday")) -> list[Message]:
+        """Keyword search over the raw message log — the verbatim history,
+        not the extracted-facts memory DB. This is how the model reaches back
+        past the compacted summary to the actual words that were said.
+
+        Matches every whitespace-separated term (AND) case-insensitively in
+        content. Defaults to user + Sunday turns (tool-result rows are huge
+        JSON blobs and almost never what 'what did I say about X' wants).
+        Returns most-recent-first."""
+        terms = [t for t in (query or "").split() if t.strip()]
+        if not terms:
+            return []
+        role_ph = ",".join("?" for _ in roles)
+        where = [f"role IN ({role_ph})"] + ["content LIKE ? ESCAPE '\\'" for _ in terms]
+        params: list[Any] = list(roles)
+        for t in terms:
+            esc = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params.append(f"%{esc}%")
+        params.append(limit)
+        rows = self._conn.execute(
+            "SELECT id, role, modality, content, created_at, metadata "
+            f"FROM messages WHERE {' AND '.join(where)} ORDER BY id DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [
+            Message(id=r[0], role=r[1], modality=r[2], content=r[3],
+                    created_at=r[4], metadata=json.loads(r[5]) if r[5] else None)
+            for r in rows
+        ]
+
+    def around(self, message_id: int, span: int = 3) -> list[Message]:
+        """The `span` messages on each side of `message_id` (inclusive),
+        oldest first — lets the model pull the surrounding exchange after a
+        search hit."""
+        rows = self._conn.execute(
+            "SELECT id, role, modality, content, created_at, metadata FROM messages "
+            "WHERE id BETWEEN ? AND ? ORDER BY id ASC",
+            (message_id - span, message_id + span),
+        ).fetchall()
+        return [
+            Message(id=r[0], role=r[1], modality=r[2], content=r[3],
+                    created_at=r[4], metadata=json.loads(r[5]) if r[5] else None)
+            for r in rows
+        ]
+
     def close(self) -> None:
         self._conn.close()

@@ -15,10 +15,7 @@ from sunday.tools import Tool, ToolContext, ToolRegistry
 
 
 _NOT_AVAILABLE = {
-    "error": (
-        "Memory subsystem is not initialized. Make sure OPENAI_API_KEY is set "
-        "(used for embeddings) and sqlite-vec is installed."
-    )
+    "error": "Memory subsystem is not initialized (could not open the local memories database)."
 }
 
 
@@ -47,10 +44,10 @@ async def _t_recall(args: dict[str, Any], ctx: ToolContext) -> Any:
     if mem is None or not getattr(mem, "available", False):
         return _NOT_AVAILABLE
     top_k = int(args.get("top_k") or 8)
-    hits = await mem.recall(query, top_k=top_k, floor=1.0)  # no floor for explicit recall
+    hits = mem.search(query, limit=top_k)   # local FTS, no network
     return {
         "results": [
-            {"id": h.id, "content": h.content, "source": h.source, "distance": float(h.distance)}
+            {"id": h.id, "content": h.content, "source": h.source}
             for h in hits
         ],
     }
@@ -91,10 +88,10 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="recall",
         description=(
-            "Search Sunday's long-term memory for facts relevant to a query. "
-            "Returns ranked matches by semantic similarity. Note: relevant memories "
-            "are ALREADY injected into the system prompt automatically — only call "
-            "this when you want a deliberate search beyond what auto-recall surfaced."
+            "Keyword-search Sunday's long-term memory for facts. Note: the full "
+            "set of known facts is ALREADY in your context every turn, so you "
+            "rarely need this — use it only when memory has grown large and you "
+            "want to pull a specific fact that may not be in the always-on set."
         ),
         parameters={
             "type": "object",

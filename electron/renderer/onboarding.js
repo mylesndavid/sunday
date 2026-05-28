@@ -41,14 +41,10 @@ function resolveDaemonURLs() {
     chosenLabel = 'local · this Mac';
     chosenDaemonHttp = 'http://127.0.0.1:8765';
     chosenDaemonWs   = 'ws://127.0.0.1:8765/v1/ws';
-  } else if (choice === 'prod') {
-    chosenLabel = 'production · sunday.betterbotagent.com';
-    chosenDaemonHttp = 'https://sunday.betterbotagent.com';
-    chosenDaemonWs   = 'wss://sunday.betterbotagent.com/v1/ws';
   } else {
     const custom = $('#onb-custom-url').value.trim().replace(/\/+$/, '');
     if (!custom) { return null; }
-    chosenLabel = `custom · ${custom}`;
+    chosenLabel = `self-hosted · ${custom}`;
     chosenDaemonHttp = custom;
     chosenDaemonWs   = custom.replace(/^http/, 'ws') + '/v1/ws';
   }

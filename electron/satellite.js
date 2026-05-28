@@ -63,7 +63,7 @@ function resolveSatellite(prefs) {
 function deviceWsFromPrefs(prefs) {
   // Prefer an explicit devices WS; else derive from daemonHttp/daemonWs.
   if (prefs.devicesWs) return prefs.devicesWs;
-  const http = prefs.daemonHttp || 'https://sunday.betterbotagent.com';
+  const http = prefs.daemonHttp || 'http://127.0.0.1:8765';
   const wsBase = http.replace(/^http/, 'ws').replace(/\/+$/, '');
   return `${wsBase}/v1/devices/ws`;
 }

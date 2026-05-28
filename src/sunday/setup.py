@@ -161,34 +161,16 @@ async def step_brain() -> StepResult:
 
 
 async def step_memory() -> StepResult:
-    """Memory needs OPENAI_API_KEY for embeddings."""
-    info("Memory uses OpenAI's text-embedding-3-small. Stored locally in ~/.sunday/memories.db.")
-    key = existing("OPENAI_API_KEY") or ask_secret(
-        "OPENAI_API_KEY (for embeddings only)",
-        "OPENAI_API_KEY",
-        get_at="https://platform.openai.com/api-keys",
-    )
-    if not key:
-        warn("no OPENAI_API_KEY — memory will be disabled until set")
-        return StepResult(name="Memory", ok=False, note="OPENAI_API_KEY missing")
-
-    info("verifying with a 1-vector embed…")
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            res = await client.post(
-                "https://api.openai.com/v1/embeddings",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": "text-embedding-3-small", "input": "hello"},
-            )
-        if res.status_code == 200:
-            dims = len(res.json()["data"][0]["embedding"])
-            ok(f"OpenAI embeddings live — {dims}-dim vectors")
-            return StepResult(name="Memory", ok=True)
-        fail(f"OpenAI returned {res.status_code}: {res.text[:200]}")
-        return StepResult(name="Memory", ok=False, note=f"http {res.status_code}")
-    except Exception as exc:  # noqa: BLE001
-        fail(f"network: {exc}")
-        return StepResult(name="Memory", ok=False, note=str(exc)[:200])
+    """Memory is fully local now — no API key, no embeddings."""
+    from sunday.memory import Memory
+    info("Memory is local: durable facts in ~/.sunday/memories.db, always-in-context "
+         "core + FTS5 keyword search. No API key, no embeddings, no network.")
+    m = Memory()
+    if m.available:
+        ok(f"local memory ready — {m.count()} facts, FTS search {'on' if m._fts else 'via LIKE'}")
+        return StepResult(name="Memory", ok=True)
+    fail("could not open the local memories database")
+    return StepResult(name="Memory", ok=False, note="db open failed")
 
 
 async def step_sendblue(public_url: str) -> StepResult:

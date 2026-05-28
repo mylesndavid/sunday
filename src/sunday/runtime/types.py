@@ -38,6 +38,8 @@ class Provider(Protocol):
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
         on_delta: DeltaHandler | None = None,
+        on_reasoning: DeltaHandler | None = None,
+        purpose: str | None = None,
     ) -> CompletionResult: ...
 
 

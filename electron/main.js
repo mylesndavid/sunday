@@ -80,6 +80,7 @@ function createMainWindow() {
 // notch regardless). idle = invisible footprint sized to the real notch;
 // active = wider so the count shows beside it; expanded = glass card.
 const NOTCH_RADIUS = 14;       // bottom corners, matches BetterBot
+const IDLE_CLICK_LIP = 16;     // transparent clickable strip below the notch when idle
 const NOTCH = {
   active:   { w: 300 },
   expanded: { w: 360, h: 320 },
@@ -111,7 +112,11 @@ function notchSize(mode) {
   const { notchHeight, notchWidth } = notchMetrics();
   if (mode === 'expanded') return { w: NOTCH.expanded.w, h: NOTCH.expanded.h };
   if (mode === 'active')   return { w: notchWidth + 160, h: notchHeight + 8 };  // shoulders beside the notch
-  return { w: notchWidth, h: notchHeight };                                     // idle: exactly the notch
+  // idle: invisible, but extend a small clickable lip BELOW the camera so a
+  // click "on the notch" lands on real screen (the camera housing itself is
+  // hardware and can't receive clicks). Width stays = the notch so we never
+  // sit over adjacent menu-bar items.
+  return { w: notchWidth, h: notchHeight + IDLE_CLICK_LIP };
 }
 
 function positionNotch(mode) {
@@ -121,9 +126,11 @@ function positionNotch(mode) {
   const x = Math.round(display.bounds.x + display.bounds.width / 2 - w / 2);
   const y = display.bounds.y;   // absolute top — flush, over the notch
   overlayWindow.setBounds({ x, y, width: w, height: h });
-  // Idle is a transparent, click-through footprint so it never eats clicks
-  // on the menu bar; active/expanded are interactive.
-  overlayWindow.setIgnoreMouseEvents(mode === 'idle', { forward: true });
+  // Interactive in every mode — including idle, so clicking the (invisible)
+  // notch region opens the HUD card. The idle footprint is only the notch
+  // width + a small lip, sitting over the camera housing where there are no
+  // menu-bar items, so it doesn't eat meaningful clicks.
+  overlayWindow.setIgnoreMouseEvents(false);
 }
 
 function createOverlayWindow() {
@@ -299,18 +306,14 @@ function createOnboardingWindow() {
 }
 
 function createTray() {
-  // Tiny template image — macOS tints automatically to match the menu bar
-  // theme. 18×18 is the canonical Apple template size; we draw a single
-  // amber-ish dot (becomes black/white at runtime under template tint).
-  const icon = nativeImage.createFromDataURL(
-    'data:image/png;base64,' +
-    'iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAAhUlEQVQ4y2NkYGD4z0AB' +
-    'YGJgYGBgZGRk+I+L8/8DEzkamRiZGBmYmBlYWZkZmJgYGRgZGZgYWBgYmRgZmBgYGRgY' +
-    'mBgYGRgYGBgYGBkYmRgYGBkYmRgZGRgYGRiZGBgYGRgZGBgYGRgYGBgYGRgZGBkYGRgY' +
-    'GRgZGBgYGRgZGBgYGRgYGBgYGAEACS8EBaBPRMAAAAAASUVORK5CYII='
-  );
-  icon.setTemplateImage(true);
-  tray = new Tray(icon);
+  // Monochrome sun template — macOS tints it to match the menu bar theme
+  // (black on light, white on dark). Shipped as 18px + @2x in renderer/ so
+  // Electron picks the retina rep automatically. (Was an inline data URL,
+  // but that base64 was a corrupt PNG → Electron drew an empty/invisible
+  // icon, which is why nothing showed in the menu bar.)
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'trayTemplate.png'));
+  if (!icon.isEmpty()) icon.setTemplateImage(true);
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('Sunday');
   rebuildTrayMenu();
   tray.on('click', () => {
@@ -320,6 +323,28 @@ function createTray() {
       createMainWindow();
     }
   });
+}
+
+// Live agent indicator IN THE MENU BAR: poll the daemon and show the running
+// sub-agent count as text next to the sun icon (e.g. "☀ 2"). This is the
+// reliable home for ambient status — the notch overlay can't read the real
+// notch geometry from Electron, so the menu bar carries the live count.
+let _trayStatusTimer = null;
+function startTrayStatus() {
+  const tick = async () => {
+    if (!tray || tray.isDestroyed?.()) return;
+    try {
+      const { daemonHttp } = resolveDaemon();
+      const res = await fetch(`${daemonHttp}/v1/status`, { signal: AbortSignal.timeout(2500) });
+      if (!res.ok) return;
+      const d = await res.json();
+      const n = Array.isArray(d.agents) ? d.agents.length : 0;
+      tray.setTitle(n > 0 ? ` ${n}` : '');
+      tray.setToolTip(n > 0 ? `Sunday — ${n} agent${n > 1 ? 's' : ''} working` : 'Sunday');
+    } catch { /* daemon not up / offline — leave the title as-is */ }
+  };
+  tick();
+  _trayStatusTimer = setInterval(tick, 2000);
 }
 
 function rebuildTrayMenu() {
@@ -333,9 +358,9 @@ function rebuildTrayMenu() {
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
     { label: 'Settings…', accelerator: 'Command+,', click: () => switchToView('settings') },
     { type: 'separator' },
-    { label: (overlayWindow && !overlayWindow.isDestroyed()) ? 'Hide notch HUD' : 'Show notch HUD', click: () => {
-        if (overlayWindow && !overlayWindow.isDestroyed()) { overlayWindow.close(); savePrefs({ hud: false }); }
-        else { createOverlayWindow(); savePrefs({ hud: true }); }
+    { label: notchHudChild ? 'Hide notch HUD' : 'Show notch HUD', click: () => {
+        if (notchHudChild) { stopNotchHud(); savePrefs({ hud: false }); }
+        else { startNotchHud(); savePrefs({ hud: true }); }
         rebuildTrayMenu();
     }},
     { type: 'separator' },
@@ -356,17 +381,23 @@ app.whenReady().then(() => {
     createOnboardingWindow();
   } else {
     createMainWindow();
-    // The notch HUD is on by default — ambient agent count + status that
-    // extends the notch. Toggle from the tray. Opt out with prefs.hud=false.
-    if (loadPrefs().hud !== false) createOverlayWindow();
+    // The notch HUD is a NATIVE Swift helper (the only way to read + draw the
+    // real notch — Electron can't). It renders at the notch on the built-in
+    // display and shows nothing when there's no notch. On by default; toggle
+    // from the tray. Opt out with prefs.hud=false.
+    if (loadPrefs().hud !== false) startNotchHud();
   }
   createTray();
+  startTrayStatus();   // live sub-agent count in the menu bar
   Menu.setApplicationMenu(null);
 
   // Own the satellite as a child process so its macOS TCC grants
   // (Screen Recording etc.) attribute to "Sunday", not a standalone
   // Python LaunchAgent. Only when onboarded + not explicitly disabled.
   const prefs = loadPrefs();
+  // Auto-start the ambient observer if the user left it on last time.
+  if (prefs.onboarded && prefs.observer === true) startObserver();
+
   if (prefs.onboarded && prefs.embeddedSatellite !== false) {
     satellite.start(prefs);
   }
@@ -398,7 +429,58 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   satellite.stop();
+  stopNotchHud();
+  stopObserver();
 });
+
+// ── ambient observer (Python child: mic → Whisper → LLM → POST /v1/observer/now) ──
+let observerChild = null;
+function startObserver() {
+  if (observerChild) return;
+  try {
+    const { daemonHttp } = resolveDaemon();
+    const script = app.isPackaged
+      ? path.join(process.resourcesPath, 'observer.py')
+      : path.join(__dirname, 'build', 'observer.py');
+    const py = process.env.PYTHON || '/usr/bin/python3';
+    observerChild = require('node:child_process').spawn(py, [script, daemonHttp, '3600', '30'], {
+      stdio: 'ignore',
+      env: { ...process.env, PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` },
+    });
+    observerChild.on('exit', () => { observerChild = null; });
+  } catch { observerChild = null; }
+}
+function stopObserver() {
+  try { observerChild?.kill(); } catch { /* already gone */ }
+  observerChild = null;
+}
+
+ipcMain.handle('sunday:observer-status', () => ({ running: !!observerChild }));
+ipcMain.handle('sunday:observer-set', (_evt, on) => {
+  if (on) { startObserver(); savePrefs({ observer: true }); }
+  else    { stopObserver();  savePrefs({ observer: false }); }
+  return { running: !!observerChild };
+});
+
+// ── native notch HUD helper (Swift) ──────────────────────────────────────
+// Renders the HUD at the real notch; draws nothing if the active display has
+// no notch. Launched as a child so it's covered by Sunday's signature/TCC.
+let notchHudChild = null;
+function startNotchHud() {
+  if (notchHudChild) return;
+  try {
+    const { daemonHttp } = resolveDaemon();
+    const bin = app.isPackaged
+      ? path.join(process.resourcesPath, 'NotchHUD.app', 'Contents', 'MacOS', 'notch-hud')
+      : path.join(__dirname, 'build', 'NotchHUD.app', 'Contents', 'MacOS', 'notch-hud');
+    notchHudChild = require('node:child_process').spawn(bin, [daemonHttp], { stdio: 'ignore' });
+    notchHudChild.on('exit', () => { notchHudChild = null; });
+  } catch { notchHudChild = null; }
+}
+function stopNotchHud() {
+  try { notchHudChild?.kill(); } catch { /* already gone */ }
+  notchHudChild = null;
+}
 
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();

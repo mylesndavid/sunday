@@ -156,6 +156,8 @@ class RouterProvider:
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
         on_delta: DeltaHandler | None = None,
+        on_reasoning: DeltaHandler | None = None,
+        purpose: str | None = None,
     ) -> CompletionResult:
         last_exc: BaseException | None = None
         for provider_name in self._chain:
@@ -167,6 +169,8 @@ class RouterProvider:
                         messages=messages,
                         tools_schema=tools_schema,
                         on_delta=on_delta,
+                        on_reasoning=on_reasoning,
+                        purpose=purpose,
                     )
                 except Exception as exc:  # noqa: BLE001
                     # The current model can't accept images. Rather than fail
@@ -180,6 +184,8 @@ class RouterProvider:
                             messages=_strip_images(messages),
                             tools_schema=tools_schema,
                             on_delta=on_delta,
+                            on_reasoning=on_reasoning,
+                            purpose=purpose,
                         )
                     else:
                         raise

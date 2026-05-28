@@ -39,6 +39,140 @@ export function init(config, refs) {
   canvas = refs.canvas; ctx = canvas.getContext('2d');
   bindEvents();
   buildLegend();
+  wireSubtabs();
+  refreshAtomCount();
+}
+
+// ── Memory sub-tabs (Map / Atoms) ─────────────────────────────────────────
+function wireSubtabs() {
+  const tabs = document.querySelectorAll('.mem-subtab');
+  tabs.forEach((t) => t.addEventListener('click', () => switchSubtab(t.dataset.mempane)));
+}
+function switchSubtab(name) {
+  document.querySelectorAll('.mem-subtab').forEach((t) => t.classList.toggle('active', t.dataset.mempane === name));
+  const map = document.getElementById('mem-pane-map');
+  const detail = document.getElementById('mem-detail');
+  const atoms = document.getElementById('mem-pane-atoms');
+  const convs = document.getElementById('mem-pane-conversations');
+  if (name === 'atoms') {
+    map.hidden = true; detail.hidden = true; atoms.hidden = false; convs.hidden = true;
+    loadAtoms();
+  } else if (name === 'conversations') {
+    map.hidden = true; detail.hidden = true; atoms.hidden = true; convs.hidden = false;
+    loadConversations();
+  } else {
+    atoms.hidden = true; convs.hidden = true; map.hidden = false;
+    // mem-detail visibility is owned by selectNode; leave it alone
+  }
+}
+
+async function loadConversations() {
+  const ul = document.getElementById('conv-list');
+  const empty = document.getElementById('conv-empty');
+  ul.innerHTML = '';
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/conversations?limit=200`);
+    const d = await r.json();
+    const convs = d.conversations || [];
+    const cb = document.getElementById('mem-conv-count');
+    if (convs.length) { cb.textContent = convs.length; cb.hidden = false; } else { cb.hidden = true; }
+    if (!convs.length) { empty.hidden = false; return; }
+    empty.hidden = true;
+    ul.innerHTML = convs.map((c) => {
+      const people = (c.participants || []).join(', ') || '—';
+      return `
+        <li class="conv-card" data-cid="${c.id}">
+          <div class="conv-head">
+            <div class="c-title">${esc(c.title || 'Untitled')}</div>
+            <div class="c-time">${esc(fmtTime(c.started_at))}</div>
+          </div>
+          <div class="conv-meta">
+            <span class="conv-cat" data-c="${esc(c.category || 'unclear')}">${esc(c.category || 'unclear')}</span>
+            <span class="c-people">${esc(people)}</span>
+          </div>
+          <div class="conv-summary">${esc(c.summary || '')}</div>
+          <details class="conv-transcript">
+            <summary>Show transcript</summary>
+            <pre data-loaded="false">loading…</pre>
+          </details>
+        </li>`;
+    }).join('');
+    // Lazy-load transcript when a card's <details> is opened.
+    ul.querySelectorAll('.conv-card').forEach((card) => {
+      const d = card.querySelector('details');
+      const pre = d.querySelector('pre');
+      d.addEventListener('toggle', async () => {
+        if (!d.open || pre.dataset.loaded === 'true') return;
+        pre.dataset.loaded = 'true';
+        try {
+          const r = await fetch(`${cfg.daemonHttp}/v1/conversations/${card.dataset.cid}`);
+          const c = await r.json();
+          pre.textContent = c.transcript || '(no transcript)';
+        } catch (err) { pre.textContent = `(error: ${err.message})`; }
+      });
+    });
+  } catch (err) {
+    ul.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load conversations: ${esc(err.message)}</div></li>`;
+  }
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (sameDay) return time;
+  if (isYesterday) return `Yesterday ${time}`;
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
+}
+
+async function loadAtoms() {
+  const ul = document.getElementById('atoms-list');
+  const empty = document.getElementById('atoms-empty');
+  ul.innerHTML = '';
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/atoms?limit=200`);
+    const d = await r.json();
+    const atoms = d.atoms || [];
+    if (!atoms.length) { empty.hidden = false; return; }
+    empty.hidden = true;
+    ul.innerHTML = atoms.map((a) => `
+      <li class="atom">
+        <span class="a-state" data-s="${esc(a.state || 'active')}">${esc(a.state || 'active')}</span>
+        <span class="a-kind">${esc(a.kind || '')}</span>
+        <span class="a-text">${esc(a.text || '')}</span>
+        <span class="a-time">${esc(ago(a.updated_at))}</span>
+      </li>`).join('');
+  } catch (err) {
+    ul.innerHTML = `<li class="atom"><span class="a-text" style="color:var(--error)">couldn't load atoms: ${esc(err.message)}</span></li>`;
+  }
+}
+
+async function refreshAtomCount() {
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/atoms?state=active&limit=1`);
+    const d = await r.json();
+    const s = document.getElementById('mem-atoms-count');
+    // ask once more for the open count via status (cheaper, includes atoms_open)
+    const st = await (await fetch(`${cfg.daemonHttp}/v1/status`)).json();
+    const n = st.atoms_open ?? (d.atoms || []).length;
+    if (n > 0) { s.textContent = n; s.hidden = false; } else { s.hidden = true; }
+  } catch {}
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function ago(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, Date.now()/1000 - ts);
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s/60)}m`;
+  if (s < 86400) return `${Math.floor(s/3600)}h`;
+  return `${Math.floor(s/86400)}d`;
 }
 
 export function setDaemon(http) { cfg.daemonHttp = http; }

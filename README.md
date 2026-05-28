@@ -25,10 +25,30 @@ There is exactly one conversation between you and Sunday — ever. iMessage, voi
 | **Cloud tools** | Cloudflare Browser Rendering for headless browsing + screenshots. Optional Cloudflare Sandbox Worker for untrusted code. |
 | **Electron app** | Single-column chat UI, warm-dark theme, streaming token-by-token. Drag-drop files, voice via `SpeechRecognition`, "Hey Sunday" wake word. |
 
-## Quick start (self-hosted, local)
+## Install — desktop app
+
+One-liner (macOS, arm64 + Intel):
 
 ```bash
-git clone https://github.com/<you>/sunday.git
+curl -fsSL https://raw.githubusercontent.com/mylesndavid/sunday/main/install.sh | bash
+```
+
+Or download the DMG directly from [Releases](https://github.com/mylesndavid/sunday/releases/latest) and drag `Sunday.app` to `/Applications`. The build isn't notarized yet — if you skip the install script, run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Sunday.app
+```
+
+…before first launch, otherwise macOS will refuse it.
+
+On first run, the desktop app's onboarding walks you through pointing at a daemon (local or self-hosted) and entering credentials.
+
+## Quick start — daemon from source
+
+If you want to run the daemon directly without the desktop app (or to host it on a VPS):
+
+```bash
+git clone https://github.com/mylesndavid/sunday.git
 cd sunday
 
 # Install

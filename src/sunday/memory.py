@@ -1,52 +1,47 @@
 """Sunday's memory of you.
 
-Every turn, Sunday recalls a handful of relevant facts about the user and
-injects them into the system prompt. Every turn, she also kicks off a
-background task that asks an LLM to extract any new durable facts from
-the latest exchange and writes them in. The memory grows automatically;
-you don't have to ask her to remember things, though you can.
+Architecture (matches what the best agents actually do — Hermes's MEMORY.md/
+USER.md, Letta's core+archival, ChatGPT's saved-memories): a small
+**always-in-context core** plus an **on-demand search**, NOT a per-turn
+embedding round-trip.
 
-Backing: SQLite + sqlite-vec at ~/.sunday/memories.db. Embeddings via
-OpenAI's text-embedding-3-small (1536-dim, ~$0.02/1M tokens). The
-OPENAI_API_KEY credential is required — without it, memory is disabled
-and Sunday logs a one-time warning at boot.
+  - core_block()  → all (or the most recent) durable facts, injected into
+                    every turn's context. Local SQLite read, zero network,
+                    sub-millisecond. The agent sees everything and picks what
+                    fits — no semantic guessing, no API call in the hot path.
+  - search()      → FTS5 keyword search over the facts, exposed as the
+                    `recall` tool, for deliberate lookups once memory grows
+                    past what's sensible to always inject.
 
-Facts are stored verbatim as text plus a vector. Cosine similarity at
-recall time. No graph, no entity extraction — just embeddings of
-self-contained sentences. Simple and works.
+Backing: SQLite at ~/.sunday/memories.db (+ an FTS5 index). No embeddings,
+no OpenAI key required, no external calls. Facts are stored verbatim as
+self-contained sentences and grown automatically by extract_facts() after
+each turn.
+
+(History: this used to embed every message with text-embedding-3-small and
+do a vector KNN in the hot path — a network round-trip on every turn to
+fetch 6 of ~90 short facts. That was slow and low-value; removed.)
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import structlog
 
 from sunday.config import SundayConfig
-from sunday.credentials import get_credential
 from sunday.paths import sunday_home
 
 log = structlog.get_logger("sunday.memory")
 
-EMBED_MODEL = "text-embedding-3-small"
-EMBED_DIMS  = 1536
-
-DEFAULT_TOP_K = 6
-# sqlite-vec L2 distance gate. text-embedding-3-small under L2 lands at:
-#   ~0.6-0.9 for clearly relevant pairs
-#   ~1.0-1.2 for thematic/tangential matches
-#   ~1.3+   for unrelated noise
-# Floor of 1.0 filters out the noise that would otherwise let the model
-# parrot recalled facts in conversations they don't relate to (e.g. ask
-# about wine, get "User has a dog named Bowser" injected). The model can
-# always call recall() explicitly if it wants a broader search.
-DEFAULT_RECALL_FLOOR = 1.0
+# How many facts to always inject. At this size we inject all of them; the cap
+# is headroom so the core block can't grow unbounded. Past it, the most recent
+# CORE_LIMIT are injected and the rest are reachable via the recall (FTS) tool.
+CORE_LIMIT = 200
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -66,100 +61,82 @@ class MemoryRow:
     content: str
     source: str
     created_at: float
-    distance: float = 0.0
+    distance: float = 0.0   # kept for API compat; unused (no vector distance now)
 
 
-_EMBED_CLIENT_CACHE: Any = None
-_EMBED_CLIENT_KEY: str | None = None
-
-
-def _embed_client():
-    """Lazy import of openai + singleton cache so the client (and its
-    underlying httpx connection) is reused across recall / store calls."""
-    global _EMBED_CLIENT_CACHE, _EMBED_CLIENT_KEY
-    key = get_credential("OPENAI_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "OPENAI_API_KEY is required for Sunday's memory (used for "
-            "embeddings). Run: sunday credential set OPENAI_API_KEY <key>"
-        )
-    if _EMBED_CLIENT_CACHE is not None and _EMBED_CLIENT_KEY == key:
-        return _EMBED_CLIENT_CACHE
-    from openai import AsyncOpenAI
-    _EMBED_CLIENT_CACHE = AsyncOpenAI(api_key=key)
-    _EMBED_CLIENT_KEY = key
-    return _EMBED_CLIENT_CACHE
-
-
-def _emb_bytes(vec: list[float]) -> bytes:
-    return struct.pack(f"{len(vec)}f", *vec)
+def _fts_query(query: str) -> str:
+    """Turn a free-text query into a safe FTS5 MATCH expression: quote each
+    term (so punctuation/operators can't break the parse) and OR them so we
+    favour recall, letting bm25 rank the best matches first."""
+    terms = [t for t in (query or "").replace('"', " ").split() if t.strip()]
+    return " OR ".join(f'"{t}"' for t in terms)
 
 
 class Memory:
-    """sqlite-vec backed semantic memory. Append-only, async write/read.
-
-    Construction is sync (opens the db). Embedding calls are async and
-    require OPENAI_API_KEY. If sqlite-vec or the OpenAI key is missing,
-    `available` flips to False and all writes/reads return cleanly with a
-    `disabled` flag — the rest of Sunday keeps working.
-    """
+    """Local, embedding-free fact store. Always available wherever SQLite is
+    (no API key, no extensions required). FTS5 powers search; if the SQLite
+    build lacks FTS5 we fall back to LIKE."""
 
     def __init__(self, path: Path | None = None) -> None:
         sunday_home().mkdir(parents=True, exist_ok=True)
         self.path = path or (sunday_home() / "memories.db")
         self.available = False
+        self._fts = False
         try:
-            import sqlite_vec  # noqa: F401
-        except ImportError:
-            log.warning("sqlite_vec not installed — memory disabled (pip install sqlite-vec)")
-            self._conn: sqlite3.Connection | None = None
-            return
-
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        try:
-            self._conn.enable_load_extension(True)
-            import sqlite_vec
-            sqlite_vec.load(self._conn)
-            self._conn.enable_load_extension(False)
-        except (sqlite3.OperationalError, AttributeError) as exc:
-            log.warning("could not load sqlite-vec extension — memory disabled", error=str(exc))
-            self._conn.close()
+            self._conn: sqlite3.Connection | None = sqlite3.connect(self.path, check_same_thread=False)
+        except sqlite3.Error as exc:
+            log.warning("could not open memory db — memory disabled", error=str(exc))
             self._conn = None
             return
 
         self._conn.executescript(_SCHEMA)
-        self._conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS memory_vecs USING vec0("
-            f"memory_id INTEGER PRIMARY KEY, embedding FLOAT[{EMBED_DIMS}])"
-        )
+        # FTS5 index over the fact text (standalone table we keep in sync on
+        # store/forget). Best-effort: if this SQLite lacks FTS5, search uses LIKE.
+        try:
+            # porter stemming so "walnut allergy" matches "allergic to walnuts"
+            # — closes most of the gap between keyword search and semantic.
+            self._conn.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
+                "USING fts5(content, mem_id UNINDEXED, tokenize='porter unicode61')"
+            )
+            self._fts = True
+            self._backfill_fts()
+        except sqlite3.OperationalError as exc:
+            log.info("FTS5 unavailable — memory search will use LIKE", error=str(exc))
         self._conn.commit()
         self.available = True
+
+    def _backfill_fts(self) -> None:
+        """Populate the FTS index from any facts that predate it (migration)."""
+        if not self._conn:
+            return
+        n = self._conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+        if n == 0:
+            self._conn.execute(
+                "INSERT INTO memories_fts(content, mem_id) SELECT content, id FROM memories"
+            )
+            moved = self._conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+            if moved:
+                log.info("memory FTS index backfilled", facts=moved)
 
     # ─── writes ──────────────────────────────────────────────────────────
 
     async def store(self, content: str, source: str = "auto", metadata: dict | None = None) -> int | None:
+        # async kept for call-site compatibility; the work is all local now.
         if not self.available or not self._conn:
             return None
         content = (content or "").strip()
         if not content:
             return None
-        client = _embed_client()
-        try:
-            res = await client.embeddings.create(model=EMBED_MODEL, input=content)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("embedding failed", error=str(exc))
-            return None
-        vec = res.data[0].embedding
-
         cur = self._conn.execute(
             "INSERT INTO memories (content, source, created_at, metadata) VALUES (?, ?, ?, ?)",
             (content, source, time.time(), json.dumps(metadata) if metadata else None),
         )
         mem_id = cur.lastrowid or 0
-        self._conn.execute(
-            "INSERT INTO memory_vecs(memory_id, embedding) VALUES (?, ?)",
-            (mem_id, _emb_bytes(vec)),
-        )
+        if self._fts:
+            self._conn.execute(
+                "INSERT INTO memories_fts(content, mem_id) VALUES (?, ?)", (content, mem_id)
+            )
         self._conn.commit()
         log.info("memory stored", id=mem_id, source=source, preview=content[:60])
         return mem_id
@@ -174,39 +151,58 @@ class Memory:
 
     # ─── reads ───────────────────────────────────────────────────────────
 
-    async def recall(self, query: str, top_k: int = DEFAULT_TOP_K, floor: float = DEFAULT_RECALL_FLOOR) -> list[MemoryRow]:
+    def core_block(self, limit: int = CORE_LIMIT) -> str:
+        """The always-injected memory: every durable fact (capped), formatted
+        as soft background. Local read, no network. This is what makes Sunday
+        'know you' — the agent sees all of it and uses what fits."""
+        if not self.available or not self._conn:
+            return ""
+        rows = self._conn.execute(
+            "SELECT content FROM memories ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        if not rows:
+            return ""
+        lines = [
+            "(What you know about them — background to draw on when it fits what "
+            "they're asking. Don't recite these or bring them up out of nowhere; "
+            "just let them inform you.)",
+            "",
+        ]
+        # oldest-first reads more naturally as a profile
+        lines += [f"- {r[0]}" for r in reversed(rows)]
+        return "\n".join(lines)
+
+    def search(self, query: str, limit: int = 8) -> list[MemoryRow]:
+        """Keyword search over the facts (FTS5 bm25-ranked, or LIKE fallback).
+        Backs the `recall` tool — a deliberate lookup, not the hot path."""
         if not self.available or not self._conn:
             return []
-        query = (query or "").strip()
-        if not query or self.count() == 0:
+        q = (query or "").strip()
+        if not q:
             return []
-        client = _embed_client()
-        try:
-            res = await client.embeddings.create(model=EMBED_MODEL, input=query)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("recall embedding failed", error=str(exc))
-            return []
-        vec = res.data[0].embedding
-
-        # vec0 KNN requires `k = ?` as a constraint, not a tail LIMIT, when
-        # joined with other tables. We do the KNN as a CTE first, then join.
+        if self._fts:
+            match = _fts_query(q)
+            if not match:
+                return []
+            try:
+                rows = self._conn.execute(
+                    "SELECT m.id, m.content, m.source, m.created_at "
+                    "FROM memories_fts f JOIN memories m ON m.id = f.mem_id "
+                    "WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT ?",
+                    (match, int(limit)),
+                ).fetchall()
+                return [MemoryRow(id=r[0], content=r[1], source=r[2] or "", created_at=r[3]) for r in rows]
+            except sqlite3.OperationalError as exc:
+                log.warning("FTS search failed, falling back to LIKE", error=str(exc))
+        # LIKE fallback — any term appears
+        like_terms = [t for t in q.split() if t]
+        where = " OR ".join("content LIKE ?" for _ in like_terms) or "1=0"
+        params = [f"%{t}%" for t in like_terms] + [int(limit)]
         rows = self._conn.execute(
-            """
-            WITH knn AS (
-                SELECT memory_id, distance
-                FROM memory_vecs
-                WHERE embedding MATCH ? AND k = ?
-            )
-            SELECT m.id, m.content, m.source, m.created_at, knn.distance
-            FROM knn
-            JOIN memories m ON m.id = knn.memory_id
-            ORDER BY knn.distance
-            """,
-            (_emb_bytes(vec), int(top_k)),
+            f"SELECT id, content, source, created_at FROM memories WHERE {where} "
+            f"ORDER BY created_at DESC LIMIT ?", params,
         ).fetchall()
-        out = [MemoryRow(id=r[0], content=r[1], source=r[2] or "", created_at=r[3], distance=r[4]) for r in rows]
-        # Apply relevance floor so we don't inject barely-related stuff.
-        return [r for r in out if r.distance <= floor]
+        return [MemoryRow(id=r[0], content=r[1], source=r[2] or "", created_at=r[3]) for r in rows]
 
     def count(self) -> int:
         if not self.available or not self._conn:
@@ -225,7 +221,8 @@ class Memory:
     def forget(self, mem_id: int) -> bool:
         if not self.available or not self._conn:
             return False
-        self._conn.execute("DELETE FROM memory_vecs WHERE memory_id = ?", (mem_id,))
+        if self._fts:
+            self._conn.execute("DELETE FROM memories_fts WHERE mem_id = ?", (mem_id,))
         cur = self._conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
         self._conn.commit()
         return cur.rowcount > 0
@@ -269,6 +266,7 @@ async def extract_facts(user_text: str, sunday_reply: str, config: SundayConfig)
             system_prompt=EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
             tools_schema=None,
+            purpose="extract_facts",
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("memory extraction failed", error=str(exc))
@@ -289,19 +287,3 @@ async def extract_facts(user_text: str, sunday_reply: str, config: SundayConfig)
     if not isinstance(parsed, list):
         return []
     return [str(f).strip() for f in parsed if isinstance(f, str) and f.strip()]
-
-
-def recall_block(memories: list[MemoryRow]) -> str:
-    """Format recalled memories as a context block prepended to the user's
-    latest message. Empty when no hits. The wording is deliberately soft —
-    these are *available facts*, not instructions to mention them."""
-    if not memories:
-        return ""
-    lines = [
-        "(Background you can draw on if it's relevant to what they're asking — do NOT mention "
-        "these out of nowhere or recite them back. Only use what fits the moment.)",
-        "",
-    ]
-    for m in memories:
-        lines.append(f"- {m.content}")
-    return "\n".join(lines)

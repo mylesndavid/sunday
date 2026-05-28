@@ -141,6 +141,56 @@ def tools() -> None:
         typer.echo(f"  {t['name']:<28} {t['description']}")
 
 
+@app.command()
+def cost(
+    hours: int = typer.Option(24, "--hours", "-h", help="Window to summarize (default: last 24h)."),
+    recent: bool = typer.Option(False, "--recent", "-r", help="Print the most recent calls instead of an aggregate."),
+    limit: int = typer.Option(20, "--limit", "-n", help="Row limit for --recent."),
+) -> None:
+    """Show LLM + transcription spend.
+
+    Reads the local cost.db directly — no daemon required, so this also works
+    while the daemon is stopped. By default shows the last 24h grouped by
+    purpose (chat / extract_facts / graph_rebuild / observer_tick / …) and
+    model, so it's obvious which subsystem is costing what.
+    """
+    import time
+    from sunday.cost import get_store
+
+    store = get_store()
+    if recent:
+        rows = store.recent(limit=limit)
+        if not rows:
+            typer.echo("no calls logged yet.")
+            return
+        typer.echo(f"{'when':<20} {'purpose':<22} {'model':<32} {'in':>8} {'out':>8} {'aud':>6} {'ms':>6} {'$':>10}")
+        for r in rows:
+            when = datetime.fromtimestamp(r["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+            typer.echo(
+                f"{when:<20} {r['purpose'][:22]:<22} {r['model'][:32]:<32} "
+                f"{r['prompt_tokens']:>8} {r['completion_tokens']:>8} "
+                f"{int(r['audio_seconds']):>6} {r['latency_ms']:>6} "
+                f"{r['cost_usd']:>10.6f}"
+            )
+        return
+
+    since = time.time() - hours * 3600
+    s = store.summary(since)
+    typer.echo(f"\nLast {hours}h — {s['total_calls']} calls — ${s['total_cost_usd']:.4f}\n")
+    if s["by_purpose"]:
+        typer.echo("by purpose:")
+        for purpose, info in s["by_purpose"].items():
+            typer.echo(
+                f"  {purpose:<24} {info['calls']:>5}× "
+                f"in={info['prompt_tokens']:>8}  out={info['completion_tokens']:>8}  "
+                f"audio={int(info['audio_seconds']):>5}s  ${info['cost_usd']:.4f}"
+            )
+    if s["by_model"]:
+        typer.echo("\nby model:")
+        for model, info in s["by_model"].items():
+            typer.echo(f"  {model:<40} {info['calls']:>5}×  ${info['cost_usd']:.4f}")
+
+
 @credential_app.command("set")
 def credential_set(name: str = typer.Argument(...), value: str = typer.Argument(...)) -> None:
     """Save an API key to ~/.sunday/credentials.env (mode 0600)."""
