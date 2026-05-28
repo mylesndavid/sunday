@@ -29,8 +29,8 @@ ToolFn = Callable[[dict[str, Any], "ToolContext"], Awaitable[Any]]
 # many servers are connected. Names that don't exist in a given build are
 # simply ignored.
 CORE_TOOLS = frozenset({
-    "find_tools",
-    "remember", "recall",
+    "find_tools", "sunday_config",
+    "remember", "recall", "search_history",
     "list_skills", "load_skill", "save_skill",
     "device_screen_text", "device_screenshot", "device_run_command",
     "browser_read", "browser_click", "browser_type",
@@ -187,6 +187,8 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
 
     for module_path in (
         "sunday.memory_tools",
+        "sunday.history_tools",
+        "sunday.introspect",
         "sunday.skills",
         "sunday.subagents.native",
         "sunday.subagents.hermes",

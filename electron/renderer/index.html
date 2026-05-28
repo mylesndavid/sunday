@@ -45,7 +45,16 @@
 
   <!-- ─── MEMORY ───────────────────────────────────────────────────── -->
   <section class="view view-memory" id="view-memory">
-    <div class="mem-stage">
+    <nav class="mem-subtabs" id="mem-subtabs">
+      <button class="mem-subtab active" data-mempane="map">Map</button>
+      <button class="mem-subtab" data-mempane="atoms">
+        Atoms <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
+      </button>
+      <button class="mem-subtab" data-mempane="conversations">
+        Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
+      </button>
+    </nav>
+    <div class="mem-stage" id="mem-pane-map">
       <canvas id="mem-canvas"></canvas>
       <div class="mem-legend" id="mem-legend"></div>
       <button class="mem-refresh" id="mem-refresh" title="Refresh map">
@@ -75,6 +84,20 @@
         <ul class="mem-conns" id="mem-detail-conns"></ul>
       </div>
     </aside>
+    <div class="atoms-pane" id="mem-pane-atoms" hidden>
+      <div class="atoms-empty" id="atoms-empty" hidden>
+        <h2>No atoms yet</h2>
+        <p>As Sunday observes what you're doing, open threads, commitments, and decisions show up here.</p>
+      </div>
+      <ul class="atoms-list" id="atoms-list"></ul>
+    </div>
+    <div class="atoms-pane" id="mem-pane-conversations" hidden>
+      <div class="atoms-empty" id="conv-empty" hidden>
+        <h2>No conversations yet</h2>
+        <p>Turn on the ambient observer in Settings and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
+      </div>
+      <ul class="conv-list" id="conv-list"></ul>
+    </div>
   </section>
 
   <!-- ─── REWIND ───────────────────────────────────────────────────── -->
@@ -188,6 +211,15 @@
           <div class="set-actions"><span class="set-verify" id="set-screen-status"></span><button class="btn btn-primary" id="set-screen-grant">Allow screen access</button></div>
           <p class="set-help" style="margin-top:18px">Let Sunday <strong>control</strong> apps — click, type, and use menus like you would, in any app. macOS asks you to allow <strong>Accessibility</strong> for Sunday once; enable Sunday in the list that opens, then relaunch.</p>
           <div class="set-actions"><span class="set-verify" id="set-control-status"></span><button class="btn btn-primary" id="set-control-grant">Allow control</button></div>
+        </section>
+
+        <section class="set-block" id="sec-observer">
+          <h2>Ambient observer</h2>
+          <p class="set-help">Sunday listens to the mic in the background, figures out what you're doing right now, and shows it in the notch with how long you've been at it. Off by default; mic only, audio stays on this Mac except the short transcript used to summarize what's going on. No "always-on" until you flip this.</p>
+          <div class="set-actions">
+            <span class="set-verify" id="set-observer-status">off</span>
+            <button class="btn btn-primary" id="set-observer-toggle">Turn on</button>
+          </div>
         </section>
 
         <section class="set-block" id="sec-system">

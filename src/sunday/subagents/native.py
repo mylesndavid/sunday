@@ -23,10 +23,27 @@ from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.subagent.native")
 
+# Sub-agents run in the background to completion (no user waiting on them), so
+# they get a much bigger tool budget than the interactive main agent (60).
+# Deep research — browsing many company sites for prospects/emails — was
+# hitting the main ceiling and coming back empty.
+SUBAGENT_MAX_ITERATIONS = 120
+
 # Live registry of running sub-agents — powers the notch HUD's agent count.
 import itertools
 _ACTIVE: dict[int, str] = {}
 _AGENT_SEQ = itertools.count(1)
+
+# Strong refs to in-flight background delegations so the event loop doesn't
+# garbage-collect the tasks mid-run.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> asyncio.Task:
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+    return t
 
 
 def active_agents() -> list[dict[str, Any]]:
@@ -96,6 +113,8 @@ async def _run_one(task: str, extra: str, skill_slug: str, ctx: ToolContext) -> 
         return await respond(
             sub_chat, prompt, "subagent", ctx.config,
             registry=reg, extras=extras, system_prompt=system,
+            runtime=(ctx.extras or {}).get("runtime"),  # reuse the warm client
+            max_iterations=SUBAGENT_MAX_ITERATIONS,     # background grunt work gets a bigger budget
         )
     finally:
         _ACTIVE.pop(agent_id, None)
@@ -106,14 +125,41 @@ async def _t_delegate(args: dict[str, Any], ctx: ToolContext) -> Any:
     task = (args.get("task") or "").strip()
     if not task:
         return {"error": "'task' is required"}
-    try:
-        answer = await _run_one(task, (args.get("context") or "").strip(),
-                                (args.get("skill") or "").strip(), ctx)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("sub-agent failed", error=str(exc))
-        return {"error": f"sub-agent failed: {type(exc).__name__}: {exc}"}
-    log.info("sub-agent done", task_chars=len(task), answer_chars=len(answer or ""))
-    return {"answer": answer}
+    context = (args.get("context") or "").strip()
+    skill = (args.get("skill") or "").strip()
+    inject = (ctx.extras or {}).get("inject_and_wake")
+
+    # No async channel (tests, or a context without the daemon's wake hook) —
+    # fall back to running inline and returning the answer directly.
+    if inject is None:
+        try:
+            answer = await _run_one(task, context, skill, ctx)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sub-agent failed", error=str(exc))
+            return {"error": f"sub-agent failed: {type(exc).__name__}: {exc}"}
+        return {"answer": answer}
+
+    # Async: run in the background, inject the result as a wake turn when done.
+    async def _bg() -> None:
+        try:
+            answer = await _run_one(task, context, skill, ctx)
+            msg = f"[Sub-agent finished — task: {task}]\n\n{answer}"
+            log.info("sub-agent done", task_chars=len(task), answer_chars=len(answer or ""))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sub-agent failed", error=str(exc))
+            msg = f"[Sub-agent failed — task: {task}]\n\n{type(exc).__name__}: {exc}"
+        try:
+            await inject(msg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sub-agent inject failed", error=str(exc))
+
+    _spawn(_bg())
+    return {
+        "status": "started",
+        "note": ("Sub-agent is working in the background. Its result will come "
+                 "back to you as a follow-up message — do NOT wait for it. Tell "
+                 "the user you're on it, then end your turn."),
+    }
 
 
 async def _t_delegate_parallel(args: dict[str, Any], ctx: ToolContext) -> Any:
@@ -121,13 +167,39 @@ async def _t_delegate_parallel(args: dict[str, Any], ctx: ToolContext) -> Any:
     if not isinstance(tasks, list) or not tasks:
         return {"error": "'tasks' must be a non-empty list of task strings"}
     tasks = [str(t).strip() for t in tasks if str(t).strip()][:6]
-    results = await asyncio.gather(
-        *[_run_one(t, "", "", ctx) for t in tasks], return_exceptions=True
-    )
-    out = []
-    for t, r in zip(tasks, results):
-        out.append({"task": t, "error": str(r)} if isinstance(r, Exception) else {"task": t, "answer": r})
-    return {"results": out}
+    inject = (ctx.extras or {}).get("inject_and_wake")
+
+    if inject is None:  # inline fallback
+        results = await asyncio.gather(
+            *[_run_one(t, "", "", ctx) for t in tasks], return_exceptions=True
+        )
+        out = []
+        for t, r in zip(tasks, results):
+            out.append({"task": t, "error": str(r)} if isinstance(r, Exception) else {"task": t, "answer": r})
+        return {"results": out}
+
+    async def _bg() -> None:
+        results = await asyncio.gather(
+            *[_run_one(t, "", "", ctx) for t in tasks], return_exceptions=True
+        )
+        blocks = []
+        for t, r in zip(tasks, results):
+            body = f"[failed] {type(r).__name__}: {r}" if isinstance(r, Exception) else str(r)
+            blocks.append(f"## {t}\n{body}")
+        msg = "[Sub-agents finished — parallel batch]\n\n" + "\n\n".join(blocks)
+        try:
+            await inject(msg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sub-agent inject failed", error=str(exc))
+
+    _spawn(_bg())
+    return {
+        "status": "started",
+        "count": len(tasks),
+        "note": ("Sub-agents are working in the background; their results arrive "
+                 "together as a follow-up. Do NOT wait — tell the user you've "
+                 "kicked them off, then end your turn."),
+    }
 
 
 _DELEGATE_PARAMS = {
@@ -148,9 +220,13 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "Hand a scoped multi-step task to a worker sub-agent that runs the "
             "full agent loop WITH tools (browse, read, run commands, drive apps) "
             "in its own isolated context — no main chat history, no memory "
-            "writes, can't send messages or spawn sub-agents. Returns one "
-            "complete result. Use it to keep grunt work (research, digging "
-            "through a doc, checking pages) out of the main conversation."
+            "writes, can't send messages or spawn sub-agents. ASYNC: returns "
+            "immediately, and the sub-agent's result comes back to you later as "
+            "a follow-up message. So don't wait — when you delegate, tell the "
+            "user you've started on it and END YOUR TURN. You'll be re-woken "
+            "with the result and can report it then. Use it to keep grunt work "
+            "(research, digging through a doc, checking pages) off the main "
+            "thread without freezing the conversation."
         ),
         parameters=_DELEGATE_PARAMS,
         run=_t_delegate,
@@ -159,9 +235,11 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         name="delegate_parallel",
         description=(
             "Run several independent worker sub-agents at once (each with tools, "
-            "isolated). Pass a list of self-contained task strings; returns all "
-            "their results. Use for fan-out work — e.g. check five links, "
-            "research three options — that doesn't need to be sequential."
+            "isolated). Pass a list of self-contained task strings. ASYNC: "
+            "returns immediately; all their results arrive together as a "
+            "follow-up message later. Don't wait — tell the user you've kicked "
+            "them off and end your turn. Use for fan-out work (check five links, "
+            "research three options) that doesn't need to be sequential."
         ),
         parameters={"type": "object", "properties": {
             "tasks": {"type": "array", "items": {"type": "string"}, "description": "Up to 6 self-contained tasks to run concurrently."},

@@ -203,10 +203,16 @@ class _StdioMCP:
 
 
 def _make_client(spec: dict):
-    if spec.get("url"):
-        return _HttpMCP(spec["url"], spec.get("headers"))
-    if spec.get("command"):
-        return _StdioMCP(spec["command"], spec.get("args"), spec.get("env"))
+    # Tolerate both the flat shape ({"url":...}) and the nested transport
+    # shape ({"transport":{"type":"http","url":...}}) various tools emit.
+    t = spec.get("transport") if isinstance(spec.get("transport"), dict) else {}
+    url = spec.get("url") or t.get("url")
+    headers = spec.get("headers") or t.get("headers")
+    command = spec.get("command") or t.get("command")
+    if url:
+        return _HttpMCP(url, headers)
+    if command:
+        return _StdioMCP(command, spec.get("args") or t.get("args"), spec.get("env") or t.get("env"))
     raise ValueError("server needs a 'url' (remote) or 'command' (stdio)")
 
 

@@ -29,9 +29,17 @@ function setMode(next) {
   window.sunday?.notchMode?.(next);     // main resizes + toggles click-through
 }
 
-$('#bar').addEventListener('click', () => {
-  if (mode === 'expanded') { pinnedExpanded = false; setMode(active ? 'active' : 'idle'); }
-  else { pinnedExpanded = true; setMode('expanded'); }
+// Click anywhere in the overlay window toggles the card. In idle the bar is
+// invisible but the window (notch + a small lip below) still catches the
+// click, so "click the notch" opens the HUD. Clicks inside the open card are
+// ignored so interacting with it doesn't collapse it.
+document.addEventListener('click', (e) => {
+  if (mode === 'expanded') {
+    if (e.target.closest('#hud')) return;
+    pinnedExpanded = false; setMode('idle');
+  } else {
+    pinnedExpanded = true; setMode('expanded');
+  }
 });
 
 let active = false;
@@ -47,14 +55,11 @@ async function tick() {
   const agents = (d && d.agents) || [];
   active = agents.length > 0;
 
-  // Mode machine: working → active; user-pinned → expanded; else idle
-  // (with a short grace so a quick burst doesn't flicker).
+  // The live agent count now lives in the MENU BAR (the tray status item), so
+  // the notch overlay no longer auto-floats a bar over the screen. It stays
+  // invisible (idle) and only opens the glass card when the user clicks it.
   if (pinnedExpanded) { setMode('expanded'); return; }
-  if (active) { clearTimeout(idleTimer); setMode('active'); }
-  else if (mode !== 'idle') {
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { if (!active && !pinnedExpanded) setMode('idle'); }, 1800);
-  }
+  if (mode !== 'idle') setMode('idle');
 }
 
 function render(d, conn) {

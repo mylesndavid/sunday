@@ -67,6 +67,11 @@ class Daemon:
         else:
             log.info("memory disabled (sqlite-vec or OPENAI_API_KEY missing)")
         self.registry = default_registry(self.config)
+        # Build the LLM runtime ONCE and reuse it across every turn — keeps the
+        # HTTP connection to the provider warm (keep-alive) instead of doing a
+        # fresh TCP+TLS handshake + client construction on every message.
+        from sunday.runtime import build_runtime
+        self.runtime = build_runtime(self.config)
         # Tools find_tools has activated this session (beyond the core set).
         self._active_tools: set[str] = set()
         self.devices = DeviceManager(broadcast=self._broadcast_lazy)
@@ -75,6 +80,24 @@ class Daemon:
         self._ws_clients: set[web.WebSocketResponse] = set()
         self._stop = asyncio.Event()
         self._started_at = time.time()
+        # "What is the user doing right now" — pushed in by the observer (the
+        # tick worker on the user's Mac). Surfaced in /v1/status and the notch
+        # HUD. since = unix ts the current activity started; updated_at = last
+        # observer ping (used to detect staleness so a dead observer doesn't
+        # leave a frozen "now" line on the hub).
+        self._now: dict[str, Any] = {"now": None, "since": None, "updated_at": None}
+        # Atom store — structured open threads/commitments/decisions surfaced
+        # by the observer (or created by the agent / user). Lifecycle state.
+        from sunday.atoms import AtomStore
+        self.atoms = AtomStore()
+        # Conversation store — audio-originated, OMI-style segmentation. The
+        # observer closes a conversation on 2-min silence, fires a structured
+        # summary, and posts it here; atoms born during the window get linked.
+        from sunday.conversations import ConversationStore
+        self.conversations = ConversationStore()
+        # Serializes agent turns (user-initiated + sub-agent wake turns) so the
+        # single chat log never interleaves two concurrent respond() loops.
+        self._turn_lock = asyncio.Lock()
 
     async def _broadcast_lazy(self, event: dict[str, Any]) -> None:
         # DeviceManager is built in __init__ before the event loop runs, so we
@@ -89,24 +112,67 @@ class Daemon:
         modality: str,
         attachments: list[dict] | None = None,
     ) -> dict[str, Any]:
+        # Serialize turns: a user turn and a sub-agent wake turn must not run
+        # concurrently or they'd interleave messages in the single chat.
+        async with self._turn_lock:
+            reply = await self._run_turn(text, modality, attachments=attachments)
+        return {"reply": reply}
+
+    async def _run_turn(
+        self,
+        text: str,
+        modality: str,
+        attachments: list[dict] | None = None,
+        user_metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """One agent turn: drive the loop, broadcast the reply, kick off the
+        background memory + compaction passes. Caller MUST hold _turn_lock."""
         reply = await respond(
             self.chat, text, modality, self.config, self.registry,
+            runtime=self.runtime,
             attachments=attachments,
+            user_metadata=user_metadata,
             extras={
                 "broadcast": self._broadcast,
                 "devices":   self.devices,
                 "memory":    self.memory,
+                "runtime":       self.runtime,
                 # tiered tools: lean core + whatever find_tools has pulled in
                 # this session (persists across turns until the daemon restarts)
                 "registry":      self.registry,
                 "active_tools":  self._active_tools,
+                # async sub-agents: tools hand a finished result back here to
+                # be injected as a hidden message + folded in on a wake turn.
+                "inject_and_wake": self._inject_and_wake,
             },
         )
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         # Fire-and-forget memory extraction so the brain returns immediately.
         if self.memory.available:
             asyncio.create_task(self._extract_memories(text, reply))
-        return {"reply": reply}
+        # Fire-and-forget conversation compaction — folds messages that have
+        # aged out of the live tail into the rolling summary. No-ops until a
+        # real batch has accumulated, so it's cheap to call every turn.
+        asyncio.create_task(self._compact())
+        return reply
+
+    async def _inject_and_wake(self, text: str) -> None:
+        """Inject a model-only message (e.g. a finished sub-agent's result)
+        and run a fresh turn so the agent folds it in and messages the user —
+        the async-delegation 'wake'. Hidden from the UI; the model sees it as
+        ordinary user input. Waits for any in-flight turn to finish first."""
+        async with self._turn_lock:
+            await self._run_turn(
+                text, "agent",
+                user_metadata={"hidden": True, "kind": "subagent_result"},
+            )
+
+    async def _compact(self) -> None:
+        try:
+            from sunday.compaction import maybe_compact
+            await maybe_compact(self.chat, self.config)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("compaction task failed", error=str(exc))
 
     async def _extract_memories(self, user_text: str, sunday_reply: str) -> None:
         try:
@@ -114,15 +180,13 @@ class Daemon:
             if facts:
                 await self.memory.store_many(facts, source="auto")
                 log.info("memory extracted", new_facts=len(facts))
-                # Refresh the memory graph in the background so the map stays
-                # current without blocking the turn.
-                async def _regraph():
-                    try:
-                        from sunday import memory_graph
-                        await memory_graph.rebuild(self.config)
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("memory graph refresh failed", error=str(exc))
-                asyncio.create_task(_regraph())
+                # NB: the memory graph used to be rebuilt here on every turn.
+                # That paid for two LLM calls per turn and an O(n) rebuild over
+                # all facts. Graph refresh now piggybacks compaction (see
+                # sunday/compaction.py), which already fires an LLM call when
+                # the conversation has moved enough — natural cadence, no
+                # extra spend. The /v1/memory/graph endpoint still rebuilds
+                # on-demand if the UI explicitly asks for a fresh view.
         except Exception as exc:  # noqa: BLE001
             log.warning("memory extraction task failed", error=str(exc))
 
@@ -140,7 +204,10 @@ class Daemon:
 
         if method == "log":
             limit = int(params.get("limit") or 20)
-            return {"messages": [m.to_json() for m in self.chat.recent(limit=limit)]}
+            # Hide model-only injected messages (e.g. sub-agent results) from
+            # the UI log — the model sees them, the user shouldn't.
+            return {"messages": [m.to_json() for m in self.chat.recent(limit=limit)
+                                 if not (m.metadata or {}).get("hidden")]}
 
         if method == "status":
             try:
@@ -148,6 +215,13 @@ class Daemon:
                 agents = active_agents()
             except Exception:  # noqa: BLE001
                 agents = []
+            # Surface the observer's "what's the user doing right now" if it's
+            # fresh — older than ~2 minutes is treated as stale (observer dead
+            # or paused), so the hub falls back to its default.
+            now_text, now_since = None, None
+            if self._now.get("updated_at") and time.time() - self._now["updated_at"] < 120:
+                now_text = self._now.get("now")
+                now_since = self._now.get("since")
             return {
                 "version": __version__,
                 "model": f"{self.config.model.provider}/{self.config.model.name}",
@@ -156,6 +230,9 @@ class Daemon:
                 "tools": self.registry.names(),
                 "devices": self.devices.list_devices(),
                 "agents": agents,
+                "now": now_text,
+                "since": now_since,
+                "atoms_open": self.atoms.count_working(),
                 "server": {"host": self.config.server.host, "port": self.config.server.port},
             }
 
@@ -236,11 +313,152 @@ class Daemon:
         except ValueError:
             limit = 20
         return web.json_response(
-            {"messages": [m.to_json() for m in self.chat.recent(limit=limit)]}
+            {"messages": [m.to_json() for m in self.chat.recent(limit=limit)
+                          if not (m.metadata or {}).get("hidden")]}
         )
 
     async def _http_status(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("status", {}))
+
+    async def _http_atoms_list(self, request: web.Request) -> web.Response:
+        state = request.query.get("state")
+        try:
+            limit = int(request.query.get("limit", "200"))
+        except ValueError:
+            limit = 200
+        return web.json_response({"atoms": self.atoms.list(state=state, limit=limit)})
+
+    async def _http_atoms_add(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        text = (body.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "'text' is required"}, status=400)
+        aid = self.atoms.add(
+            text,
+            kind=body.get("kind"),
+            state=body.get("state") or "active",
+            owner=body.get("owner"),
+            evidence=body.get("evidence"),
+            source=body.get("source") or "observer",
+            completion_signal=body.get("completion_signal"),
+            confidence=float(body.get("confidence") or 1.0),
+        )
+        return web.json_response({"ok": True, "id": aid})
+
+    async def _http_atoms_update(self, request: web.Request) -> web.Response:
+        """V2 update path. Body: {action, state?, evidence?, confidence?,
+        superseded_by?, source?}. Text is immutable — mutation goes through
+        action=superseded (new atom + link). The store enforces the
+        confidence guard internally."""
+        try:
+            aid = int(request.match_info["id"])
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid request"}, status=400)
+        action = body.get("action") or "reinforced"
+        if action not in ("reinforced", "closed", "dropped", "superseded"):
+            return web.json_response({"error": f"invalid action: {action}"}, status=400)
+        result = self.atoms.apply_update(
+            aid,
+            action,
+            state=body.get("state"),
+            evidence=body.get("evidence"),
+            confidence=(float(body["confidence"]) if "confidence" in body and body["confidence"] is not None else None),
+            source=body.get("source") or "observer",
+            superseded_by=body.get("superseded_by"),
+        )
+        return web.json_response(result)
+
+    async def _http_conversations_list(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        since = request.query.get("since")
+        return web.json_response({"conversations": self.conversations.list(
+            limit=limit,
+            since=float(since) if since else None,
+            category=request.query.get("category"),
+        )})
+
+    async def _http_conversations_get(self, request: web.Request) -> web.Response:
+        try:
+            cid = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "invalid id"}, status=400)
+        c = self.conversations.get(cid)
+        if not c:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(c)
+
+    async def _http_conversations_search(self, request: web.Request) -> web.Response:
+        q = request.query.get("q", "")
+        try:
+            limit = int(request.query.get("limit", "20"))
+        except ValueError:
+            limit = 20
+        return web.json_response({"conversations": self.conversations.search(q, limit=limit)})
+
+    async def _http_conversations_add(self, request: web.Request) -> web.Response:
+        """Create a conversation. Observer calls this when it closes one on
+        silence. If `link_atoms_since` is set, every atom created in
+        [link_atoms_since, now] that isn't already in a conversation gets
+        linked to the new id — so commitments born inside the conversation
+        carry a back-pointer to where they came from."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        started_at = body.get("started_at")
+        if not started_at:
+            return web.json_response({"error": "'started_at' is required"}, status=400)
+        cid = self.conversations.add(
+            started_at=float(started_at),
+            ended_at=float(body.get("ended_at") or time.time()),
+            title=body.get("title"),
+            summary=body.get("summary"),
+            category=body.get("category"),
+            participants=body.get("participants"),
+            transcript=body.get("transcript"),
+            source=body.get("source") or "observer",
+        )
+        linked = 0
+        if body.get("link_atoms_since"):
+            linked = self.atoms.link_to_conversation(
+                cid, since=float(body["link_atoms_since"]),
+                until=float(body.get("ended_at") or time.time()),
+            )
+        return web.json_response({"ok": True, "id": cid, "linked_atoms": linked})
+
+    async def _http_atoms_wipe(self, request: web.Request) -> web.Response:
+        """Clear the store. Used to nuke pre-v2 spike data."""
+        n = self.atoms.wipe()
+        return web.json_response({"ok": True, "deleted": n})
+
+    async def _http_observer_now(self, request: web.Request) -> web.Response:
+        """Observer (the tick worker on the user's Mac) pushes "what the user
+        is doing right now" here. Body: {"now": "<text>", "same_as_last": bool}.
+        If same_as_last, keep `since` so duration accumulates; else reset it.
+        """
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        text = (body.get("now") or "").strip()
+        if not text:
+            return web.json_response({"error": "'now' is required"}, status=400)
+        same = bool(body.get("same_as_last"))
+        now_ts = time.time()
+        if same and self._now.get("since"):
+            self._now["now"] = text
+            self._now["updated_at"] = now_ts
+        else:
+            self._now = {"now": text, "since": now_ts, "updated_at": now_ts}
+        log.info("observer now", text=text[:80], same_as_last=same)
+        return web.json_response({"ok": True, "since": self._now["since"]})
 
     async def _http_tools(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("tools", {}))
@@ -339,6 +557,72 @@ class Daemon:
             return web.json_response(data)
         except Exception as exc:  # noqa: BLE001
             log.exception("memory graph rebuild failed")
+            return web.json_response({"error": str(exc)}, status=500)
+
+    # --- cost meter -----------------------------------------------------
+
+    async def _http_cost_log(self, request: web.Request) -> web.Response:
+        """Producer-side push (e.g. the bundled observer.py, which talks to
+        OpenRouter directly and so can't go through our provider wrapper).
+
+        Body: {kind, purpose, provider, model, prompt_tokens?, completion_tokens?,
+               audio_seconds?, latency_ms?}
+        """
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        try:
+            from sunday.cost import get_store
+            store = get_store()
+            kind = (payload.get("kind") or "llm").strip()
+            if kind == "audio":
+                ev = store.log_audio(
+                    purpose=payload.get("purpose") or "unknown",
+                    provider=payload.get("provider") or "unknown",
+                    model=payload.get("model") or "unknown",
+                    duration_seconds=float(payload.get("audio_seconds") or 0.0),
+                    latency_ms=int(payload.get("latency_ms") or 0),
+                )
+            else:
+                ev = store.log_llm(
+                    purpose=payload.get("purpose") or "unknown",
+                    provider=payload.get("provider") or "unknown",
+                    model=payload.get("model") or "unknown",
+                    prompt_tokens=int(payload.get("prompt_tokens") or 0),
+                    completion_tokens=int(payload.get("completion_tokens") or 0),
+                    latency_ms=int(payload.get("latency_ms") or 0),
+                )
+            return web.json_response({"ok": True, "cost_usd": ev.cost_usd})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cost log write failed", error=str(exc))
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def _http_cost_summary(self, request: web.Request) -> web.Response:
+        """Aggregated spend. Query param `since` is unix seconds; defaults
+        to 24h ago so the most common 'what did today cost' question is the
+        no-arg path."""
+        import time
+        try:
+            since = float(request.query.get("since") or (time.time() - 86400))
+        except (TypeError, ValueError):
+            since = time.time() - 86400
+        try:
+            from sunday.cost import get_store
+            return web.json_response(get_store().summary(since))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cost summary failed", error=str(exc))
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def _http_cost_recent(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit") or 50)
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            from sunday.cost import get_store
+            return web.json_response({"events": get_store().recent(limit=limit)})
+        except Exception as exc:  # noqa: BLE001
             return web.json_response({"error": str(exc)}, status=500)
 
     async def _http_integrations(self, request: web.Request) -> web.Response:
@@ -566,6 +850,15 @@ class Daemon:
         app.router.add_post("/v1/say", self._http_say)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
+        app.router.add_post("/v1/observer/now", self._http_observer_now)
+        app.router.add_get("/v1/atoms", self._http_atoms_list)
+        app.router.add_post("/v1/atoms", self._http_atoms_add)
+        app.router.add_post("/v1/atoms/{id:[0-9]+}", self._http_atoms_update)
+        app.router.add_post("/v1/atoms/wipe", self._http_atoms_wipe)
+        app.router.add_get("/v1/conversations", self._http_conversations_list)
+        app.router.add_get("/v1/conversations/search", self._http_conversations_search)
+        app.router.add_get("/v1/conversations/{id:[0-9]+}", self._http_conversations_get)
+        app.router.add_post("/v1/conversations", self._http_conversations_add)
         app.router.add_get("/v1/tools", self._http_tools)
         app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/config", self._http_get_config)
@@ -573,6 +866,9 @@ class Daemon:
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
+        app.router.add_post("/v1/cost/log", self._http_cost_log)
+        app.router.add_get("/v1/cost/summary", self._http_cost_summary)
+        app.router.add_get("/v1/cost/recent", self._http_cost_recent)
         app.router.add_get("/v1/integrations", self._http_integrations)
         app.router.add_post("/v1/integrations/connect", self._http_integrations_connect)
         app.router.add_post("/v1/integrations/provision", self._http_integrations_provision)

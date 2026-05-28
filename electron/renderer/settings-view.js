@@ -218,6 +218,26 @@ export function startSystemPolling() { refreshSystem(); if (!sysTimer) sysTimer 
 export function stopSystemPolling() { if (sysTimer) { clearInterval(sysTimer); sysTimer = null; } }
 
 function wire() {
+  // ── ambient observer toggle ──
+  async function refreshObserverUI() {
+    try {
+      const s = await window.sunday.observerStatus();
+      const on = !!s.running;
+      $('#set-observer-status').dataset.state = on ? 'ok' : '';
+      $('#set-observer-status').textContent = on ? 'on — listening' : 'off';
+      $('#set-observer-toggle').textContent = on ? 'Turn off' : 'Turn on';
+    } catch {}
+  }
+  $('#set-observer-toggle').addEventListener('click', async () => {
+    const btn = $('#set-observer-toggle'); btn.disabled = true;
+    try {
+      const s = await window.sunday.observerStatus();
+      await window.sunday.observerSet(!s.running);
+      await refreshObserverUI();
+    } finally { btn.disabled = false; }
+  });
+  refreshObserverUI();
+
   $('#set-conn-test').addEventListener('click', async () => {
     const url = $('#set-http').value.trim().replace(/\/+$/, '');
     const v = $('#set-conn-verify'); v.dataset.state = ''; v.textContent = `→ ${url}/v1/status …`;

@@ -90,17 +90,35 @@ class OpenAICompatProvider:
         messages: list[dict[str, Any]],
         tools_schema: list[dict[str, Any]] | None,
         on_delta: DeltaHandler | None = None,
+        on_reasoning: DeltaHandler | None = None,
+        purpose: str | None = None,
     ) -> CompletionResult:
+        import time
         client = self._client()
         kwargs: dict[str, Any] = {
             "model": self.config.model.name,
             "messages": [{"role": "system", "content": system_prompt}, *messages],
             "stream": True,
+            # Ask the provider to emit a final chunk with token usage. Both
+            # OpenAI and OpenRouter honour this; providers that don't will
+            # ignore the unknown field, in which case we fall back to a
+            # char-based token estimate so cost still gets logged.
+            "stream_options": {"include_usage": True},
         }
         if tools_schema:
             kwargs["tools"] = tools_schema
             kwargs["tool_choice"] = "auto"
 
+        # OpenRouter: pin latency-sorted provider routing. Default routing sends
+        # the request to a rotating set of backends with wildly variable TTFT
+        # (measured 0.4–14s); sort=latency holds it to the fastest backend and
+        # cuts the tail dramatically (measured a tight 0.56–0.75s). Harmless on
+        # non-OpenRouter base URLs (they ignore unknown extra_body keys, but we
+        # only attach it for OpenRouter to be safe).
+        if "openrouter" in (self.config.model.base_url or ""):
+            kwargs["extra_body"] = {"provider": {"sort": "latency"}}
+
+        started = time.monotonic()
         stream = await client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
@@ -112,8 +130,20 @@ class OpenAICompatProvider:
         # tool_calls arrive as indexed deltas; assemble per index
         tc_acc: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
+        # Usage arrives in a terminal chunk when stream_options.include_usage
+        # is set. Default to None so we can fall back to estimation below.
+        usage_prompt: int | None = None
+        usage_completion: int | None = None
 
         async for chunk in stream:
+            # Final-chunk usage (OpenAI + OpenRouter): a chunk with no choices
+            # but a populated `usage` object. Capture before the loop body
+            # because choices=[] would otherwise skip it.
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                usage_prompt = getattr(usage, "prompt_tokens", None) or usage_prompt
+                usage_completion = getattr(usage, "completion_tokens", None) or usage_completion
+
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
@@ -133,6 +163,8 @@ class OpenAICompatProvider:
             r_piece = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
             if r_piece:
                 reasoning_parts.append(str(r_piece))
+                if on_reasoning is not None:
+                    await on_reasoning(str(r_piece))
 
             for tc in (getattr(delta, "tool_calls", None) or []):
                 idx = getattr(tc, "index", 0) or 0
@@ -161,10 +193,34 @@ class OpenAICompatProvider:
             for i in sorted(tc_acc.keys())
         ]
 
+        # --- cost logging ---------------------------------------------------
+        # Fall back to a char-based estimate if the provider didn't return
+        # usage. Better an approximate cost than no record at all.
+        if usage_prompt is None or usage_completion is None:
+            prompt_chars = sum(len(m.get("content") or "") for m in kwargs["messages"] if isinstance(m.get("content"), str))
+            usage_prompt = usage_prompt or max(1, prompt_chars // 4)
+            completion_chars = sum(len(p) for p in content_parts) + sum(len(p) for p in reasoning_parts)
+            usage_completion = usage_completion or max(0, completion_chars // 4)
+        try:
+            from sunday.cost import get_store
+            get_store().log_llm(
+                purpose=purpose or "unknown",
+                provider=self.config.model.provider or "openai-compat",
+                model=self.config.model.name,
+                prompt_tokens=usage_prompt,
+                completion_tokens=usage_completion,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+        except Exception:  # noqa: BLE001
+            # Cost logging is observability — never let it break a turn.
+            pass
+
         raw: dict[str, Any] = {
             "provider": self.name,
             "model": self.config.model.name,
             "streamed": True,
+            "prompt_tokens": usage_prompt,
+            "completion_tokens": usage_completion,
         }
         if reasoning_parts:
             raw["reasoning_content"] = "".join(reasoning_parts)

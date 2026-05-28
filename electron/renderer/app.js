@@ -108,9 +108,16 @@ let stream = null;
 function handleWs(ev) {
   switch (ev.type) {
     case 'stream_start': stream = beginStream(ev); return;
-    case 'stream_delta':
-      if (stream && stream.id === ev.stream_id) { stream.raw += (ev.content || ''); stream.body.textContent = stream.raw; autoScroll(); }
+    case 'reasoning_delta':
+      if (stream && stream.id === ev.stream_id) { stream.reason += (ev.content || ''); showThinking(stream); autoScroll(); }
       return;
+    case 'stream_delta':
+      if (stream && stream.id === ev.stream_id) { stream.raw += (ev.content || ''); showText(stream); autoScroll(); }
+      return;
+    case 'tool_call':
+      if (stream && stream.id === ev.stream_id) addToolRow(stream, ev); return;
+    case 'tool_result':
+      if (stream && stream.id === ev.stream_id) finishToolRow(stream, ev); return;
     case 'stream_end':
       if (stream && stream.id === ev.stream_id) stream.el.classList.remove('streaming');
       stream = null; refreshLog(); refreshStatus(); return;
@@ -124,12 +131,55 @@ function beginStream(ev) {
   removeEmpty();
   const el = document.createElement('div');
   el.className = 'msg sunday streaming stream-temp';
+
+  // Live thinking block (hidden until reasoning tokens arrive).
+  const thinking = document.createElement('details');
+  thinking.className = 'reasoning live'; thinking.open = true; thinking.hidden = true;
+  thinking.innerHTML = '<summary><span class="spin"></span>thinking…</summary><div class="r-body"></div>';
+
+  // Live tool rows (hidden until the first tool call).
+  const toolsWrap = document.createElement('div');
+  toolsWrap.className = 'live-tools'; toolsWrap.hidden = true;
+
+  // Streaming text bubble (hidden until the first content token).
   const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  el.appendChild(bubble);
+  bubble.className = 'bubble'; bubble.hidden = true;
+
+  el.append(thinking, toolsWrap, bubble);
   placeRow(el, 'assistant');
   autoScroll(true);
-  return { id: ev.stream_id, el, body: bubble, raw: '' };
+  return { id: ev.stream_id, el, thinking, thinkingBody: thinking.querySelector('.r-body'),
+           toolsWrap, body: bubble, raw: '', reason: '', tools: {} };
+}
+
+function showThinking(s) { s.thinking.hidden = false; s.thinkingBody.textContent = s.reason; }
+function showText(s) { s.body.hidden = false; s.body.textContent = s.raw; }
+
+// One self-replacing line — shows the CURRENT tool + a running count, so it
+// never grows into a stack. "⚙ device_run_command  ssh root@…  · 12"
+function addToolRow(s, ev) {
+  s.toolsWrap.hidden = false;
+  s.thinking.querySelector('.spin')?.classList.add('done');  // stop the thinking spinner once acting
+  s.toolCount = (s.toolCount || 0) + 1;
+  let row = s.toolLine;
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'live-tool';
+    row.innerHTML = '<span class="spin"></span><span class="t-name"></span><span class="t-arg"></span><span class="t-count"></span>';
+    s.toolsWrap.innerHTML = '';
+    s.toolsWrap.appendChild(row);
+    s.toolLine = row;
+  }
+  row.querySelector('.spin').classList.remove('done');
+  let arg = '';
+  try { const a = JSON.parse(ev.args_preview || '{}'); arg = Object.values(a)[0] || ''; } catch { arg = ev.args_preview || ''; }
+  row.querySelector('.t-name').textContent = ev.tool_name;
+  row.querySelector('.t-arg').textContent = String(arg).slice(0, 52);
+  row.querySelector('.t-count').textContent = s.toolCount > 1 ? `· ${s.toolCount}` : '';
+}
+
+function finishToolRow(s, ev) {
+  s.toolLine?.querySelector('.spin')?.classList.add('done');
 }
 
 // Append a top-level row, inserting a turn break only when the speaker side
@@ -141,9 +191,28 @@ function placeRow(el, side) {
   chatEl.appendChild(el);
 }
 
+// Stored tool results collapse into one expandable group per run ("N tool
+// calls ▸") instead of a row each — so a 12-tool turn is one quiet line.
+function appendToolToGroup(m) {
+  let group = chatEl.lastElementChild;
+  if (!group || !group.classList.contains('tool-group')) {
+    group = document.createElement('details');
+    group.className = 'tool-group';
+    group.dataset.count = '0';
+    group.innerHTML = '<summary><span class="t-dot"></span><span class="tg-label"></span>'
+      + '<svg class="chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>'
+      + '<div class="tg-body"></div>';
+    placeRow(group, 'assistant');
+  }
+  const n = (parseInt(group.dataset.count, 10) || 0) + 1;
+  group.dataset.count = String(n);
+  group.querySelector('.tg-label').textContent = `${n} tool call${n > 1 ? 's' : ''}`;
+  group.querySelector('.tg-body').appendChild(buildToolRow(m));
+}
+
 function appendMessage(m) {
   const role = m.role;
-  if (role === 'tool')   { placeRow(buildToolRow(m), 'assistant'); return; }
+  if (role === 'tool')   { appendToolToGroup(m); return; }
   if (role === 'system') { placeRow(buildSystemRow(m), 'assistant'); return; }
 
   const side = role === 'user' ? 'user' : 'assistant';

@@ -128,6 +128,7 @@ async def rebuild(config: SundayConfig, force: bool = False) -> dict[str, Any]:
             system_prompt=_EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": f"Facts:\n{numbered}\n\nJSON map:"}],
             tools_schema=None,
+            purpose="graph_rebuild",
         )
         parsed = _parse(result.content or "")
         _write(conn, facts, parsed)

@@ -21,6 +21,7 @@ Credentials:
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -166,8 +167,24 @@ async def _process_inbound(
     source: str,
     uid: str | None = None,
 ) -> None:
-    """Drive the brain pipeline + send the reply. Shared by webhook + poll."""
-    asyncio.create_task(_send_typing(sender, from_number=sunday_number or None))
+    """Drive the brain pipeline + send the reply. Shared by webhook + poll.
+
+    Every phase is timed and logged ("sendblue turn timing") so we can see
+    exactly where wall-clock goes: the typing-indicator round-trip, the agent
+    loop (broken down further by respond()'s own "turn timing"), and the
+    outbound send."""
+    t0 = time.perf_counter()
+
+    # Typing indicator: fire-and-forget, but time its own round-trip — it's the
+    # first signal the user sees ("read"/typing), so if it's slow that's felt.
+    async def _typing_timed() -> None:
+        _t = time.perf_counter()
+        await _send_typing(sender, from_number=sunday_number or None)
+        log.info("sendblue typing sent", ms=round((time.perf_counter() - _t) * 1000), source=source)
+    asyncio.create_task(_typing_timed())
+
+    timings: dict[str, Any] = {}
+    t_respond = time.perf_counter()
     try:
         reply = await respond(
             daemon.chat,
@@ -175,12 +192,33 @@ async def _process_inbound(
             f"imessage_sendblue:{source}",
             daemon.config,
             daemon.registry,
-            extras={"broadcast": daemon._broadcast, "devices": daemon.devices, "memory": daemon.memory},
+            runtime=getattr(daemon, "runtime", None),
+            extras={"broadcast": daemon._broadcast, "devices": daemon.devices,
+                    "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None)},
+            timings=timings,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("inbound brain failed", source=source, uid=uid)
         return
+    respond_ms = round((time.perf_counter() - t_respond) * 1000)
+
+    t_send = time.perf_counter()
     await _send_sendblue(sender, reply, from_number=sunday_number or None)
+    send_ms = round((time.perf_counter() - t_send) * 1000)
+
+    log.info(
+        "sendblue turn timing",
+        source=source,
+        total_ms=round((time.perf_counter() - t0) * 1000),
+        respond_ms=respond_ms,
+        send_ms=send_ms,
+        llm_calls_ms=timings.get("llm_calls_ms"),
+        memory_ms=round(timings.get("memory_ms", 0)),
+        tools_ms=round(timings.get("tools_ms", 0)),
+        iterations=timings.get("iterations"),
+        tools=timings.get("tool_names", []),
+        reply_chars=len(reply or ""),
+    )
 
 
 async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:

@@ -25,4 +25,7 @@ contextBridge.exposeInMainWorld('sunday', {
   onSwitchView: (handler) => {
     ipcRenderer.on('sunday:switch-view', (_evt, name) => handler(name));
   },
+  // ambient observer (mic → "what user is doing" → notch HUD + atoms)
+  observerStatus: () => ipcRenderer.invoke('sunday:observer-status'),
+  observerSet: (on) => ipcRenderer.invoke('sunday:observer-set', !!on),
 });

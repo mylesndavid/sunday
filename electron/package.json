@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.0.21",
+  "version": "0.0.36",
   "description": "Sunday \u2014 a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -83,6 +83,14 @@
       {
         "from": "build/notch-metrics",
         "to": "notch-metrics"
+      },
+      {
+        "from": "build/NotchHUD.app",
+        "to": "NotchHUD.app"
+      },
+      {
+        "from": "build/observer.py",
+        "to": "observer.py"
       }
     ]
   }
