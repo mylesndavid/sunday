@@ -56,6 +56,26 @@ def register_background_task(task: BackgroundTask) -> None:
     _background_tasks.append(task)
 
 
+# Stop-words so "watching a video about X" vs "video about X" still match.
+_NOW_STOP = {"a", "an", "the", "to", "of", "on", "in", "is", "and", "with",
+             "about", "watching", "listening", "reading", "discussing", "talking"}
+
+
+def _now_similar(a: str, b: str) -> bool:
+    """Are two 'now' lines the same activity, modulo phrasing drift? Word-set
+    Jaccard over content words; >0.4 overlap counts as continuation. Cheap and
+    good enough to stop the every-tick churn for one continuous activity."""
+    def words(s: str) -> set[str]:
+        return {w for w in "".join(c if c.isalnum() else " " for c in s.lower()).split()
+                if len(w) > 2 and w not in _NOW_STOP}
+    wa, wb = words(a), words(b)
+    if not wa or not wb:
+        return False
+    inter = len(wa & wb)
+    union = len(wa | wb)
+    return union > 0 and (inter / union) >= 0.4
+
+
 class Daemon:
     def __init__(self) -> None:
         ensure_home()
@@ -495,6 +515,7 @@ class Daemon:
             # Close the open conversation after enough quiet.
             if self._obs_silent_streak >= self._obs_silent_to_close and self._obs_buffer:
                 closed = await self._close_observer_conversation()
+            self._log_observer_tick(now_ts, "", self._now.get("now"), 0, True)
             return web.json_response({"now": self._now.get("now"), "silent": True, "conversation_closed": closed})
 
         self._obs_silent_streak = 0
@@ -510,13 +531,21 @@ class Daemon:
             log.warning("observer tick failed", error=str(exc))
             return web.json_response({"error": str(exc)}, status=502)
 
-        # Update the "now" line.
+        # Update the "now" line — but keep it STICKY. The model re-phrases the
+        # same activity slightly every tick ("AI bubble" → "AI investment
+        # discussion"); without a guard the counter resets and the HUD flashes
+        # every 30s for one continuous activity. So: treat a new line as a
+        # continuation when the model says same_as_last OR the wording clearly
+        # overlaps the current line — and in that case keep the ORIGINAL text +
+        # since, so nothing flickers.
         now_line = (tick.get("now") or "").strip()
         if now_line:
             same = bool(tick.get("same_as_last"))
+            prev = (self._now.get("now") or "").strip()
+            if not same and prev and _now_similar(now_line, prev):
+                same = True
             if same and self._now.get("since"):
-                self._now["now"] = now_line
-                self._now["updated_at"] = now_ts
+                self._now["updated_at"] = now_ts   # keep original text + since
             else:
                 self._now = {"now": now_line, "since": now_ts, "updated_at": now_ts}
 
@@ -557,11 +586,51 @@ class Daemon:
             )
             updated += 1
 
+        self._log_observer_tick(now_ts, transcript, self._now.get("now"), len(new_ids), False)
+        log.info("observer tick", now=(self._now.get("now") or "")[:60],
+                 atoms_created=len(new_ids), atoms_updated=updated, chars=len(transcript))
         return web.json_response({
             "now": self._now.get("now"),
             "atoms_created": len(new_ids),
             "atoms_updated": updated,
         })
+
+    def _log_observer_tick(self, ts: float, transcript: str, now: str | None,
+                           atoms_created: int, silent: bool) -> None:
+        """Append a raw tick to ~/.sunday/observer_log.jsonl so we can actually
+        inspect what the observer heard + decided. This is the corpus for
+        evaluating quality (the atoms are sparse; the stream is the truth)."""
+        try:
+            from sunday.paths import sunday_home
+            line = json.dumps({
+                "ts": ts,
+                "silent": silent,
+                "transcript": transcript[:500],
+                "now": now,
+                "atoms_created": atoms_created,
+            })
+            with open(sunday_home() / "observer_log.jsonl", "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _http_observer_log(self, request: web.Request) -> web.Response:
+        """Read the recent raw observer ticks (transcript + decided 'now' +
+        atoms created). The window into what it's actually capturing."""
+        from sunday.paths import sunday_home
+        try:
+            limit = int(request.query.get("limit") or 100)
+        except (TypeError, ValueError):
+            limit = 100
+        p = sunday_home() / "observer_log.jsonl"
+        if not p.exists():
+            return web.json_response({"ticks": [], "note": "no observer ticks logged yet"})
+        try:
+            lines = p.read_text(encoding="utf-8").strip().splitlines()[-limit:]
+            ticks = [json.loads(ln) for ln in lines if ln.strip()]
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response({"ticks": ticks, "count": len(ticks)})
 
     async def _close_observer_conversation(self) -> dict[str, Any] | None:
         """Summarize the buffered transcript window, store it, link atoms born
@@ -1281,6 +1350,7 @@ class Daemon:
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_post("/v1/observer/now", self._http_observer_now)
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
+        app.router.add_get("/v1/observer/log", self._http_observer_log)
         app.router.add_get("/v1/atoms", self._http_atoms_list)
         app.router.add_post("/v1/atoms", self._http_atoms_add)
         app.router.add_post("/v1/atoms/{id:[0-9]+}", self._http_atoms_update)
