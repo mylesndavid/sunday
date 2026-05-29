@@ -511,25 +511,46 @@ function readOpenAIKey() {
 
 // ── transcription: local whisper.cpp first (audio never leaves the Mac),
 //    OpenAI Whisper as fallback when local isn't installed. ──
+// Preferred → fallback. small.en gives noticeably cleaner transcripts than
+// base.en (acronyms, partial words, low-volume speech) while still finishing
+// well inside a 30s chunk on Apple Silicon. base.en stays as a fallback so
+// existing installs keep working while small.en downloads in the background.
+const WHISPER_DIR = path.join(os.homedir(), '.sunday', 'whisper');
+const WHISPER_MODELS = {
+  preferred:  { name: 'small.en', file: 'ggml-small.en.bin',
+                url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin',
+                approx_mb: 488 },
+  fallback:   { name: 'base.en',  file: 'ggml-base.en.bin',
+                url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
+                approx_mb: 148 },
+};
+function modelPath(modelDef) { return path.join(WHISPER_DIR, modelDef.file); }
+function modelInstalled(modelDef) {
+  try { return fs.statSync(modelPath(modelDef)).size > 1_000_000; } catch { return false; }
+}
+function activeModel() {
+  if (modelInstalled(WHISPER_MODELS.preferred)) return WHISPER_MODELS.preferred;
+  if (modelInstalled(WHISPER_MODELS.fallback))  return WHISPER_MODELS.fallback;
+  return null;
+}
+
 const WHISPER_LOCAL = {
   bin:   ['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }),
   ffmpeg: ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }),
-  model: path.join(os.homedir(), '.sunday', 'whisper', 'ggml-base.en.bin'),
+  // Resolved at each call so an upgrade from base→small picks up live
+  // without restarting the app.
+  get model() { return modelPath(activeModel() || WHISPER_MODELS.preferred); },
 };
 function localTranscriptionStatus() {
-  // What it would take to fully run on-device. Each check is independent so
-  // the UI can show exactly what's missing.
-  let modelReady = false;
-  try { modelReady = fs.statSync(WHISPER_LOCAL.model).size > 1_000_000; } catch {}
+  const active = activeModel();
+  const preferredReady = modelInstalled(WHISPER_MODELS.preferred);
   return {
     bin:    !!WHISPER_LOCAL.bin,
     ffmpeg: !!WHISPER_LOCAL.ffmpeg,
-    model:  modelReady,
-    ready:  !!(WHISPER_LOCAL.bin && WHISPER_LOCAL.ffmpeg && modelReady),
-    install: {
-      brew:  'brew install whisper-cpp ffmpeg',
-      model: `mkdir -p ~/.sunday/whisper && curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o ${WHISPER_LOCAL.model}`,
-    },
+    model:  !!active,
+    model_name: active ? active.name : null,
+    upgrading: !preferredReady,   // running base.en while small.en downloads
+    ready:  !!(WHISPER_LOCAL.bin && WHISPER_LOCAL.ffmpeg && active),
   };
 }
 
@@ -538,11 +559,14 @@ function localTranscriptionStatus() {
 async function logTranscriptionCost(provider, durationSeconds, latencyMs) {
   try {
     const { daemonHttp } = resolveDaemon();
+    const active = activeModel();
+    const model = provider === 'openai'
+      ? 'whisper-1'
+      : `whisper.cpp/${active ? active.name : 'unknown'}`;
     await fetch(`${daemonHttp}/v1/cost/log`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        kind: 'audio', purpose: 'observer_tick', provider,
-        model: provider === 'openai' ? 'whisper-1' : 'whisper.cpp/base.en',
+        kind: 'audio', purpose: 'observer_tick', provider, model,
         audio_seconds: durationSeconds, latency_ms: latencyMs,
       }),
     });
@@ -660,14 +684,16 @@ async function installLocalTranscription(send) {
       log('whisper-cpp + ffmpeg already installed');
     }
 
-    // Step 2: model download (~150MB) with progress.
-    const status = localTranscriptionStatus();
-    if (!status.model) {
-      const dir = path.dirname(WHISPER_LOCAL.model);
-      fs.mkdirSync(dir, { recursive: true });
-      const tmp = `${WHISPER_LOCAL.model}.part`;
-      log('Downloading base.en model (~150MB)…');
-      const res = await fetch('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin');
+    // Step 2: download the PREFERRED model (small.en, ~488MB). If base.en
+    // already exists from an older install, leave it — transcription keeps
+    // working off base.en during the small.en download window.
+    const target = WHISPER_MODELS.preferred;
+    if (!modelInstalled(target)) {
+      fs.mkdirSync(WHISPER_DIR, { recursive: true });
+      const dest = modelPath(target);
+      const tmp = `${dest}.part`;
+      log(`Downloading ${target.name} model (~${target.approx_mb}MB)…`);
+      const res = await fetch(target.url);
       if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`);
       const total = Number(res.headers.get('content-length') || 0);
       let got = 0; let lastPct = -1;
@@ -684,10 +710,15 @@ async function installLocalTranscription(send) {
         }
       }
       await new Promise((resolve, reject) => out.end((e) => e ? reject(e) : resolve()));
-      fs.renameSync(tmp, WHISPER_LOCAL.model);
-      log('Model installed.');
+      fs.renameSync(tmp, dest);
+      log(`${target.name} installed. From the next tick onward, transcription uses the better model.`);
+      // Clean up the now-obsolete fallback so disk doesn't grow forever.
+      try {
+        const fallback = modelPath(WHISPER_MODELS.fallback);
+        if (fs.existsSync(fallback)) { fs.unlinkSync(fallback); log('Cleaned up old base.en (~148MB).'); }
+      } catch { /* leave it; cleanup is cosmetic */ }
     } else {
-      log('Model already installed.');
+      log(`${target.name} already installed.`);
     }
 
     log('✓ Local transcription ready.');

@@ -535,7 +535,11 @@ function wire() {
       const box = $('#set-trans');
       if (!box) return;
       if (t.ready) {
-        box.innerHTML = '<div class="set-trans-on">✓ transcription is fully on-device (whisper.cpp). Audio never leaves this Mac.</div>';
+        const m = t.model_name ? ` (${t.model_name})` : '';
+        const upgradeNote = t.upgrading
+          ? '<div class="set-trans-sub">Upgrading to a better model in the background — current transcription continues uninterrupted.</div>'
+          : '';
+        box.innerHTML = `<div class="set-trans-on">✓ transcription is fully on-device${m}. Audio never leaves this Mac.</div>${upgradeNote}`;
         return;
       }
       // Setup in progress (or transient fallback) — show a quiet status, no
