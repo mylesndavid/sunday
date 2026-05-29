@@ -340,6 +340,27 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 }
 .set-verify { font: 12px/1.4 var(--font-mono); color: var(--text-3); flex: 1; text-align: left; }
 .set-verify[data-state="ok"] { color: var(--ok); } .set-verify[data-state="fail"] { color: var(--error); }
+
+/* Permissions list — one structured row per macOS privacy permission. */
+.perm-list { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.perm-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.perm-info { flex: 1; min-width: 0; }
+.perm-name { font: 600 14px/1.3 var(--font-sans); color: var(--text); }
+.perm-why  { font: 12.5px/1.4 var(--font-sans); color: var(--text-3); margin-top: 2px; }
+.perm-status {
+  font: 11.5px/1 var(--font-mono);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.perm-status[data-state="ok"]   { color: var(--ok); font-weight: 600; }
+.perm-status[data-state="fail"] { color: var(--error); }
+.perm-grant { padding: 7px 14px; font-size: 13px; }
 .conn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .conn-loading { color: var(--text-3); font-size: 13px; }
 .conn-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }

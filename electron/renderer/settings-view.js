@@ -509,10 +509,24 @@ function wire() {
   $('#set-observer-toggle').addEventListener('click', async () => {
     const btn = $('#set-observer-toggle'); btn.disabled = true;
     try {
+      // Mic-gate: if it's not granted we'd silently fail; refuse explicitly
+      // and bounce the user to the Permissions section.
+      const perms = await window.sunday.permissionsStatus();
+      if (perms.microphone !== 'granted') {
+        const status = $('#set-observer-status');
+        status.dataset.state = 'fail';
+        status.textContent = 'needs microphone — grant it in Permissions above';
+        document.getElementById('sec-permissions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Trigger the prompt while we're here.
+        await window.sunday.requestMicrophone();
+        return;
+      }
       const s = await window.sunday.observerStatus();
       const result = await window.sunday.observerSet(!s.running);
       setObserverUI(result);
-      if (result.running) startObserverPolling(); else stopObserverPolling();
+      // Always poll after Turn-on: state may take a few ticks to settle
+      // (capture window has to load + getUserMedia has to succeed).
+      startObserverPolling();
     } finally { btn.disabled = false; }
   });
   refreshObserverUI().then(() => {
@@ -603,34 +617,49 @@ function wire() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`); await loadAll(); flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
-  // Permission widgets — read the truth from macOS directly. Buttons hide
-  // when already granted. Status updates every 2s so flipping a toggle in
-  // System Settings reflects here without a relaunch.
-  function applyPerm(kind, status) {
-    const statusEl = $(`#set-${kind}-status`);
-    const btn = $(`#set-${kind}-grant`);
-    if (!statusEl || !btn) return;
+  // Permissions panel — single source of truth, polled from macOS. Each row
+  // shows real status; the Allow button hides when granted.
+  const PERMS = [
+    { id: 'microphone', key: 'microphone', request: () => window.sunday.requestMicrophone() },
+    { id: 'screen',     key: 'screen',     request: () => window.sunday.requestScreen()     },
+    { id: 'control',    key: 'control',    request: () => window.sunday.requestControl()    },
+    { id: 'fulldisk',   key: 'fullDisk',   request: () => window.sunday.requestFullDisk()   },
+  ];
+  function applyPerm(p, statusMap) {
+    const row = document.getElementById(`perm-${p.id}`);
+    if (!row) return;
+    const status = statusMap[p.key] || 'not-determined';
+    const statusEl = row.querySelector('.perm-status');
+    const btn      = row.querySelector('.perm-grant');
     if (status === 'granted') {
       statusEl.dataset.state = 'ok';
-      statusEl.textContent = '✓ already allowed';
+      statusEl.textContent = 'allowed';
       btn.hidden = true;
+    } else if (status === 'denied') {
+      statusEl.dataset.state = 'fail';
+      statusEl.textContent = 'denied — open System Settings to enable';
+      btn.hidden = false;
     } else {
       statusEl.dataset.state = '';
-      statusEl.textContent = status === 'denied' ? 'denied in System Settings' : 'not granted yet';
+      statusEl.textContent = 'not granted';
       btn.hidden = false;
     }
   }
   async function refreshPerms() {
     try {
-      const p = await window.sunday.permissionsStatus();
-      applyPerm('screen',  p.screen);
-      applyPerm('control', p.control);
+      const m = await window.sunday.permissionsStatus();
+      for (const p of PERMS) applyPerm(p, m);
     } catch {}
   }
-  $('#set-screen-grant').addEventListener('click', async () => {
-    try { await window.sunday.requestScreen(); } catch {}
-    setTimeout(refreshPerms, 600);
-  });
+  for (const p of PERMS) {
+    const row = document.getElementById(`perm-${p.id}`);
+    row?.querySelector('.perm-grant')?.addEventListener('click', async () => {
+      try { await p.request(); } catch {}
+      // The system prompt is modal — poll a few times so the UI catches up
+      // quickly after the user clicks Allow.
+      for (let i = 0; i < 8; i++) { await new Promise((r) => setTimeout(r, 500)); await refreshPerms(); }
+    });
+  }
   $('#mcp-save').addEventListener('click', async () => {
     const s = $('#mcp-status'); s.dataset.state = ''; s.textContent = 'connecting…';
     let cfg;
@@ -647,10 +676,6 @@ function wire() {
     } catch (err) { s.dataset.state = 'fail'; s.textContent = err.message; }
   });
 
-  $('#set-control-grant').addEventListener('click', async () => {
-    try { await window.sunday.requestControl(); } catch {}
-    setTimeout(refreshPerms, 600);
-  });
   refreshPerms();
   setInterval(refreshPerms, 2000);
   // section nav

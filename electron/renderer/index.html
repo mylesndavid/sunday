@@ -221,12 +221,43 @@
           </div>
         </section>
 
-        <section class="set-block" id="sec-screen">
-          <h2>Screen access</h2>
-          <p class="set-help">Lets Sunday read what's on your screen — captured and read on this Mac, nothing sent to the cloud. macOS asks you to allow it once; enable <strong>Sunday</strong> in the window that opens, then relaunch.</p>
-          <div class="set-actions"><span class="set-verify" id="set-screen-status"></span><button class="btn btn-primary" id="set-screen-grant">Allow screen access</button></div>
-          <p class="set-help" style="margin-top:18px">Let Sunday <strong>control</strong> apps — click, type, and use menus like you would, in any app. macOS asks you to allow <strong>Accessibility</strong> for Sunday once; enable Sunday in the list that opens, then relaunch.</p>
-          <div class="set-actions"><span class="set-verify" id="set-control-status"></span><button class="btn btn-primary" id="set-control-grant">Allow control</button></div>
+        <section class="set-block" id="sec-permissions">
+          <h2>Permissions</h2>
+          <p class="set-help">Sunday only asks for what it actually uses. Each row reads the real state from macOS — flip the switch in System Settings and it updates here in a couple seconds. <strong>Nothing leaves your Mac</strong> from any of these.</p>
+          <ul class="perm-list">
+            <li class="perm-row" id="perm-microphone">
+              <div class="perm-info">
+                <div class="perm-name">Microphone</div>
+                <div class="perm-why">Needed for the ambient observer — Sunday hears what you're doing.</div>
+              </div>
+              <span class="perm-status"></span>
+              <button class="btn perm-grant">Allow</button>
+            </li>
+            <li class="perm-row" id="perm-screen">
+              <div class="perm-info">
+                <div class="perm-name">Screen recording</div>
+                <div class="perm-why">Lets Sunday see what's on your screen when she needs to.</div>
+              </div>
+              <span class="perm-status"></span>
+              <button class="btn perm-grant">Allow</button>
+            </li>
+            <li class="perm-row" id="perm-control">
+              <div class="perm-info">
+                <div class="perm-name">Accessibility</div>
+                <div class="perm-why">Lets Sunday click, type, and use menus in other apps.</div>
+              </div>
+              <span class="perm-status"></span>
+              <button class="btn perm-grant">Allow</button>
+            </li>
+            <li class="perm-row" id="perm-fulldisk">
+              <div class="perm-info">
+                <div class="perm-name">Full disk access</div>
+                <div class="perm-why">Lets Sunday read iMessage threads and other protected app data.</div>
+              </div>
+              <span class="perm-status"></span>
+              <button class="btn perm-grant">Open System Settings</button>
+            </li>
+          </ul>
         </section>
 
         <section class="set-block" id="sec-observer">

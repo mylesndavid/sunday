@@ -471,16 +471,49 @@ app.whenReady().then(() => {
   }
 });
 
+// Probe Full Disk Access by trying to read the protected Messages chat.db.
+// macOS doesn't expose an API for this; the read-attempt is the canonical
+// test (it's what every privacy-checker app does).
+function fullDiskStatus() {
+  try {
+    const p = path.join(os.homedir(), 'Library', 'Messages', 'chat.db');
+    if (!fs.existsSync(p)) return 'not-determined';  // no Messages history yet
+    fs.openSync(p, 'r');   // throws EPERM/ENOENT when blocked by TCC
+    return 'granted';
+  } catch (e) {
+    return e?.code === 'EPERM' || e?.code === 'EACCES' ? 'denied' : 'not-determined';
+  }
+}
+
 // Permission status — read straight from macOS. Authoritative; never guesses.
-// Returns { screen, control, fullDisk } each ∈ 'granted' | 'denied' | 'not-determined'.
+// Returns each ∈ 'granted' | 'denied' | 'not-determined'.
 ipcMain.handle('sunday:permissions-status', () => {
+  const mic = systemPreferences.getMediaAccessStatus
+    ? systemPreferences.getMediaAccessStatus('microphone')
+    : 'not-determined';
   const screen = systemPreferences.getMediaAccessStatus
     ? systemPreferences.getMediaAccessStatus('screen')
     : 'not-determined';
   const control = systemPreferences.isTrustedAccessibilityClient
     ? (systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'not-determined')
     : 'not-determined';
-  return { screen, control };
+  const fullDisk = fullDiskStatus();
+  return { microphone: mic, screen, control, fullDisk };
+});
+
+// Microphone — askForMediaAccess shows the system prompt the first time and
+// returns true/false thereafter. Idempotent.
+ipcMain.handle('sunday:request-microphone', async () => {
+  try { await systemPreferences.askForMediaAccess('microphone'); } catch {}
+  // Open the pane in case the user previously denied — the prompt won't fire again.
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+  return { ok: true };
+});
+
+// Full Disk Access — no programmatic prompt exists; just open the pane.
+ipcMain.handle('sunday:request-fulldisk', async () => {
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+  return { ok: true };
 });
 
 // Two separate actions — prompt the system to register Sunday (which puts it
