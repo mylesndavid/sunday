@@ -127,9 +127,18 @@ class Daemon:
         self._obs_buffer: list[tuple[float, str]] = []   # (ts, transcript)
         self._obs_silent_streak: int = 0
         self._obs_conv_started: float | None = None
-        self._obs_silent_to_close = 4              # ~2min of silence → close
-        self._obs_conv_max_seconds = 20 * 60       # OR 20 min wall-clock → close
-        self._obs_conv_max_chars = 30_000          # OR 30k char transcript → close
+        # Close triggers, in priority order:
+        #   1. Activity shift — `now` changes to something genuinely different
+        #      (the natural break — "stopped doing X, started doing Y")
+        #   2. Silence — 4 ticks (~2 min) of nothing
+        #   3. Safety nets — 20 min wall-clock or 30k chars
+        # The activity-shift trigger is the important one. Without it the
+        # buffer accumulates a continuous "open conversation" until silence,
+        # which never happens during a normal day.
+        self._obs_silent_to_close = 4
+        self._obs_shift_min_age = 60               # don't shift-close a freshly-started conv
+        self._obs_conv_max_seconds = 20 * 60
+        self._obs_conv_max_chars = 30_000
         # Serializes agent turns (user-initiated + sub-agent wake turns) so the
         # single chat log never interleaves two concurrent respond() loops.
         self._turn_lock = asyncio.Lock()
@@ -567,6 +576,7 @@ class Daemon:
         # let staleness clear it. Never store or surface an idle label.
         if now_line and ("idle" in now_line.lower() or "no clear activity" in now_line.lower()):
             now_line = ""
+        activity_shifted = False
         if now_line:
             same = bool(tick.get("same_as_last"))
             prev = (self._now.get("now") or "").strip()
@@ -575,7 +585,22 @@ class Daemon:
             if same and self._now.get("since"):
                 self._now["updated_at"] = now_ts   # keep original text + since
             else:
+                # Genuinely new activity. If we had a buffered conversation
+                # of meaningful length under the OLD activity, close it here
+                # — the natural conversation boundary is "you stopped doing X
+                # and started doing Y", not "60s of silence happened".
+                if prev and self._obs_conv_started and (now_ts - self._obs_conv_started) >= self._obs_shift_min_age:
+                    activity_shifted = True
                 self._now = {"now": now_line, "since": now_ts, "updated_at": now_ts}
+
+        # Activity-shift close: drop the previous conversation now, with the
+        # NEW tick's transcript starting a fresh buffer for the new activity.
+        if activity_shifted and len(self._obs_buffer) > 1:
+            # The just-appended chunk belongs to the new activity — hold it.
+            last_chunk = self._obs_buffer.pop()
+            await self._close_observer_conversation()
+            self._obs_buffer.append(last_chunk)
+            self._obs_conv_started = last_chunk[0]
 
         # Create new atoms; remember index→id so supersede-by-"new:N" resolves.
         new_ids: list[int] = []
