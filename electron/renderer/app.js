@@ -22,6 +22,23 @@ const jumpBtn    = $('#jump-btn');
 
 let DAEMON_HTTP = 'http://127.0.0.1:8765';
 let DAEMON_WS   = 'ws://127.0.0.1:8765/v1/ws';
+let DAEMON_TOKEN = '';
+
+// One-time global fetch wrapper — every call to the daemon (regardless of
+// who in the renderer makes it) gets Authorization: Bearer <token> attached
+// automatically. Calls to other hosts (Hugging Face for the whisper model,
+// Nango, etc.) pass through untouched.
+(function installAuthFetch() {
+  const orig = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    if (!DAEMON_TOKEN) return orig(input, init);
+    const url = typeof input === 'string' ? input : (input?.url || '');
+    if (!url.startsWith(DAEMON_HTTP)) return orig(input, init);
+    const headers = new Headers((init && init.headers) || (input && input.headers) || {});
+    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${DAEMON_TOKEN}`);
+    return orig(input, { ...(init || {}), headers });
+  };
+})();
 let ws = null;
 let pending = [];
 const renderedIds = new Set();
@@ -33,8 +50,9 @@ let currentView = 'chat';
 async function boot() {
   if (window.sunday) {
     const cfg = await window.sunday.getConfig();
-    DAEMON_HTTP = cfg.daemonHttp || DAEMON_HTTP;
-    DAEMON_WS   = cfg.daemonWs   || DAEMON_WS;
+    DAEMON_HTTP  = cfg.daemonHttp || DAEMON_HTTP;
+    DAEMON_WS    = cfg.daemonWs   || DAEMON_WS;
+    DAEMON_TOKEN = cfg.daemonToken || '';
   }
   memoryView.init({ daemonHttp: DAEMON_HTTP }, {
     canvas: $('#mem-canvas'), legend: $('#mem-legend'), refresh: $('#mem-refresh'),

@@ -35,11 +35,32 @@ function savePrefs(patch) {
 
 function resolveDaemon() {
   const prefs = loadPrefs();
+  // Auth token: prefer the saved pref; if missing AND the daemon is local
+  // (127.0.0.1), read the daemon's own token file. Lets the same code path
+  // work for both "local daemon on this Mac" and "remote daemon I pasted in
+  // during onboarding".
+  let daemonToken = prefs.daemonToken || process.env.SUNDAY_DAEMON_TOKEN || '';
+  const httpUrl = process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || 'http://127.0.0.1:8765';
+  if (!daemonToken && /^http:\/\/(127\.0\.0\.1|localhost)/.test(httpUrl)) {
+    try {
+      const p = path.join(os.homedir(), '.sunday', 'auth.token');
+      if (fs.existsSync(p)) daemonToken = fs.readFileSync(p, 'utf8').trim();
+    } catch {}
+  }
   return {
-    daemonHttp: process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || 'http://127.0.0.1:8765',
+    daemonHttp: httpUrl,
     daemonWs:   process.env.SUNDAY_DAEMON_WS   || prefs.daemonWs   || 'ws://127.0.0.1:8765/v1/ws',
-    onboarded:  !!prefs.onboarded,
+    daemonToken,
+    onboarded:  !!prefs.daemonToken && !!prefs.onboarded,   // not onboarded without a token
   };
+}
+
+
+// Auth helper for main-process fetches against the daemon. Returns the
+// headers to merge into a fetch call so we always carry the bearer.
+function _bearer() {
+  const { daemonToken } = resolveDaemon();
+  return daemonToken ? { 'Authorization': `Bearer ${daemonToken}` } : {};
 }
 
 let mainWindow = null;
@@ -167,20 +188,20 @@ ipcMain.handle('sunday:notch-metrics', () => ({ notchHeight: notchMetrics().notc
 ipcMain.on('sunday:notch-mode', (_evt, mode) => positionNotch(['idle', 'active', 'expanded'].includes(mode) ? mode : 'idle'));
 
 ipcMain.handle('sunday:config', () => {
-  const { daemonHttp, daemonWs } = resolveDaemon();
-  return { daemonHttp, daemonWs };
+  const { daemonHttp, daemonWs, daemonToken } = resolveDaemon();
+  return { daemonHttp, daemonWs, daemonToken };
 });
 
-ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label }) => {
-  savePrefs({ daemonHttp, daemonWs, label, onboarded: true });
+ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label, daemonToken }) => {
+  savePrefs({ daemonHttp, daemonWs, daemonToken: daemonToken || '', label, onboarded: true });
   if (!mainWindow) createMainWindow();
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close();
   rebuildTrayMenu();
   return true;
 });
 
-ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs }) => {
-  savePrefs({ daemonHttp, daemonWs });
+ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs, daemonToken }) => {
+  savePrefs({ daemonHttp, daemonWs, daemonToken: daemonToken ?? loadPrefs().daemonToken ?? '' });
   // Reload the main window so it reconnects to the new daemon URL
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
   rebuildTrayMenu();
@@ -331,7 +352,7 @@ function startTrayStatus() {
     if (!tray || tray.isDestroyed?.()) return;
     try {
       const { daemonHttp } = resolveDaemon();
-      const res = await fetch(`${daemonHttp}/v1/status`, { signal: AbortSignal.timeout(2500) });
+      const res = await fetch(`${daemonHttp}/v1/status`, { signal: AbortSignal.timeout(2500), headers: { ..._bearer() } });
       if (!res.ok) return;
       const d = await res.json();
       const n = Array.isArray(d.agents) ? d.agents.length : 0;
@@ -675,7 +696,7 @@ async function logTranscriptionCost(provider, durationSeconds, latencyMs) {
       ? 'whisper-1'
       : `whisper.cpp/${active ? active.name : 'unknown'}`;
     await fetch(`${daemonHttp}/v1/cost/log`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
       body: JSON.stringify({
         kind: 'audio', purpose: 'observer_tick', provider, model,
         audio_seconds: durationSeconds, latency_ms: latencyMs,
@@ -877,7 +898,7 @@ ipcMain.handle('sunday:observer-chunk', async (_evt, bytes) => {
     const { daemonHttp } = resolveDaemon();
     await fetch(`${daemonHttp}/v1/observer/tick`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ..._bearer() },
       body: JSON.stringify({ transcript: transcript || '', silent: !transcript }),
     });
   } catch { /* daemon unreachable; drop this tick */ }

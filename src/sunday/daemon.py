@@ -16,6 +16,7 @@ import asyncio
 import json
 import signal
 import time
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -28,7 +29,7 @@ from sunday.config import load_config
 from sunday.devices.manager import DeviceManager
 from sunday.ipc import IpcError, read_json, write_json
 from sunday.memory import Memory, extract_facts
-from sunday.paths import ensure_home, socket_path
+from sunday.paths import ensure_home, socket_path, sunday_home
 from sunday.tools import default_registry
 
 log = structlog.get_logger("sunday.daemon")
@@ -54,6 +55,71 @@ def register_webhook(path: str, handler: WebhookHandler) -> None:
 def register_background_task(task: BackgroundTask) -> None:
     """Register a coroutine the daemon should run on startup until shutdown."""
     _background_tasks.append(task)
+
+
+# ── Authentication ──────────────────────────────────────────────────────
+# Single shared bearer token stored at ~/.sunday/auth.token. Generated on
+# first daemon start (256 bits of os.urandom, base64). Sunday.app reads it
+# from the same file when running against a local daemon, or from the user's
+# saved prefs when pointing at a remote one.
+
+_AUTH_TOKEN_CACHE: str | None = None
+
+
+def _auth_token_path() -> Path:
+    return sunday_home() / "auth.token"
+
+
+def get_or_create_auth_token() -> str:
+    """Read the bearer token from disk; generate + persist one if missing."""
+    global _AUTH_TOKEN_CACHE
+    if _AUTH_TOKEN_CACHE:
+        return _AUTH_TOKEN_CACHE
+    p = _auth_token_path()
+    if p.exists():
+        tok = p.read_text(encoding="utf-8").strip()
+        if tok:
+            _AUTH_TOKEN_CACHE = tok
+            return tok
+    import secrets
+    tok = "sunday_" + secrets.token_urlsafe(32)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(tok, encoding="utf-8")
+    try:
+        p.chmod(0o600)
+    except Exception:  # noqa: BLE001
+        pass
+    _AUTH_TOKEN_CACHE = tok
+    log.info("auth token generated", path=str(p))
+    return tok
+
+
+# Paths that intentionally remain unauthenticated:
+#   /webhooks/*       — external services (Sendblue, Composio) POST here
+#                        and have no way to carry our bearer token
+#   /v1/health        — load balancer / uptime probes
+#   /v1/auth/check    — for the desktop app to verify a token is valid
+_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check")
+
+
+@web.middleware
+async def _auth_middleware(request: web.Request, handler):
+    """Reject any request without a valid bearer token. Covers ALL `/v1/*`
+    routes that aren't explicitly exempted above. CORS preflights pass."""
+    path = request.path or ""
+    if request.method == "OPTIONS":
+        return await handler(request)
+    if any(path.startswith(pfx) for pfx in _AUTH_EXEMPT_PREFIXES):
+        return await handler(request)
+    expected = get_or_create_auth_token()
+    auth = request.headers.get("Authorization") or ""
+    presented = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    # Constant-time comparison so timing leaks don't reveal the token.
+    import hmac
+    if not presented or not hmac.compare_digest(presented, expected):
+        return web.json_response({"error": "unauthorized"}, status=401)
+    return await handler(request)
+
 
 
 # Stop-words so "watching a video about X" vs "video about X" still match.
@@ -1546,11 +1612,28 @@ class Daemon:
             log.exception("webhook failed", path=path)
             return web.json_response({"error": str(exc)}, status=500)
 
+    async def _http_health(self, request: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "version": __version__})
+
+    async def _http_auth_check(self, request: web.Request) -> web.Response:
+        """Verify a presented token without leaking the real one. Returns
+        {ok: true} on match, 401 otherwise. Exempt from the auth middleware
+        so unauth'd clients can probe."""
+        import hmac
+        expected = get_or_create_auth_token()
+        body = await request.json() if request.body_exists else {}
+        presented = (body.get("token") or "").strip()
+        if presented and hmac.compare_digest(presented, expected):
+            return web.json_response({"ok": True})
+        return web.json_response({"ok": False, "error": "invalid token"}, status=401)
+
     def _build_http_app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
+        app.router.add_get("/v1/health", self._http_health)
+        app.router.add_post("/v1/auth/check", self._http_auth_check)
         app.router.add_post("/v1/observer/now", self._http_observer_now)
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
         app.router.add_get("/v1/observer/log", self._http_observer_log)
