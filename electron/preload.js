@@ -39,5 +39,8 @@ contextBridge.exposeInMainWorld('sunday', {
   observerSet: (on) => ipcRenderer.invoke('sunday:observer-set', !!on),
   transcriptionStatus: () => ipcRenderer.invoke('sunday:transcription-status'),
   installLocalTranscription: () => ipcRenderer.invoke('sunday:install-local-transcription'),
+  meetingStart: () => ipcRenderer.invoke('sunday:meeting-start'),
+  meetingStop: () => ipcRenderer.invoke('sunday:meeting-stop'),
+  meetingState: () => ipcRenderer.invoke('sunday:meeting-state'),
   onInstallLog: (handler) => ipcRenderer.on('sunday:install-log', (_evt, line) => handler(line)),
 });

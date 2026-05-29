@@ -670,6 +670,7 @@ app.on('before-quit', () => {
   stopNotchHud();
   stopObserver();
   stopEmbeddedDaemon();
+  try { meetingProc?.kill('SIGTERM'); } catch {}
 });
 
 // ── ambient observer ──────────────────────────────────────────────────────
@@ -871,6 +872,126 @@ async function transcribeChunk(bytes, durationSeconds = 30) {
 
 ipcMain.handle('sunday:transcription-status', () => localTranscriptionStatus());
 
+// ── Meeting mode ────────────────────────────────────────────────────────
+// Explicit, full-fidelity recording of a meeting: both sides (system audio +
+// mic) to two tracks → transcribe each with timestamps → interleave with
+// speaker labels → daemon summarizes (Granola-style) + stores + makes atoms.
+let meetingProc = null;
+let meetingDir = null;
+let meetingStartedAt = null;
+
+function meetingRecorderBinary() {
+  const p = app.isPackaged
+    ? path.join(process.resourcesPath, 'meeting-recorder')
+    : path.join(__dirname, 'build', 'meeting-recorder');
+  return fs.existsSync(p) ? p : null;
+}
+
+async function setMeetingHud(recording) {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    await fetch(`${daemonHttp}/v1/meetings/hud`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
+      body: JSON.stringify({ recording, since: recording ? meetingStartedAt / 1000 : null }),
+    });
+  } catch {}
+}
+
+function startMeeting() {
+  if (meetingProc) return { ok: true, already: true };
+  const bin = meetingRecorderBinary();
+  if (!bin) return { ok: false, error: 'meeting recorder not bundled' };
+  const id = `${Date.now()}`;
+  meetingDir = path.join(os.homedir(), '.sunday', 'meetings', id);
+  fs.mkdirSync(meetingDir, { recursive: true });
+  meetingStartedAt = Date.now();
+  meetingProc = require('node:child_process').spawn(bin, [meetingDir], { stdio: 'ignore' });
+  meetingProc.on('exit', () => { meetingProc = null; });
+  setMeetingHud(true);
+  return { ok: true, id };
+}
+
+// whisper-cli WITH timestamps → [{start, text}] for one wav.
+async function transcribeTrackTimed(wav) {
+  if (!localTranscriptionStatus().ready) return [];
+  return new Promise((resolve) => {
+    const out = [];
+    const p = require('node:child_process').spawn(WHISPER_LOCAL.bin,
+      ['-m', WHISPER_LOCAL.model, '-f', wav, '--language', 'en'],
+      { stdio: ['ignore', 'pipe', 'ignore'] });
+    let buf = '';
+    p.stdout.on('data', (d) => { buf += d.toString(); });
+    p.on('exit', () => {
+      // Lines like: [00:00:01.200 --> 00:00:04.000]   some text
+      const re = /\[(\d\d):(\d\d):(\d\d)\.\d+\s*-->.*?\]\s*(.*)/g;
+      let m;
+      while ((m = re.exec(buf)) !== null) {
+        const start = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+        const text = (m[4] || '').trim();
+        if (text) out.push({ start, text });
+      }
+      resolve(out);
+    });
+    p.on('error', () => resolve([]));
+  });
+}
+
+async function stopMeeting() {
+  if (!meetingProc || !meetingDir) { await setMeetingHud(false); return { ok: false, error: 'no meeting running' }; }
+  const dir = meetingDir;
+  const startedAt = meetingStartedAt;
+  // Stop the recorder + let it finalize the WAVs.
+  try { meetingProc.kill('SIGTERM'); } catch {}
+  meetingProc = null; meetingDir = null;
+  await setMeetingHud(false);
+  await new Promise((r) => setTimeout(r, 1500));   // finalize window
+
+  const systemWav = path.join(dir, 'system.wav');
+  const micWav = path.join(dir, 'mic.wav');
+  const wavToMono = async (src) => {
+    const dst = src.replace(/\.wav$/, '-16k.wav');
+    try {
+      await new Promise((res, rej) => {
+        const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg, ['-y', '-i', src, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', dst], { stdio: 'ignore' });
+        p.on('exit', (c) => c === 0 ? res() : rej(new Error('ffmpeg')));
+        p.on('error', rej);
+      });
+      return dst;
+    } catch { return null; }
+  };
+
+  const segs = [];
+  if (fs.existsSync(systemWav)) {
+    const s = await wavToMono(systemWav);
+    if (s) for (const seg of await transcribeTrackTimed(s)) segs.push({ ...seg, who: 'Others' });
+  }
+  if (fs.existsSync(micWav)) {
+    const m = await wavToMono(micWav);
+    if (m) for (const seg of await transcribeTrackTimed(m)) segs.push({ ...seg, who: 'You' });
+  }
+  segs.sort((a, b) => a.start - b.start);
+  const transcript = segs.map((s) => `${s.who}: ${s.text}`).join('\n');
+
+  if (!transcript.trim()) return { ok: false, error: 'no speech captured' };
+
+  // Daemon summarizes + stores + makes atoms.
+  try {
+    const { daemonHttp } = resolveDaemon();
+    const res = await fetch(`${daemonHttp}/v1/meetings/finalize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
+      body: JSON.stringify({ transcript, started_at: startedAt / 1000, ended_at: Date.now() / 1000 }),
+    });
+    const data = await res.json();
+    return { ok: true, notes: data.notes, conversation_id: data.conversation_id };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+ipcMain.handle('sunday:meeting-start', () => startMeeting());
+ipcMain.handle('sunday:meeting-stop', () => stopMeeting());
+ipcMain.handle('sunday:meeting-state', () => ({ recording: !!meetingProc, since: meetingStartedAt }));
+
 // One-click install of the local transcription stack. Two pieces:
 //   1. whisper-cpp + ffmpeg via Homebrew (already installed; user has it).
 //   2. The base.en model — straight HTTPS download from Hugging Face.
@@ -1007,11 +1128,12 @@ let notchHudChild = null;
 function startNotchHud() {
   if (notchHudChild) return;
   try {
-    const { daemonHttp } = resolveDaemon();
+    const { daemonHttp, daemonToken } = resolveDaemon();
     const bin = app.isPackaged
       ? path.join(process.resourcesPath, 'NotchHUD.app', 'Contents', 'MacOS', 'notch-hud')
       : path.join(__dirname, 'build', 'NotchHUD.app', 'Contents', 'MacOS', 'notch-hud');
-    notchHudChild = require('node:child_process').spawn(bin, [daemonHttp], { stdio: 'ignore' });
+    // Pass the token as a 2nd arg so the notch can auth its status polls + WS.
+    notchHudChild = require('node:child_process').spawn(bin, [daemonHttp, daemonToken || ''], { stdio: 'ignore' });
     notchHudChild.on('exit', () => { notchHudChild = null; });
   } catch { notchHudChild = null; }
 }

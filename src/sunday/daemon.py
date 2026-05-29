@@ -99,7 +99,7 @@ def get_or_create_auth_token() -> str:
 #                        and have no way to carry our bearer token
 #   /v1/health        — load balancer / uptime probes
 #   /v1/auth/check    — for the desktop app to verify a token is valid
-_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check")
+_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/devices/ws")
 
 
 @web.middleware
@@ -190,6 +190,10 @@ class Daemon:
         # ticks; on a run of silent ticks we close + summarize the window.
         # (Capture happens in Sunday.app on the Mac; transcripts arrive via
         # /v1/observer/tick.)
+        # Meeting recording state — set by the Mac app while a meeting is
+        # being recorded; surfaced in /v1/status so the notch HUD can show
+        # the timer + red dot.
+        self._meeting: dict[str, Any] = {"recording": False, "since": None}
         self._obs_buffer: list[tuple[float, str]] = []   # (ts, transcript)
         self._obs_silent_streak: int = 0
         self._obs_conv_started: float | None = None
@@ -340,6 +344,7 @@ class Daemon:
                 "tools": self.registry.names(),
                 "devices": self.devices.list_devices(),
                 "agents": agents,
+                "meeting": self._meeting,
                 "now": now_text,
                 "since": now_since,
                 "atoms_open": self.atoms.count_working(),
@@ -882,6 +887,85 @@ class Daemon:
             "chars": len(transcript),
             "transcript_preview": transcript[-400:],
         })
+
+    async def _http_meeting_hud(self, request: web.Request) -> web.Response:
+        """The Mac app sets meeting-recording state here so the notch HUD
+        (which polls /v1/status) can show the timer + red dot. Body:
+        {recording: bool, since?: float}."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        recording = bool(body.get("recording"))
+        self._meeting = {
+            "recording": recording,
+            "since": float(body["since"]) if recording and body.get("since") else (time.time() if recording else None),
+        }
+        return web.json_response({"ok": True, "meeting": self._meeting})
+
+    async def _http_meeting_finalize(self, request: web.Request) -> web.Response:
+        """The Mac records + transcribes a meeting locally, then POSTs the
+        speaker-labeled transcript here. We summarize (Granola-style), store
+        it as a high-value Conversation, and turn action items into atoms.
+
+        Body: {transcript, started_at?, ended_at?}
+        Returns the full notes so the app can show them immediately.
+        """
+        from sunday import observer as obs
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid json"}, status=400)
+        transcript = (body.get("transcript") or "").strip()
+        if not transcript:
+            return web.json_response({"error": "empty transcript"}, status=400)
+        started = float(body.get("started_at") or time.time())
+        ended = float(body.get("ended_at") or time.time())
+
+        notes = await obs.summarize_meeting(transcript, self.config)
+
+        # Store as a Conversation. Build a readable summary body from the
+        # structured notes so the existing Conversations UI renders it well.
+        summary_lines = [notes["tldr"]]
+        if notes["key_points"]:
+            summary_lines.append("\nKey points:\n" + "\n".join(f"• {p}" for p in notes["key_points"]))
+        if notes["decisions"]:
+            summary_lines.append("\nDecisions:\n" + "\n".join(f"• {d}" for d in notes["decisions"]))
+        if notes["action_items"]:
+            summary_lines.append("\nAction items:\n" + "\n".join(
+                f"• [{a.get('owner','?')}] {a.get('task','')}" + (f" (due {a['due']})" if a.get("due") else "")
+                for a in notes["action_items"]))
+        summary_text = "\n".join(summary_lines).strip()
+
+        cid = self.conversations.add(
+            started_at=started, ended_at=ended,
+            title=notes["title"], summary=summary_text,
+            category="meeting", participants=notes["participants"],
+            transcript=transcript, source="meeting",
+        )
+
+        # Action items → tracked atoms (this is the Sunday-over-Granola wedge).
+        atom_ids = []
+        for a in notes["action_items"]:
+            task = (a.get("task") or "").strip()
+            if not task:
+                continue
+            aid = self.atoms.add(
+                text=task,
+                kind="deadline" if a.get("due") else "commitment",
+                owner=a.get("owner") or "you",
+                completion_signal=None,
+                evidence=f"from meeting: {notes['title']}",
+                source="meeting",
+            )
+            if aid:
+                atom_ids.append(aid)
+        if atom_ids:
+            self.atoms.link_to_conversation(cid, since=started, until=ended)
+
+        log.info("meeting finalized", id=cid, title=notes["title"][:50],
+                 action_items=len(notes["action_items"]), atoms=len(atom_ids))
+        return web.json_response({"ok": True, "conversation_id": cid, "notes": notes, "atoms_created": len(atom_ids)})
 
     async def _http_observer_log(self, request: web.Request) -> web.Response:
         """Read the recent raw observer ticks (transcript + decided 'now' +
@@ -1572,6 +1656,13 @@ class Daemon:
         })
 
     async def _ws_handler(self, request: web.Request) -> web.WebSocketResponse:
+        # WebSocket auth: browsers can't set an Authorization header on the
+        # handshake, so the token rides as a ?token= query param instead. The
+        # middleware exempts /v1/ws; we enforce it here.
+        import hmac
+        token = request.query.get("token", "")
+        if not token or not hmac.compare_digest(token, get_or_create_auth_token()):
+            return web.json_response({"error": "unauthorized"}, status=401)
         ws = web.WebSocketResponse(heartbeat=30.0)
         await ws.prepare(request)
         self._ws_clients.add(ws)
@@ -1638,6 +1729,8 @@ class Daemon:
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
         app.router.add_get("/v1/observer/log", self._http_observer_log)
         app.router.add_get("/v1/observer/buffer", self._http_observer_buffer)
+        app.router.add_post("/v1/meetings/finalize", self._http_meeting_finalize)
+        app.router.add_post("/v1/meetings/hud", self._http_meeting_hud)
         app.router.add_get("/v1/interjections", self._http_interjections_latest)
         app.router.add_post("/v1/interjections/{id}/engage", self._http_interjection_engage)
         app.router.add_post("/v1/interjections/{id}/dismiss", self._http_interjection_dismiss)

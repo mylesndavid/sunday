@@ -116,7 +116,10 @@ async function refreshLog() {
 }
 
 function connectWs() {
-  try { ws = new WebSocket(DAEMON_WS); } catch { setOnline('offline'); return; }
+  // The daemon authenticates the WS via ?token= (browsers can't set the
+  // Authorization header on a WebSocket handshake).
+  const wsUrl = DAEMON_TOKEN ? `${DAEMON_WS}${DAEMON_WS.includes('?') ? '&' : '?'}token=${encodeURIComponent(DAEMON_TOKEN)}` : DAEMON_WS;
+  try { ws = new WebSocket(wsUrl); } catch { setOnline('offline'); return; }
   ws.onopen = () => setOnline('online');
   ws.onclose = () => { setOnline('offline'); setTimeout(connectWs, 2000); };
   ws.onerror = () => setOnline('offline');
@@ -544,6 +547,43 @@ connBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   connPopOpen ? closeConnPop() : openConnPop();
 });
+
+// ── meeting record button ───────────────────────────────────────────────
+const meetingBtn = $('#meeting-btn');
+let meetingRecording = false;
+async function refreshMeetingBtn() {
+  try { meetingRecording = !!(await window.sunday.meetingState()).recording; } catch {}
+  meetingBtn.dataset.active = meetingRecording ? 'true' : 'false';
+  meetingBtn.title = meetingRecording ? 'Stop recording' : 'Record meeting';
+}
+meetingBtn?.addEventListener('click', async () => {
+  meetingBtn.disabled = true;
+  try {
+    if (!meetingRecording) {
+      const r = await window.sunday.meetingStart();
+      if (!r.ok) { addSystemNote(`Couldn't start recording: ${r.error || 'unknown'}`); }
+      else { meetingRecording = true; addSystemNote('🔴 Recording the meeting — both sides. Tap again to stop.'); }
+    } else {
+      addSystemNote('Wrapping up the meeting + writing your notes…');
+      const r = await window.sunday.meetingStop();
+      meetingRecording = false;
+      if (r.ok && r.notes) {
+        addSystemNote(`✓ ${r.notes.title}\n\n${r.notes.tldr}`);
+        refreshLog();   // the meeting Conversation + atoms are now stored
+      } else {
+        addSystemNote(`Recording stopped — ${r.error || 'no notes produced'}.`);
+      }
+    }
+  } finally { meetingBtn.disabled = false; refreshMeetingBtn(); }
+});
+// Lightweight inline system note in the chat stream.
+function addSystemNote(text) {
+  const el = document.createElement('div');
+  el.className = 'msg sunday';
+  el.innerHTML = `<div class="bubble">${text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br>')}</div>`;
+  chatEl.appendChild(el); autoScroll();
+}
+refreshMeetingBtn();
 
 connPopQ.addEventListener('input', (e) => renderConnPop(e.target.value));
 
