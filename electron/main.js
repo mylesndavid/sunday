@@ -343,12 +343,51 @@ function startTrayStatus() {
   _trayStatusTimer = setInterval(tick, 2000);
 }
 
+// Live update state — the tray menu shows different items + labels based on
+// where autoUpdater is. Set by the autoUpdater event handlers; consumed in
+// rebuildTrayMenu so the menu reflects the truth.
+let _updateState = { phase: 'idle', message: '', version: null, percent: 0 };
+function setUpdateState(patch) {
+  _updateState = { ..._updateState, ...patch };
+  if (tray) rebuildTrayMenu();
+}
+
+function updateMenuItem() {
+  const s = _updateState;
+  switch (s.phase) {
+    case 'checking':
+      return { label: 'Checking for updates…', enabled: false };
+    case 'available':
+      return { label: `Downloading ${s.version}…`, enabled: false };
+    case 'downloading':
+      return { label: `Downloading ${s.version}… ${Math.round(s.percent || 0)}%`, enabled: false };
+    case 'downloaded':
+      return { label: `Restart to update to ${s.version}`, click: () => {
+        try { autoUpdater.quitAndInstall(); } catch (e) { console.warn(e); }
+      }};
+    case 'none':
+      return { label: 'Sunday is up to date', enabled: false };
+    case 'error':
+      return { label: `Update check failed${s.message ? ': ' + s.message : ''}`, enabled: false };
+    case 'idle':
+    default:
+      return { label: 'Check for updates…', click: () => {
+        setUpdateState({ phase: 'checking', message: '' });
+        autoUpdater.checkForUpdates().catch((e) => {
+          setUpdateState({ phase: 'error', message: e?.message || String(e) });
+        });
+      }};
+  }
+}
+
 function rebuildTrayMenu() {
   if (!tray) return;
   const { daemonHttp, onboarded } = resolveDaemon();
   const prefs = loadPrefs();
+  const version = app.getVersion();
   const menu = Menu.buildFromTemplate([
-    { label: `Sunday — ${prefs.label || daemonHttp}`, enabled: false },
+    { label: `Sunday ${version}`, enabled: false },
+    { label: `${prefs.label || daemonHttp}`, enabled: false },
     { type: 'separator' },
     { label: 'Chat',     accelerator: 'Command+1', click: () => switchToView('chat') },
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
@@ -359,6 +398,8 @@ function rebuildTrayMenu() {
         else { startNotchHud(); savePrefs({ hud: true }); }
         rebuildTrayMenu();
     }},
+    { type: 'separator' },
+    updateMenuItem(),
     { type: 'separator' },
     { label: 'Reconfigure (re-run onboarding)…', click: () => {
         savePrefs({ onboarded: false });
@@ -394,12 +435,15 @@ app.whenReady().then(() => {
   // recording, etc.) — no re-prompt loop on update.
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-available', (info) => { console.log('update available', info.version); });
-  autoUpdater.on('update-downloaded', (info) => {
-    // Show a tiny menu-bar nudge; install completes on next quit.
-    if (tray) tray.setToolTip(`Sunday update ready (${info.version}) — quit + reopen to apply`);
+  autoUpdater.on('checking-for-update', () => setUpdateState({ phase: 'checking' }));
+  autoUpdater.on('update-available',    (info) => setUpdateState({ phase: 'available', version: info.version, percent: 0 }));
+  autoUpdater.on('update-not-available', () => setUpdateState({ phase: 'none' }));
+  autoUpdater.on('download-progress',   (p) => setUpdateState({ phase: 'downloading', percent: p.percent || 0 }));
+  autoUpdater.on('update-downloaded',   (info) => {
+    setUpdateState({ phase: 'downloaded', version: info.version });
+    if (tray) tray.setToolTip(`Sunday update ready (${info.version}) — restart to apply`);
   });
-  autoUpdater.on('error', (e) => { console.warn('updater error', e?.message); });
+  autoUpdater.on('error', (e) => setUpdateState({ phase: 'error', message: e?.message || 'unknown' }));
   // Check at startup + every 4h.
   setTimeout(() => autoUpdater.checkForUpdatesAndNotify().catch(() => {}), 8000);
   setInterval(() => autoUpdater.checkForUpdatesAndNotify().catch(() => {}), 4 * 60 * 60 * 1000);
