@@ -66,23 +66,42 @@ function switchSubtab(name) {
   }
 }
 
+let _convShowAll = false;
 async function loadConversations() {
   const ul = document.getElementById('conv-list');
   const empty = document.getElementById('conv-empty');
   ul.innerHTML = '';
   try {
-    const r = await fetch(`${cfg.daemonHttp}/v1/conversations?limit=200`);
+    const param = _convShowAll ? '&min_value=all' : '';
+    const r = await fetch(`${cfg.daemonHttp}/v1/conversations?limit=200${param}`);
     const d = await r.json();
     const convs = d.conversations || [];
+    const hiddenLow = (d.hidden && d.hidden.low) || 0;
     const cb = document.getElementById('mem-conv-count');
     if (convs.length) { cb.textContent = convs.length; cb.hidden = false; } else { cb.hidden = true; }
     if (!convs.length) { empty.hidden = false; return; }
     empty.hidden = true;
-    ul.innerHTML = convs.map((c) => {
+
+    // Header row with a "show N hidden" disclosure when the filter is active
+    // and there's actual junk being suppressed.
+    let headerHtml = '';
+    if (!_convShowAll && hiddenLow > 0) {
+      headerHtml = `<li class="conv-toggle">
+        <button class="conv-toggle-btn" id="conv-show-all">Show ${hiddenLow} low-value (TikToks, ambient noise, fragments)</button>
+      </li>`;
+    } else if (_convShowAll) {
+      headerHtml = `<li class="conv-toggle">
+        <button class="conv-toggle-btn" id="conv-show-all">Hide low-value</button>
+      </li>`;
+    }
+
+    ul.innerHTML = headerHtml + convs.map((c) => {
       const people = (c.participants || []).join(', ') || '—';
+      const valueDot = c.value ? `<span class="conv-value" data-v="${esc(c.value)}" title="${esc(c.value)}"></span>` : '';
       return `
-        <li class="conv-card" data-cid="${c.id}">
+        <li class="conv-card" data-cid="${c.id}" data-value="${esc(c.value || '')}">
           <div class="conv-head">
+            ${valueDot}
             <div class="c-title">${esc(c.title || 'Untitled')}</div>
             <div class="c-time">${esc(fmtTime(c.started_at))}</div>
           </div>
@@ -97,6 +116,10 @@ async function loadConversations() {
           </details>
         </li>`;
     }).join('');
+    document.getElementById('conv-show-all')?.addEventListener('click', () => {
+      _convShowAll = !_convShowAll;
+      loadConversations();
+    });
     // Lazy-load transcript when a card's <details> is opened.
     ul.querySelectorAll('.conv-card').forEach((card) => {
       const d = card.querySelector('details');

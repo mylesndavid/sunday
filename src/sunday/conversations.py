@@ -78,7 +78,7 @@ class ConversationStore:
 
     def list(self, limit: int = 50, since: float | None = None,
              category: str | None = None) -> list[dict[str, Any]]:
-        cols = "id, started_at, ended_at, title, summary, category, participants"
+        cols = "id, started_at, ended_at, title, summary, category, participants, length(transcript) AS transcript_chars"
         where, params = [], []
         if since:
             where.append("started_at >= ?"); params.append(float(since))
@@ -91,6 +91,37 @@ class ConversationStore:
             params,
         ).fetchall()
         return [self._row_to_dict(r, cols) for r in rows]
+
+    @staticmethod
+    def value_tier(category: str | None, transcript_chars: int, summary: str | None) -> str:
+        """high / medium / low. Used to hide noise (ambient sound, TikTok scroll,
+        TV bleed, dialogue fragments) without throwing the data away.
+
+        Rules — derived from looking at a real day's captures:
+          • category 'meeting' or 'call' → high (always worth seeing)
+          • category 'personal' and >250 chars → medium
+          • category 'media' is media: only if >3000 chars AND not flagged
+            "not a real conversation" in the summary
+          • anything <200 chars → low (fragment)
+          • summary that explicitly says it's noise → low
+        """
+        cat = (category or "").lower()
+        s = (summary or "").lower()
+        noise_phrases = ("not a real conversation", "no conversation detected",
+                         "ambient", "disjointed compilation", "background noise")
+        if transcript_chars < 200:
+            return "low"
+        if any(p in s for p in noise_phrases):
+            return "low"
+        if cat in ("meeting", "call"):
+            return "high"
+        if cat == "personal" and transcript_chars >= 250:
+            return "medium"
+        if cat == "media" and transcript_chars >= 3000:
+            return "medium"
+        if cat == "unclear" and transcript_chars >= 500:
+            return "medium"
+        return "low"
 
     def get(self, cid: int) -> dict[str, Any] | None:
         cols = "id, started_at, ended_at, title, summary, category, participants, transcript"
@@ -130,7 +161,12 @@ class ConversationStore:
 
     @staticmethod
     def _row_to_dict(row, cols: str) -> dict[str, Any]:
-        d = dict(zip(cols.split(", "), row))
+        # Tolerate "expr AS alias" — use the alias as the dict key, not the
+        # whole SQL expression. Falls back to the bare column name otherwise.
+        keys = []
+        for piece in cols.split(", "):
+            keys.append(piece.split(" AS ")[-1].strip() if " AS " in piece else piece.strip())
+        d = dict(zip(keys, row))
         try:
             d["participants"] = json.loads(d.get("participants") or "[]")
         except (json.JSONDecodeError, TypeError):

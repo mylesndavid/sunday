@@ -696,6 +696,22 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .conv-cat { font: 600 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; border-radius: var(--r-pill); background: var(--accent-tint); color: var(--accent-press); }
 .conv-cat[data-c="media"]    { background: rgba(120,120,120,.12); color: var(--text-3); }
 .conv-cat[data-c="unclear"]  { background: rgba(120,120,120,.08); color: var(--text-3); }
+
+/* Tiny dot on each card — high (amber, real signal) / medium (neutral) */
+.conv-value { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: 0 0 auto; margin-right: 6px; vertical-align: middle; }
+.conv-value[data-v="high"]   { background: var(--accent); }
+.conv-value[data-v="medium"] { background: var(--text-3); opacity: 0.55; }
+.conv-value[data-v="low"]    { background: var(--line-strong); }
+
+/* Show-N-hidden disclosure button at the top of the list. */
+.conv-toggle { list-style: none; margin: 0 0 8px; padding: 0; }
+.conv-toggle-btn {
+  width: 100%; text-align: left;
+  font: 500 12px/1.3 var(--font-sans);
+  color: var(--text-3); background: transparent; border: 1px dashed var(--line);
+  border-radius: 10px; padding: 8px 14px; cursor: pointer;
+}
+.conv-toggle-btn:hover { color: var(--text-2); border-color: var(--text-3); background: var(--surface-2); }
 .conv-cat[data-c="personal"] { background: rgba(160,80,180,.12); color: #804099; }
 .conv-cat[data-c="call"]     { background: rgba(40,140,200,.12); color: #1a6a99; }
 .conv-cat[data-c="meeting"]  { background: rgba(0,170,80,.12); color: #1b8a4e; }

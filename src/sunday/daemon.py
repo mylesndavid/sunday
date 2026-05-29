@@ -422,11 +422,33 @@ class Daemon:
         except ValueError:
             limit = 50
         since = request.query.get("since")
-        return web.json_response({"conversations": self.conversations.list(
-            limit=limit,
+        # Value filter — default hides "low" (TikTok scroll, ambient sound,
+        # TV bleed, short fragments). `min_value=low` / `all` overrides.
+        min_value = (request.query.get("min_value") or "medium").lower()
+        ranked = {"low": 0, "medium": 1, "high": 2}
+        floor = ranked.get(min_value, 1) if min_value != "all" else 0
+        from sunday.conversations import ConversationStore as _CS
+
+        raw = self.conversations.list(
+            limit=limit * 3 if floor > 0 else limit,
             since=float(since) if since else None,
             category=request.query.get("category"),
-        )})
+        )
+        out, skipped = [], {"low": 0, "medium": 0, "high": 0}
+        for c in raw:
+            v = _CS.value_tier(c.get("category"), int(c.get("transcript_chars") or 0), c.get("summary"))
+            c["value"] = v
+            if ranked[v] < floor:
+                skipped[v] += 1
+                continue
+            out.append(c)
+            if len(out) >= limit:
+                break
+        return web.json_response({
+            "conversations": out,
+            "filtered": floor > 0,
+            "hidden": skipped,
+        })
 
     async def _http_conversations_get(self, request: web.Request) -> web.Response:
         try:
@@ -764,8 +786,10 @@ class Daemon:
 
         if reply:
             # Run a normal turn off the reply so Sunday actually responds.
-            asyncio.create_task(self._say(reply, "proac",
-                                          user_metadata={"proac_reply_to": iid}))
+            # _say doesn't take user_metadata directly; the proac context lives
+            # in the prior sunday-role message's metadata, which gives the
+            # brain enough signal that this turn is a reply to her interjection.
+            asyncio.create_task(self._say(reply, "proac"))
 
         return web.json_response({"ok": True, "engaged": True, "ran_turn": bool(reply)})
 
