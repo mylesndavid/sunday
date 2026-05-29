@@ -520,6 +520,40 @@ function wire() {
     window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
   });
 
+  // Transcription status — local first; show install steps when missing.
+  async function refreshTransUI() {
+    try {
+      const t = await window.sunday.transcriptionStatus();
+      const box = $('#set-trans');
+      if (!box) return;
+      if (t.ready) {
+        box.innerHTML = '<div class="set-trans-on">✓ transcription is fully on-device (whisper.cpp)</div>';
+        return;
+      }
+      const missing = [];
+      if (!t.bin)    missing.push('whisper-cpp');
+      if (!t.ffmpeg) missing.push('ffmpeg');
+      if (!t.model)  missing.push('the base.en model');
+      const brewCmd = t.install.brew;
+      const modelCmd = t.install.model;
+      box.innerHTML = `
+        <div class="set-trans-off">
+          <div class="set-trans-head">Local transcription not set up — Sunday is using OpenAI Whisper as fallback (audio leaves this Mac).</div>
+          <div class="set-trans-sub">Missing: ${missing.join(', ')}.</div>
+          <div class="set-trans-sub">Paste in Terminal once to switch to fully on-device:</div>
+          <pre class="set-trans-cmd" data-copy="${brewCmd}\n${modelCmd}">${brewCmd}\n${modelCmd}</pre>
+          <button class="btn set-trans-recheck" id="set-trans-recheck">Recheck</button>
+        </div>`;
+      $('#set-trans-recheck')?.addEventListener('click', refreshTransUI);
+      $('#set-trans .set-trans-cmd')?.addEventListener('click', (e) => {
+        navigator.clipboard.writeText(e.currentTarget.dataset.copy);
+        e.currentTarget.dataset.copied = '1';
+        setTimeout(() => { delete e.currentTarget.dataset.copied; }, 1200);
+      });
+    } catch {}
+  }
+  refreshTransUI();
+
   $('#set-conn-test').addEventListener('click', async () => {
     const url = $('#set-http').value.trim().replace(/\/+$/, '');
     const v = $('#set-conn-verify'); v.dataset.state = ''; v.textContent = `→ ${url}/v1/status …`;

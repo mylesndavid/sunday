@@ -512,6 +512,11 @@ class Daemon:
         if silent:
             self._obs_silent_streak += 1
             closed = None
+            # After ~1 min (2 silent 30s chunks) drop the stale "now" line so
+            # the notch isn't lying about an activity that ended. The label
+            # only persists when there's continuing evidence for it.
+            if self._obs_silent_streak >= 2 and self._now.get("now"):
+                self._now = {"now": None, "since": None, "updated_at": now_ts}
             # Close the open conversation after enough quiet.
             if self._obs_silent_streak >= self._obs_silent_to_close and self._obs_buffer:
                 closed = await self._close_observer_conversation()
@@ -523,10 +528,13 @@ class Daemon:
             self._obs_conv_started = now_ts
         self._obs_buffer.append((now_ts, transcript))
 
-        # Run the tick brain over the open working atoms.
+        # Run the tick brain over the open working atoms, handing it the last
+        # 'now' so it can keep the activity sticky instead of re-narrating
+        # every 30s scene change.
         open_atoms = self.atoms.list(state="active", limit=20)
         try:
-            tick = await obs.run_tick(transcript, open_atoms, self.config)
+            tick = await obs.run_tick(transcript, open_atoms, self.config,
+                                      current_now=self._now.get("now"))
         except Exception as exc:  # noqa: BLE001
             log.warning("observer tick failed", error=str(exc))
             return web.json_response({"error": str(exc)}, status=502)

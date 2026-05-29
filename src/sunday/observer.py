@@ -58,8 +58,18 @@ Confidence (required on closed/dropped/superseded; 0.0–1.0)
   ≥ 0.85: strong direct signal. 0.6–0.85: plausible inference. < 0.6: do NOT close.
 
 You also produce the "now" line for the hub:
-  • "now": one short present-tense line, 4–10 words, describing the CURRENT activity. If there is no clear activity — silence, ambient noise, filler, nothing meaningful — return "" (empty string). NEVER invent an "idle" or "no clear activity" label; absence of activity is an empty string, not a state. "Watching/listening to a video about X" if it's clearly system audio rather than them speaking.
-  • "same_as_last": TRUE if continues prior `now`; FALSE on a real shift.
+  • "now": one short present-tense line, 4–10 words, describing the CURRENT activity. If there is no clear activity — silence, ambient noise, filler — return "" (empty string). NEVER invent an "idle" label; absence is an empty string.
+
+Continuity (CRITICAL — this is the #1 failure mode):
+  You are given your PREVIOUS `now` line. A person's real activity changes SLOWLY — over many minutes, not every 30 seconds. Default HARD to continuing the previous line: set same_as_last=true and repeat the previous `now` verbatim. Only emit a NEW `now` when there is a clear, sustained shift in what THEY are actually doing.
+
+  Media is ONE activity, not many, with a GENERIC label. Default to plain "Watching something" or "Listening to something". Be more specific only when the user has clearly chosen and stayed with one thing (then "Watching a YouTube video", "Watching a show"). NEVER label media by its content topic ("Watching vaccine info in multiple languages", "Watching a settings tutorial", "Moving a patient") — that just narrates whatever shoutiest dialogue arrived in this 30s chunk, not what the user is doing. The user's activity is "watching", not "vaccine info".
+
+  Telltale media signs: dialogue that jumps scene-to-scene, multiple characters, a narrative/scripted feel, instructional voiceover, dubbing/subtitles in multiple languages, references that don't involve the user, sentences that name the user-as-character in third person ("I'm going to grab the other leg" said by an unnamed character is TV, not the user).
+
+  When the activity is media, produce NO new_atoms and NO atom_updates from its content. A character on screen saying "my doctor says I can't drive for a week" is NOT the user's commitment — it's dialogue. Atoms come only from the USER's own real speech about their own life, never from media they're consuming.
+
+  • "same_as_last": TRUE whenever this continues the previous activity (the common case). FALSE only on a genuine, sustained shift.
 
 Be calm and sparing. Chit-chat, pleasantries, filler → no atoms. Silence/noise → empty arrays.
 
@@ -106,8 +116,14 @@ def _parse_json(content: str) -> dict[str, Any]:
     return {}
 
 
-async def run_tick(transcript: str, open_atoms: list[dict], config: SundayConfig) -> dict[str, Any]:
-    """One observation tick. Returns {now, same_as_last, atom_updates, new_atoms}."""
+async def run_tick(transcript: str, open_atoms: list[dict], config: SundayConfig,
+                   current_now: str | None = None) -> dict[str, Any]:
+    """One observation tick. Returns {now, same_as_last, atom_updates, new_atoms}.
+
+    `current_now` is the activity line from the last tick — passed back in so
+    the (otherwise stateless) brain can keep the activity sticky and recognize
+    media instead of re-narrating every 30s scene change.
+    """
     from sunday.runtime import build_runtime
 
     # Give the model the currently-open working atoms so it can reinforce/close
@@ -116,7 +132,12 @@ async def run_tick(transcript: str, open_atoms: list[dict], config: SundayConfig
         f"  [{a['id']}] ({a.get('kind')}) {a.get('text')} — owner: {a.get('owner')}"
         for a in open_atoms
     ) or "  (none open)"
-    user = f"Open working atoms:\n{atoms_blob}\n\nRecent speech (last ~30s):\n{transcript.strip()}\n\nJSON:"
+    prev = (current_now or "").strip() or "(none yet)"
+    user = (
+        f"Your PREVIOUS now line: {prev}\n\n"
+        f"Open working atoms:\n{atoms_blob}\n\n"
+        f"Recent speech (last ~30s):\n{transcript.strip()}\n\nJSON:"
+    )
 
     rt = build_runtime(config)
     result = await rt.complete(

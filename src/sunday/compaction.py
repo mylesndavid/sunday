@@ -62,19 +62,19 @@ SUMMARY_MAX_CHARS = 6000
 
 # Structured summary, ported from Hermes's compaction prompt. Adapted from a
 # pure task framing to Sunday's conversational one — it isn't always a "task".
-_SYSTEM = """You maintain a running summary of an ongoing conversation between a user and their personal AI (Sunday). New messages have aged out of the live window; fold them into the existing summary so continuity holds.
+_SYSTEM = """You maintain Sunday's running summary of her conversation with the user. New messages have aged out of the live window; fold them into the existing summary so continuity holds.
 
 Update the existing summary in place — do not start from scratch and do not lose anything load-bearing that's still relevant. Drop small talk, resolved tangents, and anything already captured.
 
 Write tight prose under these headings (omit a heading if empty):
 
-What we're working on — the current thread(s), goals, what the user wants.
-Decisions & preferences — choices made, opinions stated, how they like things done.
+What we're working on — the current thread(s), goals, what you want.
+Decisions & preferences — choices made, opinions stated, how you like things done.
 Done — what's finished or established.
 Open threads — unfinished work, things waiting, questions not yet answered.
-Key context — names, projects, files, links, constraints worth remembering.
+Key context — names, projects, files, links, constraints worth remembering. ALWAYS preserve the user's name(s) — their primary name and any alternate names that show up in their own messages or apps (e.g. workspace display names like "Manuel David"). These anchor "this person == the user" across surfaces.
 
-Be specific (names, files, numbers, URLs) over vague. Third person. Under 400 words total. Output only the summary."""
+Voice: second person ("you", "your") when referring to the user — this is Sunday's summary FOR HERSELF, not a third-party report. Be specific (names, files, numbers, URLs) over vague. Under 400 words total. Output only the summary."""
 
 
 def estimate_tokens(text: str) -> int:
@@ -160,6 +160,17 @@ async def maybe_compact(chat, config: SundayConfig) -> None:
 
     tail = tail_messages(chat)
     if not tail:
+        return
+    # Hold off compacting while a tool-call window is hot. Compacting the
+    # middle while the model is mid-task chops identity anchors and tool
+    # results out of context exactly when they matter most. If the most
+    # recent message is a tool result or its assistant author is within the
+    # last 60s, defer — wait for the conversation to breathe.
+    import time as _t
+    last = tail[-1]
+    if last.role == "tool":
+        return
+    if (_t.time() - (last.created_at or 0)) < 60:
         return
     tail_start_id = tail[0].id  # everything strictly below this is the middle
     batch = chat.range(through_id, tail_start_id - 1, limit=FOLD_BATCH_MAX)

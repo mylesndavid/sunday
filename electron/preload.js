@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('sunday', {
   // ambient observer (mic → "what user is doing" → notch HUD + atoms)
   observerStatus: () => ipcRenderer.invoke('sunday:observer-status'),
   observerSet: (on) => ipcRenderer.invoke('sunday:observer-set', !!on),
+  transcriptionStatus: () => ipcRenderer.invoke('sunday:transcription-status'),
 });

@@ -498,12 +498,91 @@ function readOpenAIKey() {
   } catch { return null; }
 }
 
-async function transcribeChunk(bytes) {
+// ── transcription: local whisper.cpp first (audio never leaves the Mac),
+//    OpenAI Whisper as fallback when local isn't installed. ──
+const WHISPER_LOCAL = {
+  bin:   ['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }),
+  ffmpeg: ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } }),
+  model: path.join(os.homedir(), '.sunday', 'whisper', 'ggml-base.en.bin'),
+};
+function localTranscriptionStatus() {
+  // What it would take to fully run on-device. Each check is independent so
+  // the UI can show exactly what's missing.
+  let modelReady = false;
+  try { modelReady = fs.statSync(WHISPER_LOCAL.model).size > 1_000_000; } catch {}
+  return {
+    bin:    !!WHISPER_LOCAL.bin,
+    ffmpeg: !!WHISPER_LOCAL.ffmpeg,
+    model:  modelReady,
+    ready:  !!(WHISPER_LOCAL.bin && WHISPER_LOCAL.ffmpeg && modelReady),
+    install: {
+      brew:  'brew install whisper-cpp ffmpeg',
+      model: `mkdir -p ~/.sunday/whisper && curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -o ${WHISPER_LOCAL.model}`,
+    },
+  };
+}
+
+// Log a transcription event to the daemon's cost meter. Local is recorded as
+// $0/local; OpenAI is recorded with real duration so the meter stops lying.
+async function logTranscriptionCost(provider, durationSeconds, latencyMs) {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    await fetch(`${daemonHttp}/v1/cost/log`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'audio', purpose: 'observer_tick', provider,
+        model: provider === 'openai' ? 'whisper-1' : 'whisper.cpp/base.en',
+        audio_seconds: durationSeconds, latency_ms: latencyMs,
+      }),
+    });
+  } catch { /* observability shouldn't break the tick */ }
+}
+
+async function transcribeLocal(webmBytes, durationSeconds) {
+  const tmp = path.join(os.tmpdir(), `sunday-${Date.now()}`);
+  const webm = `${tmp}.webm`, wav = `${tmp}.wav`;
+  const t0 = Date.now();
+  try {
+    fs.writeFileSync(webm, Buffer.from(webmBytes));
+    // ffmpeg: webm → 16kHz mono s16 WAV (whisper.cpp's preferred format).
+    await new Promise((resolve, reject) => {
+      const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
+        ['-y', '-i', webm, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav],
+        { stdio: 'ignore' });
+      p.on('exit', (c) => c === 0 ? resolve() : reject(new Error(`ffmpeg exit ${c}`)));
+      p.on('error', reject);
+    });
+    // whisper-cli: read WAV, print transcript to stdout via --no-prints --output-txt off.
+    const out = await new Promise((resolve, reject) => {
+      const chunks = [];
+      const p = require('node:child_process').spawn(WHISPER_LOCAL.bin,
+        ['-m', WHISPER_LOCAL.model, '-f', wav, '--no-timestamps', '--language', 'en', '-otxt', '-of', tmp],
+        { stdio: ['ignore', 'pipe', 'ignore'] });
+      p.stdout.on('data', (d) => chunks.push(d));
+      p.on('exit', (c) => c === 0 ? resolve(Buffer.concat(chunks).toString('utf8')) : reject(new Error(`whisper exit ${c}`)));
+      p.on('error', reject);
+    });
+    // whisper-cli writes the transcript to <tmp>.txt; prefer that since stdout
+    // can carry status noise. Fall through to stdout if the file isn't there.
+    let text = '';
+    try { text = fs.readFileSync(`${tmp}.txt`, 'utf8'); } catch { text = out; }
+    text = text.trim();
+    await logTranscriptionCost('local', durationSeconds, Date.now() - t0);
+    return text;
+  } catch (err) {
+    return null;
+  } finally {
+    for (const f of [webm, wav, `${tmp}.txt`]) { try { fs.unlinkSync(f); } catch {} }
+  }
+}
+
+async function transcribeOpenAI(webmBytes, durationSeconds) {
   const key = readOpenAIKey();
   if (!key) return null;
+  const t0 = Date.now();
   try {
     const form = new FormData();
-    form.append('file', new Blob([bytes], { type: 'audio/webm' }), 'chunk.webm');
+    form.append('file', new Blob([webmBytes], { type: 'audio/webm' }), 'chunk.webm');
     form.append('model', 'whisper-1');
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
@@ -512,9 +591,23 @@ async function transcribeChunk(bytes) {
     });
     if (!res.ok) return null;
     const data = await res.json();
+    await logTranscriptionCost('openai', durationSeconds, Date.now() - t0);
     return (data.text || '').trim();
   } catch { return null; }
 }
+
+async function transcribeChunk(bytes, durationSeconds = 30) {
+  // Local first — audio never leaves the Mac when available. Fall back only
+  // if local isn't installed or fails on this specific chunk.
+  if (localTranscriptionStatus().ready) {
+    const local = await transcribeLocal(bytes, durationSeconds);
+    if (local !== null && local !== '') return local;
+    // If the local pipe failed (not just silence), let OpenAI take this one.
+  }
+  return await transcribeOpenAI(bytes, durationSeconds);
+}
+
+ipcMain.handle('sunday:transcription-status', () => localTranscriptionStatus());
 
 ipcMain.handle('sunday:observer-status', () => ({
   running: !!(captureWindow && observerState.active),
