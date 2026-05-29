@@ -346,10 +346,14 @@ function startTrayStatus() {
 // Live update state — the tray menu shows different items + labels based on
 // where autoUpdater is. Set by the autoUpdater event handlers; consumed in
 // rebuildTrayMenu so the menu reflects the truth.
-let _updateState = { phase: 'idle', message: '', version: null, percent: 0 };
+let _updateState = { phase: 'idle', message: '', version: null, percent: 0, current: app.getVersion() };
 function setUpdateState(patch) {
   _updateState = { ..._updateState, ...patch };
   if (tray) rebuildTrayMenu();
+  // Mirror into any open window so the Settings → Updates panel can react.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try { mainWindow.webContents.send('sunday:update-state', _updateState); } catch {}
+  }
 }
 
 function updateMenuItem() {
@@ -487,6 +491,18 @@ function fullDiskStatus() {
 
 // Permission status — read straight from macOS. Authoritative; never guesses.
 // Returns each ∈ 'granted' | 'denied' | 'not-determined'.
+ipcMain.handle('sunday:update-state', () => _updateState);
+ipcMain.handle('sunday:update-check', () => {
+  setUpdateState({ phase: 'checking', message: '' });
+  return autoUpdater.checkForUpdates()
+    .then(() => ({ ok: true }))
+    .catch((e) => { setUpdateState({ phase: 'error', message: e?.message || String(e) }); return { ok: false }; });
+});
+ipcMain.handle('sunday:update-restart', () => {
+  try { autoUpdater.quitAndInstall(); } catch (e) { return { error: e?.message || String(e) }; }
+  return { ok: true };
+});
+
 ipcMain.handle('sunday:permissions-status', () => {
   const mic = systemPreferences.getMediaAccessStatus
     ? systemPreferences.getMediaAccessStatus('microphone')

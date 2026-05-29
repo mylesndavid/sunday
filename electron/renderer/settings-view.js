@@ -678,6 +678,39 @@ function wire() {
 
   refreshPerms();
   setInterval(refreshPerms, 2000);
+
+  // ── Updates panel — mirrors the tray's update state machine. ────────────
+  const updVerLine = document.getElementById('upd-version-line');
+  const updStateText = document.getElementById('upd-state-text');
+  const updBar = document.getElementById('upd-bar');
+  const updBarFill = document.getElementById('upd-bar-fill');
+  const updCheckBtn = document.getElementById('upd-check-btn');
+  const updRestartBtn = document.getElementById('upd-restart-btn');
+  function applyUpdState(s) {
+    if (!s) return;
+    const phase = s.phase || 'idle';
+    if (updVerLine) updVerLine.textContent = s.current ? `You're on Sunday ${s.current}.` : '';
+    updBar.hidden = !(phase === 'downloading' || phase === 'available');
+    updBarFill.style.width = `${Math.max(0, Math.min(100, s.percent || 0))}%`;
+    updRestartBtn.hidden = phase !== 'downloaded';
+    updCheckBtn.disabled = (phase === 'checking' || phase === 'available' || phase === 'downloading');
+    const text = {
+      idle:        'Tap Check for updates to ping the feed.',
+      checking:    'Checking the update feed…',
+      available:   `New version ${s.version || ''} found — downloading…`,
+      downloading: `Downloading ${s.version || ''}… ${Math.round(s.percent || 0)}%`,
+      downloaded:  `Sunday ${s.version || ''} is ready — restart to apply.`,
+      none:        'You\'re running the latest version.',
+      error:       `Update check failed${s.message ? ': ' + s.message : ''}.`,
+    }[phase] || '';
+    updStateText.textContent = text;
+    updStateText.dataset.state = (phase === 'downloaded' || phase === 'none') ? 'ok' : (phase === 'error' ? 'fail' : '');
+  }
+  // Initial state + subscribe to live updates.
+  window.sunday.updateState().then(applyUpdState).catch(() => {});
+  window.sunday.onUpdateState(applyUpdState);
+  updCheckBtn?.addEventListener('click', () => window.sunday.updateCheck().catch(() => {}));
+  updRestartBtn?.addEventListener('click', () => window.sunday.updateRestart().catch(() => {}));
   // section nav
   const links = Array.from(document.querySelectorAll('.set-nav a'));
   const stage = $('#set-stage');

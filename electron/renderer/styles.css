@@ -361,6 +361,28 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .perm-status[data-state="ok"]   { color: var(--ok); font-weight: 600; }
 .perm-status[data-state="fail"] { color: var(--error); }
 .perm-grant { padding: 7px 14px; font-size: 13px; }
+
+/* Updates section. */
+.upd-status { margin-top: 8px; }
+.upd-state {
+  font: 13px/1.5 var(--font-sans);
+  color: var(--text-2);
+}
+.upd-state[data-state="ok"]   { color: var(--ok); }
+.upd-state[data-state="fail"] { color: var(--error); }
+.upd-bar {
+  margin-top: 10px;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.upd-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 200ms linear;
+}
 .conn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .conn-loading { color: var(--text-3); font-size: 13px; }
 .conn-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }

@@ -141,6 +141,7 @@
       <a data-target="sec-mcp">MCP</a>
       <a data-target="sec-personality">Personality</a>
       <a data-target="sec-permissions">Permissions</a>
+      <a data-target="sec-updates">Updates</a>
       <a data-target="sec-system">System</a>
     </nav>
     <div class="set-stage" id="set-stage">
@@ -268,6 +269,19 @@
             <button class="btn btn-primary" id="set-observer-toggle">Turn on</button>
           </div>
           <div class="set-trans" id="set-trans"></div>
+        </section>
+
+        <section class="set-block" id="sec-updates">
+          <h2>Updates</h2>
+          <p class="set-help">Sunday checks in the background and brings new builds down silently. Code-signed so every update inherits your permissions — no re-grants. Restart when ready, or any time you quit. <strong id="upd-version-line"></strong></p>
+          <div class="upd-status" id="upd-status">
+            <span class="upd-state" id="upd-state-text">Checking…</span>
+            <div class="upd-bar" id="upd-bar" hidden><div class="upd-bar-fill" id="upd-bar-fill"></div></div>
+          </div>
+          <div class="set-actions">
+            <button class="btn" id="upd-check-btn">Check for updates</button>
+            <button class="btn btn-primary" id="upd-restart-btn" hidden>Restart to update</button>
+          </div>
         </section>
 
         <section class="set-block" id="sec-system">
