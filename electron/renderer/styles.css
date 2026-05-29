@@ -326,17 +326,17 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .set-trans-off { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 14px; }
 .set-trans-head { color: var(--text); font-weight: 500; margin-bottom: 4px; }
 .set-trans-sub { color: var(--text-2); margin-top: 6px; }
-.set-trans-cmd {
-  margin: 10px 0 6px; padding: 10px 12px;
+.set-trans-actions { margin-top: 10px; display: flex; gap: 8px; }
+.set-trans-install { padding: 7px 16px; font-size: 13px; }
+.set-trans-log {
+  margin: 10px 0 0; padding: 10px 12px;
+  max-height: 200px; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-sm);
-  font: 12px/1.55 var(--font-mono);
-  color: var(--text); cursor: copy;
+  font: 11.5px/1.6 var(--font-mono);
+  color: var(--text-2);
   white-space: pre-wrap; word-break: break-all;
 }
-.set-trans-cmd:hover { border-color: var(--text-3); }
-.set-trans-cmd[data-copied="1"]::after { content: '  ✓ copied'; color: var(--ok); font-weight: 600; }
-.set-trans-recheck { margin-top: 8px; padding: 6px 12px; font-size: 12px; }
 .set-verify { font: 12px/1.4 var(--font-mono); color: var(--text-3); flex: 1; text-align: left; }
 .set-verify[data-state="ok"] { color: var(--ok); } .set-verify[data-state="fail"] { color: var(--error); }
 .conn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

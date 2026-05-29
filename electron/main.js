@@ -609,6 +609,90 @@ async function transcribeChunk(bytes, durationSeconds = 30) {
 
 ipcMain.handle('sunday:transcription-status', () => localTranscriptionStatus());
 
+// One-click install of the local transcription stack. Two pieces:
+//   1. whisper-cpp + ffmpeg via Homebrew (already installed; user has it).
+//   2. The base.en model — straight HTTPS download from Hugging Face.
+// Streams progress back to the renderer; no Terminal, no copy-paste.
+let installInFlight = false;
+async function installLocalTranscription(send) {
+  if (installInFlight) return { error: 'install already running' };
+  installInFlight = true;
+  const log = (line) => { try { send && send({ line }); } catch {} };
+  try {
+    // brew location — same probe as the bin search.
+    const brewBin = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'].find(p => {
+      try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; }
+    });
+
+    // Step 1: whisper-cpp + ffmpeg via brew (if either is missing).
+    const need = [];
+    if (!WHISPER_LOCAL.bin)    need.push('whisper-cpp');
+    if (!WHISPER_LOCAL.ffmpeg) need.push('ffmpeg');
+    if (need.length) {
+      if (!brewBin) {
+        return { error: 'Homebrew not found. Install Homebrew first: https://brew.sh' };
+      }
+      log(`Installing ${need.join(' + ')} via Homebrew…`);
+      await new Promise((resolve, reject) => {
+        const p = require('node:child_process').spawn(brewBin, ['install', ...need], {
+          env: { ...process.env, PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin` },
+        });
+        p.stdout.on('data', (d) => log(d.toString().trimEnd()));
+        p.stderr.on('data', (d) => log(d.toString().trimEnd()));
+        p.on('exit', (c) => c === 0 ? resolve() : reject(new Error(`brew install exit ${c}`)));
+        p.on('error', reject);
+      });
+      // Re-probe so the new bin paths are picked up for this process.
+      WHISPER_LOCAL.bin    = ['/opt/homebrew/bin/whisper-cli', '/usr/local/bin/whisper-cli'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } });
+      WHISPER_LOCAL.ffmpeg = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg'].find(p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } });
+    } else {
+      log('whisper-cpp + ffmpeg already installed');
+    }
+
+    // Step 2: model download (~150MB) with progress.
+    const status = localTranscriptionStatus();
+    if (!status.model) {
+      const dir = path.dirname(WHISPER_LOCAL.model);
+      fs.mkdirSync(dir, { recursive: true });
+      const tmp = `${WHISPER_LOCAL.model}.part`;
+      log('Downloading base.en model (~150MB)…');
+      const res = await fetch('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin');
+      if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status}`);
+      const total = Number(res.headers.get('content-length') || 0);
+      let got = 0; let lastPct = -1;
+      const out = fs.createWriteStream(tmp);
+      const reader = res.body.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out.write(value);
+        got += value.length;
+        if (total) {
+          const pct = Math.floor((got / total) * 100);
+          if (pct !== lastPct && pct % 5 === 0) { log(`  ${pct}% (${(got / 1e6).toFixed(1)} / ${(total / 1e6).toFixed(0)} MB)`); lastPct = pct; }
+        }
+      }
+      await new Promise((resolve, reject) => out.end((e) => e ? reject(e) : resolve()));
+      fs.renameSync(tmp, WHISPER_LOCAL.model);
+      log('Model installed.');
+    } else {
+      log('Model already installed.');
+    }
+
+    log('✓ Local transcription ready.');
+    return { ok: true, status: localTranscriptionStatus() };
+  } catch (err) {
+    log(`Install failed: ${err.message}`);
+    return { error: err.message };
+  } finally {
+    installInFlight = false;
+  }
+}
+
+ipcMain.handle('sunday:install-local-transcription', async (evt) => {
+  return await installLocalTranscription((line) => evt.sender.send('sunday:install-log', line));
+});
+
 ipcMain.handle('sunday:observer-status', () => ({
   running: !!(captureWindow && observerState.active),
   mic: micStatus(),

@@ -520,7 +520,8 @@ function wire() {
     window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
   });
 
-  // Transcription status — local first; show install steps when missing.
+  // Transcription status — local first; one-click install when missing.
+  let installing = false;
   async function refreshTransUI() {
     try {
       const t = await window.sunday.transcriptionStatus();
@@ -530,27 +531,41 @@ function wire() {
         box.innerHTML = '<div class="set-trans-on">✓ transcription is fully on-device (whisper.cpp)</div>';
         return;
       }
+      if (installing) return;   // don't redraw mid-install
       const missing = [];
       if (!t.bin)    missing.push('whisper-cpp');
       if (!t.ffmpeg) missing.push('ffmpeg');
-      if (!t.model)  missing.push('the base.en model');
-      const brewCmd = t.install.brew;
-      const modelCmd = t.install.model;
+      if (!t.model)  missing.push('base.en model (~150MB)');
       box.innerHTML = `
         <div class="set-trans-off">
-          <div class="set-trans-head">Local transcription not set up — Sunday is using OpenAI Whisper as fallback (audio leaves this Mac).</div>
-          <div class="set-trans-sub">Missing: ${missing.join(', ')}.</div>
-          <div class="set-trans-sub">Paste in Terminal once to switch to fully on-device:</div>
-          <pre class="set-trans-cmd" data-copy="${brewCmd}\n${modelCmd}">${brewCmd}\n${modelCmd}</pre>
-          <button class="btn set-trans-recheck" id="set-trans-recheck">Recheck</button>
+          <div class="set-trans-head">Local transcription not set up — using OpenAI Whisper as fallback (audio leaves this Mac).</div>
+          <div class="set-trans-sub">Need: ${missing.join(', ')}.</div>
+          <div class="set-trans-actions">
+            <button class="btn btn-primary set-trans-install" id="set-trans-install">Install locally</button>
+          </div>
+          <pre class="set-trans-log" id="set-trans-log" hidden></pre>
         </div>`;
-      $('#set-trans-recheck')?.addEventListener('click', refreshTransUI);
-      $('#set-trans .set-trans-cmd')?.addEventListener('click', (e) => {
-        navigator.clipboard.writeText(e.currentTarget.dataset.copy);
-        e.currentTarget.dataset.copied = '1';
-        setTimeout(() => { delete e.currentTarget.dataset.copied; }, 1200);
-      });
+      $('#set-trans-install')?.addEventListener('click', runInstall);
     } catch {}
+  }
+  async function runInstall() {
+    installing = true;
+    const logEl = $('#set-trans-log');
+    const btn = $('#set-trans-install');
+    if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
+    if (logEl) { logEl.hidden = false; logEl.textContent = ''; }
+    window.sunday.onInstallLog((line) => {
+      if (!logEl) return;
+      logEl.textContent += (line.line || line) + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    });
+    const result = await window.sunday.installLocalTranscription();
+    installing = false;
+    if (result && result.ok) {
+      setTimeout(refreshTransUI, 400);
+    } else if (btn) {
+      btn.disabled = false; btn.textContent = 'Try again';
+    }
   }
   refreshTransUI();
 
