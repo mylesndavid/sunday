@@ -115,6 +115,11 @@ class Daemon:
         # summary, and posts it here; atoms born during the window get linked.
         from sunday.conversations import ConversationStore
         self.conversations = ConversationStore()
+        # Interjections — Sunday's proactive notes + (later) nudges. Shared
+        # substrate; the consumer is the notch flare. Engagement converts to
+        # a real chat message; dismissal extends cooldown.
+        from sunday.interjections import InterjectionStore
+        self.interjections = InterjectionStore()
         # Observer conversation buffer — transcripts accumulate here across
         # ticks; on a run of silent ticks we close + summarize the window.
         # (Capture happens in Sunday.app on the Mac; transcripts arrive via
@@ -122,7 +127,9 @@ class Daemon:
         self._obs_buffer: list[tuple[float, str]] = []   # (ts, transcript)
         self._obs_silent_streak: int = 0
         self._obs_conv_started: float | None = None
-        self._obs_silent_to_close = 4   # ~2min at 30s chunks
+        self._obs_silent_to_close = 4              # ~2min of silence → close
+        self._obs_conv_max_seconds = 20 * 60       # OR 20 min wall-clock → close
+        self._obs_conv_max_chars = 30_000          # OR 30k char transcript → close
         # Serializes agent turns (user-initiated + sub-agent wake turns) so the
         # single chat log never interleaves two concurrent respond() loops.
         self._turn_lock = asyncio.Lock()
@@ -528,6 +535,14 @@ class Daemon:
             self._obs_conv_started = now_ts
         self._obs_buffer.append((now_ts, transcript))
 
+        # Cap conversation length: even continuous audio gets cut into
+        # closeable chunks. Otherwise the buffer can accumulate for hours
+        # before silence triggers a close, and the user never sees it.
+        wall_age = now_ts - (self._obs_conv_started or now_ts)
+        total_chars = sum(len(t) for _, t in self._obs_buffer)
+        if wall_age >= self._obs_conv_max_seconds or total_chars >= self._obs_conv_max_chars:
+            await self._close_observer_conversation()
+
         # Run the tick brain over the open working atoms, handing it the last
         # 'now' so it can keep the activity sticky instead of re-narrating
         # every 30s scene change.
@@ -599,6 +614,17 @@ class Daemon:
             )
             updated += 1
 
+        # Proactive interjection (rare, gated). The tick brain may surface a
+        # knowledge-gap; only fire if confidence ≥ floor and cooldowns clear,
+        # then spawn a formulation subagent + broadcast to clients via WS.
+        proac_fired = None
+        proac = tick.get("proac") or None
+        if proac and isinstance(proac, dict):
+            try:
+                proac_fired = await self._maybe_fire_proac(proac, transcript)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("proac fire failed", error=str(exc))
+
         self._log_observer_tick(now_ts, transcript, self._now.get("now"), len(new_ids), False)
         log.info("observer tick", now=(self._now.get("now") or "")[:60],
                  atoms_created=len(new_ids), atoms_updated=updated, chars=len(transcript))
@@ -606,7 +632,46 @@ class Daemon:
             "now": self._now.get("now"),
             "atoms_created": len(new_ids),
             "atoms_updated": updated,
+            "proac": proac_fired,
         })
+
+    async def _maybe_fire_proac(self, proac: dict[str, Any], transcript: str) -> dict[str, Any] | None:
+        """Gate + formulate + store + broadcast. Returns the stored interjection
+        dict on fire, None when gated."""
+        from sunday import observer as obs
+        from sunday.interjections import cooldown_ok, CONFIDENCE_FLOOR
+        try:
+            conf = float(proac.get("confidence") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        if conf < CONFIDENCE_FLOOR:
+            return None
+        ok, why = cooldown_ok(self.interjections)
+        if not ok:
+            log.info("proac gated", reason=why)
+            return None
+        ask = (proac.get("ask") or "").strip()
+        evidence = (proac.get("evidence") or transcript[:160]).strip()
+        if not ask:
+            return None
+        text = await obs.formulate_proac(ask, evidence, self.config)
+        if not text:
+            return None
+        iid = self.interjections.add(
+            kind="proac", trigger=proac.get("trigger") or "knowledge_gap",
+            text=text, evidence=evidence, confidence=conf,
+        )
+        payload = {
+            "type": "interjection",
+            "id": iid,
+            "kind": "proac",
+            "trigger": proac.get("trigger") or "knowledge_gap",
+            "text": text,
+            "evidence": evidence,
+        }
+        # Broadcast to every connected client (notch HUD + desktop app).
+        await self._broadcast(payload)
+        return payload
 
     def _log_observer_tick(self, ts: float, transcript: str, now: str | None,
                            atoms_created: int, silent: bool) -> None:
@@ -626,6 +691,82 @@ class Daemon:
                 f.write(line + "\n")
         except Exception:  # noqa: BLE001
             pass
+
+    # ─── interjections (proactive notes + nudges) ──────────────────────
+
+    async def _http_interjections_latest(self, request: web.Request) -> web.Response:
+        try:
+            limit = int(request.query.get("limit") or 20)
+        except (TypeError, ValueError):
+            limit = 20
+        return web.json_response({"interjections": self.interjections.latest(limit=limit)})
+
+    async def _http_interjection_engage(self, request: web.Request) -> web.Response:
+        """User engaged with a flare. Body: {feedback?: 'up'|'down', reply?: str}.
+        Marks engaged_at + (if reply present) folds it into the main chat as a
+        real exchange — Sunday's interjection becomes a sunday-role message,
+        the user's reply becomes a user-role message, and the brain runs a
+        turn so a normal reply lands."""
+        try:
+            iid = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "bad id"}, status=400)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        feedback = body.get("feedback")
+        reply    = (body.get("reply") or "").strip() or None
+
+        rows = self.interjections.latest(limit=200)
+        match = next((r for r in rows if r["id"] == iid), None)
+        if not match:
+            return web.json_response({"error": "not found"}, status=404)
+        if match.get("engaged_at"):
+            return web.json_response({"ok": True, "already_engaged": True})
+
+        self.interjections.mark_engaged(iid, feedback=feedback, reply=reply)
+
+        # Fold into main chat: Sunday's note becomes a sunday-role message
+        # (with metadata so the UI can show it as proactive). If the user
+        # replied, that becomes a user-role message and we run a turn.
+        try:
+            self.chat.append("sunday", match["text"], modality="proac",
+                             metadata={"proactive": True, "interjection_id": iid,
+                                       "trigger": match.get("trigger")})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("proac fold failed", error=str(exc))
+
+        if reply:
+            # Run a normal turn off the reply so Sunday actually responds.
+            asyncio.create_task(self._say(reply, "proac",
+                                          user_metadata={"proac_reply_to": iid}))
+
+        return web.json_response({"ok": True, "engaged": True, "ran_turn": bool(reply)})
+
+    async def _http_interjection_dismiss(self, request: web.Request) -> web.Response:
+        try:
+            iid = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "bad id"}, status=400)
+        self.interjections.mark_dismissed(iid)
+        return web.json_response({"ok": True})
+
+    async def _http_observer_buffer(self, request: web.Request) -> web.Response:
+        """The conversation Sunday is CURRENTLY buffering — not yet closed +
+        summarized. Lets the UI show 'in progress' instead of hiding live
+        speech until a 2-min silence triggers a close."""
+        if not self._obs_buffer:
+            return web.json_response({"empty": True})
+        started = self._obs_conv_started or self._obs_buffer[0][0]
+        transcript = "\n".join(t for _, t in self._obs_buffer)
+        return web.json_response({
+            "empty": False,
+            "started_at": started,
+            "chunks": len(self._obs_buffer),
+            "chars": len(transcript),
+            "transcript_preview": transcript[-400:],
+        })
 
     async def _http_observer_log(self, request: web.Request) -> web.Response:
         """Read the recent raw observer ticks (transcript + decided 'now' +
@@ -1364,6 +1505,10 @@ class Daemon:
         app.router.add_post("/v1/observer/now", self._http_observer_now)
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
         app.router.add_get("/v1/observer/log", self._http_observer_log)
+        app.router.add_get("/v1/observer/buffer", self._http_observer_buffer)
+        app.router.add_get("/v1/interjections", self._http_interjections_latest)
+        app.router.add_post("/v1/interjections/{id}/engage", self._http_interjection_engage)
+        app.router.add_post("/v1/interjections/{id}/dismiss", self._http_interjection_dismiss)
         app.router.add_get("/v1/atoms", self._http_atoms_list)
         app.router.add_post("/v1/atoms", self._http_atoms_add)
         app.router.add_post("/v1/atoms/{id:[0-9]+}", self._http_atoms_update)

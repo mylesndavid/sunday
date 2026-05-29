@@ -520,54 +520,37 @@ function wire() {
     window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
   });
 
-  // Transcription status — local first; one-click install when missing.
-  let installing = false;
+  // Transcription mode — read-only status. Sunday auto-installs local
+  // whisper.cpp on first launch; the OpenAI Whisper fallback runs silently
+  // during the window where local isn't ready yet. No buttons.
+  let installLines = [];
+  window.sunday.onInstallLog((line) => {
+    installLines.push(line.line || line);
+    if (installLines.length > 40) installLines = installLines.slice(-40);
+    refreshTransUI();
+  });
   async function refreshTransUI() {
     try {
       const t = await window.sunday.transcriptionStatus();
       const box = $('#set-trans');
       if (!box) return;
       if (t.ready) {
-        box.innerHTML = '<div class="set-trans-on">✓ transcription is fully on-device (whisper.cpp)</div>';
+        box.innerHTML = '<div class="set-trans-on">✓ transcription is fully on-device (whisper.cpp). Audio never leaves this Mac.</div>';
         return;
       }
-      if (installing) return;   // don't redraw mid-install
-      const missing = [];
-      if (!t.bin)    missing.push('whisper-cpp');
-      if (!t.ffmpeg) missing.push('ffmpeg');
-      if (!t.model)  missing.push('base.en model (~150MB)');
+      // Setup in progress (or transient fallback) — show a quiet status, no
+      // button. If the most recent log line indicates real work, surface it.
+      const lastLog = installLines[installLines.length - 1] || '';
+      const installing = lastLog && !lastLog.startsWith('✓');
       box.innerHTML = `
-        <div class="set-trans-off">
-          <div class="set-trans-head">Local transcription not set up — using OpenAI Whisper as fallback (audio leaves this Mac).</div>
-          <div class="set-trans-sub">Need: ${missing.join(', ')}.</div>
-          <div class="set-trans-actions">
-            <button class="btn btn-primary set-trans-install" id="set-trans-install">Install locally</button>
-          </div>
-          <pre class="set-trans-log" id="set-trans-log" hidden></pre>
+        <div class="set-trans-pending">
+          <div class="set-trans-head">${installing ? 'Setting up local transcription…' : 'Using OpenAI Whisper as fallback.'}</div>
+          ${installing ? `<pre class="set-trans-log">${installLines.slice(-12).join('\n')}</pre>` : ''}
         </div>`;
-      $('#set-trans-install')?.addEventListener('click', runInstall);
     } catch {}
   }
-  async function runInstall() {
-    installing = true;
-    const logEl = $('#set-trans-log');
-    const btn = $('#set-trans-install');
-    if (btn) { btn.disabled = true; btn.textContent = 'Installing…'; }
-    if (logEl) { logEl.hidden = false; logEl.textContent = ''; }
-    window.sunday.onInstallLog((line) => {
-      if (!logEl) return;
-      logEl.textContent += (line.line || line) + '\n';
-      logEl.scrollTop = logEl.scrollHeight;
-    });
-    const result = await window.sunday.installLocalTranscription();
-    installing = false;
-    if (result && result.ok) {
-      setTimeout(refreshTransUI, 400);
-    } else if (btn) {
-      btn.disabled = false; btn.textContent = 'Try again';
-    }
-  }
   refreshTransUI();
+  setInterval(refreshTransUI, 4000);
 
   $('#set-conn-test').addEventListener('click', async () => {
     const url = $('#set-http').value.trim().replace(/\/+$/, '');

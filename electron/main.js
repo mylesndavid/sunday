@@ -399,6 +399,17 @@ app.whenReady().then(() => {
   // Auto-start the ambient observer if the user left it on last time.
   if (prefs.onboarded && prefs.observer === true) startObserver();
 
+  // Auto-install local transcription in the background. Sunday's promise is
+  // self-hosted personal AI — audio shouldn't be leaving the Mac by default.
+  // OpenAI Whisper remains as silent fallback until local is ready.
+  if (prefs.onboarded) {
+    setTimeout(() => {
+      if (!localTranscriptionStatus().ready) {
+        installLocalTranscription(() => {}).catch(() => {});
+      }
+    }, 3000);
+  }
+
   if (prefs.onboarded && prefs.embeddedSatellite !== false) {
     satellite.start(prefs);
   }

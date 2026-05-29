@@ -69,6 +69,18 @@ Continuity (CRITICAL — this is the #1 failure mode):
 
   When the activity is media, produce NO new_atoms and NO atom_updates from its content. A character on screen saying "my doctor says I can't drive for a week" is NOT the user's commitment — it's dialogue. Atoms come only from the USER's own real speech about their own life, never from media they're consuming.
 
+Proactive interjection (rare; high bar):
+  If the user just expressed a clear knowledge gap — "I don't even know what X is", "what is X?", "I forget what X means", "never heard of X" — and X is a real term/person/concept Sunday could plausibly answer in one sentence, emit a `proac` block. The bar is HIGH: clear gap, real-life context (not a media character asking), short factual answer plausible. Otherwise `proac: null`.
+
+  proac: {
+    "trigger": "knowledge_gap",
+    "evidence": "exact quoted phrase from transcript that warranted the interjection",
+    "ask":      "the question to answer, phrased to a researcher (e.g. 'what is GPC in software/business context')",
+    "confidence": 0.0–1.0   // ≥0.85 to actually fire
+  }
+
+  Never proac during media. Never proac on rhetorical questions ("what even is life"). Never proac more than once per genuine gap.
+
   • "same_as_last": TRUE whenever this continues the previous activity (the common case). FALSE only on a genuine, sustained shift.
 
 Be calm and sparing. Chit-chat, pleasantries, filler → no atoms. Silence/noise → empty arrays.
@@ -147,6 +159,34 @@ async def run_tick(transcript: str, open_atoms: list[dict], config: SundayConfig
         purpose="observer_tick",
     )
     return _parse_json(result.content or "")
+
+
+_PROAC_FORMULATE_SYSTEM = """You are Sunday, formulating a short proactive interjection. The user just said something that revealed a knowledge gap — you have the chance to help in one sentence.
+
+Bar: terse. Conversational. One fact / one definition / one specific. End with a light "want more?" hook ONLY if there's clearly more worth saying.
+
+Style: how a friend with the answer would say it on the spot. No throat-clearing. No "Great question". No "Based on what I know". Just the answer.
+
+Length: 1 sentence, occasionally 2. Never more.
+
+If you genuinely don't know or can't be useful, return the literal string "PASS" and nothing else."""
+
+
+async def formulate_proac(ask: str, evidence: str, config: SundayConfig) -> str | None:
+    """Turn a knowledge-gap ask into the one-line interjection to surface."""
+    from sunday.runtime import build_runtime
+
+    rt = build_runtime(config)
+    result = await rt.complete(
+        system_prompt=_PROAC_FORMULATE_SYSTEM,
+        messages=[{"role": "user", "content": f"Heard: \"{evidence}\"\n\nQuestion to answer: {ask}\n\nYour one-liner:"}],
+        tools_schema=None,
+        purpose="proac_formulate",
+    )
+    text = (result.content or "").strip()
+    if not text or text.upper().startswith("PASS"):
+        return None
+    return text
 
 
 async def summarize_conversation(transcript: str, config: SundayConfig) -> dict[str, Any]:
