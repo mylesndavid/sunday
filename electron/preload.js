@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('sunday', {
   openSettings: () => ipcRenderer.invoke('sunday:open-settings'),
   requestScreen: () => ipcRenderer.invoke('sunday:request-screen'),
   requestControl: () => ipcRenderer.invoke('sunday:request-control'),
+  permissionsStatus: () => ipcRenderer.invoke('sunday:permissions-status'),
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
   notchMetrics: () => ipcRenderer.invoke('sunday:notch-metrics'),

@@ -603,14 +603,33 @@ function wire() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`); await loadAll(); flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
-  $('#set-screen-grant').addEventListener('click', async () => {
-    const s = $('#set-screen-status'); s.dataset.state = ''; s.textContent = 'requesting…';
+  // Permission widgets — read the truth from macOS directly. Buttons hide
+  // when already granted. Status updates every 2s so flipping a toggle in
+  // System Settings reflects here without a relaunch.
+  function applyPerm(kind, status) {
+    const statusEl = $(`#set-${kind}-status`);
+    const btn = $(`#set-${kind}-grant`);
+    if (!statusEl || !btn) return;
+    if (status === 'granted') {
+      statusEl.dataset.state = 'ok';
+      statusEl.textContent = '✓ already allowed';
+      btn.hidden = true;
+    } else {
+      statusEl.dataset.state = '';
+      statusEl.textContent = status === 'denied' ? 'denied in System Settings' : 'not granted yet';
+      btn.hidden = false;
+    }
+  }
+  async function refreshPerms() {
     try {
-      const r = await window.sunday.requestScreen();
-      if (r.status === 'granted') { s.dataset.state = 'ok'; s.textContent = '✓ already allowed'; }
-      else if (r.status === 'prompted') { s.textContent = 'enable “Sunday” in the window that opened, then relaunch'; }
-      else { s.dataset.state = 'fail'; s.textContent = `error: ${r.error || 'unknown'}`; }
-    } catch (err) { s.dataset.state = 'fail'; s.textContent = `error: ${err.message}`; }
+      const p = await window.sunday.permissionsStatus();
+      applyPerm('screen',  p.screen);
+      applyPerm('control', p.control);
+    } catch {}
+  }
+  $('#set-screen-grant').addEventListener('click', async () => {
+    try { await window.sunday.requestScreen(); } catch {}
+    setTimeout(refreshPerms, 600);
   });
   $('#mcp-save').addEventListener('click', async () => {
     const s = $('#mcp-status'); s.dataset.state = ''; s.textContent = 'connecting…';
@@ -629,14 +648,11 @@ function wire() {
   });
 
   $('#set-control-grant').addEventListener('click', async () => {
-    const s = $('#set-control-status'); s.dataset.state = ''; s.textContent = 'requesting…';
-    try {
-      const r = await window.sunday.requestControl();
-      if (r.status === 'granted') { s.dataset.state = 'ok'; s.textContent = '✓ already allowed'; }
-      else if (r.status === 'prompted') { s.textContent = 'enable “Sunday” in the window that opened, then relaunch'; }
-      else { s.dataset.state = 'fail'; s.textContent = `error: ${r.error || 'unknown'}`; }
-    } catch (err) { s.dataset.state = 'fail'; s.textContent = `error: ${err.message}`; }
+    try { await window.sunday.requestControl(); } catch {}
+    setTimeout(refreshPerms, 600);
   });
+  refreshPerms();
+  setInterval(refreshPerms, 2000);
   // section nav
   const links = Array.from(document.querySelectorAll('.set-nav a'));
   const stage = $('#set-stage');

@@ -260,20 +260,14 @@ ipcMain.handle('sunday:rewind-image', async (_evt, p) => {
   }
 });
 
-// Prompt for / open the macOS Accessibility grant so Sunday can control
-// other apps. isTrustedAccessibilityClient(true) adds Sunday to the list
-// and prompts; the satellite (a child of Sunday) inherits the grant.
+// Open the Accessibility pane. Calling isTrustedAccessibilityClient(true)
+// also asks macOS to register Sunday in the list with the system prompt.
+// Status is read separately via sunday:permissions-status — never inferred
+// from this handler's return value.
 ipcMain.handle('sunday:request-control', async () => {
-  try {
-    let trusted = false;
-    if (systemPreferences.isTrustedAccessibilityClient) {
-      trusted = systemPreferences.isTrustedAccessibilityClient(true);
-    }
-    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-    return { status: trusted ? 'granted' : 'prompted' };
-  } catch (err) {
-    return { status: 'error', error: String(err) };
-  }
+  try { systemPreferences.isTrustedAccessibilityClient(true); } catch {}
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+  return { ok: true };
 });
 
 ipcMain.handle('sunday:open-external', (_evt, url) => {
@@ -433,24 +427,30 @@ app.whenReady().then(() => {
   }
 });
 
-// Trigger the macOS Screen Recording permission prompt for Sunday.app.
-// desktopCapturer.getSources with a screen type forces the system to
-// register Sunday in System Settings → Screen Recording. Once granted,
-// the satellite child (responsible process = Sunday) can screencapture.
+// Permission status — read straight from macOS. Authoritative; never guesses.
+// Returns { screen, control, fullDisk } each ∈ 'granted' | 'denied' | 'not-determined'.
+ipcMain.handle('sunday:permissions-status', () => {
+  const screen = systemPreferences.getMediaAccessStatus
+    ? systemPreferences.getMediaAccessStatus('screen')
+    : 'not-determined';
+  const control = systemPreferences.isTrustedAccessibilityClient
+    ? (systemPreferences.isTrustedAccessibilityClient(false) ? 'granted' : 'not-determined')
+    : 'not-determined';
+  return { screen, control };
+});
+
+// Two separate actions — prompt the system to register Sunday (which puts it
+// in the right Privacy pane), then open that pane so the user can toggle it.
+// Status reads via sunday:permissions-status above; never via these handlers.
 ipcMain.handle('sunday:request-screen', async () => {
   try {
-    if (systemPreferences.getMediaAccessStatus) {
-      const status = systemPreferences.getMediaAccessStatus('screen');
-      if (status === 'granted') return { status: 'granted' };
-    }
+    // Forces macOS to register Sunday under Screen Recording. The actual
+    // capture call may fail (we ignore it); the side-effect of registration
+    // is the whole point.
     await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
-    // Open the pane so the user can flip the toggle if the prompt was
-    // dismissed or already-decided.
-    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
-    return { status: 'prompted' };
-  } catch (err) {
-    return { status: 'error', error: String(err) };
-  }
+  } catch { /* registration succeeded even if capture didn't — that's fine */ }
+  shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  return { ok: true };
 });
 
 app.on('window-all-closed', () => {
