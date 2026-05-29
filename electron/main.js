@@ -14,6 +14,7 @@
 // prefs (lets you override without re-onboarding).
 
 const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage, desktopCapturer, systemPreferences } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs   = require('node:fs');
 const os   = require('node:os');
@@ -391,6 +392,23 @@ app.whenReady().then(() => {
   createTray();
   startTrayStatus();   // live sub-agent count in the menu bar
   Menu.setApplicationMenu(null);
+
+  // Auto-update. Reads the Sparkle-compatible feed at the publish URL,
+  // downloads any new build in the background, and prompts the user to
+  // restart when ready. Because the build is code-signed with a stable
+  // Developer ID, the new build inherits ALL TCC grants (mic, screen
+  // recording, etc.) — no re-prompt loop on update.
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => { console.log('update available', info.version); });
+  autoUpdater.on('update-downloaded', (info) => {
+    // Show a tiny menu-bar nudge; install completes on next quit.
+    if (tray) tray.setToolTip(`Sunday update ready (${info.version}) — quit + reopen to apply`);
+  });
+  autoUpdater.on('error', (e) => { console.warn('updater error', e?.message); });
+  // Check at startup + every 4h.
+  setTimeout(() => autoUpdater.checkForUpdatesAndNotify().catch(() => {}), 8000);
+  setInterval(() => autoUpdater.checkForUpdatesAndNotify().catch(() => {}), 4 * 60 * 60 * 1000);
 
   // Own the satellite as a child process so its macOS TCC grants
   // (Screen Recording etc.) attribute to "Sunday", not a standalone

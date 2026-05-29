@@ -1,8 +1,8 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.0.54",
-  "description": "Sunday \u2014 a personal AI that knows you.",
+  "version": "0.1.0",
+  "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -10,9 +10,11 @@
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:mac:dmg": "electron-builder --mac dmg",
-    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config.mac.identity=null"
+    "dist:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --config.mac.identity=null",
+    "dist:mac:signed": "node build/ensure-secrets.js && electron-builder --mac --arm64"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.0"
   },
@@ -39,17 +41,11 @@
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
+          "arch": ["arm64"]
         },
         {
           "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
+          "arch": ["arm64"]
         }
       ],
       "hardenedRuntime": true,
@@ -61,12 +57,20 @@
         "NSCameraUsageDescription": "Sunday does not use the camera.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "notarize": false,
+      "identity": "Myles Iyabor-David (6PG9CR3SRN)",
+      "notarize": {
+        "teamId": "6PG9CR3SRN"
+      },
       "icon": "build/icon.icns"
+    },
+    "afterSign": "build/notarize.js",
+    "publish": {
+      "provider": "generic",
+      "url": "https://www.betterbotagent.com/sunday/"
     },
     "dmg": {
       "title": "Sunday ${version}",
-      "writeUpdateInfo": false,
+      "writeUpdateInfo": true,
       "contents": [
         {
           "x": 130,
@@ -94,5 +98,8 @@
         "to": "observer.py"
       }
     ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }
