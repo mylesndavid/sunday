@@ -35,55 +35,71 @@ $$('[data-back]').forEach((btn) => {
 
 // ─── step 2: pick node + test ──────────────────────────────────────────
 
+let chosenToken = '';
+
 function resolveDaemonURLs() {
   const choice = document.querySelector('input[name="node"]:checked').value;
   if (choice === 'local') {
-    chosenLabel = 'local · this Mac';
+    chosenLabel = 'on this Mac';
     chosenDaemonHttp = 'http://127.0.0.1:8765';
     chosenDaemonWs   = 'ws://127.0.0.1:8765/v1/ws';
+    chosenToken = '';   // filled from the local daemon's file at finish
   } else {
     const custom = $('#onb-custom-url').value.trim().replace(/\/+$/, '');
     if (!custom) { return null; }
     chosenLabel = `self-hosted · ${custom}`;
     chosenDaemonHttp = custom;
     chosenDaemonWs   = custom.replace(/^http/, 'ws') + '/v1/ws';
+    chosenToken = $('#onb-custom-token').value.trim();
   }
   return chosenDaemonHttp;
 }
 
 async function testConnection() {
+  const choice = document.querySelector('input[name="node"]:checked').value;
   const url = resolveDaemonURLs();
   if (!url) {
-    verifyEl.hidden = false;
-    verifyEl.dataset.state = 'fail';
+    verifyEl.hidden = false; verifyEl.dataset.state = 'fail';
     verifyEl.textContent = 'Enter a URL.';
     return;
   }
-
-  verifyEl.hidden = false;
-  verifyEl.dataset.state = 'pending';
-  verifyEl.textContent = `→ ${url}/v1/status …`;
-
+  if (choice === 'local') {
+    // The embedded daemon is already running locally. Skip straight to the
+    // one thing it needs from the user: an OpenRouter key.
+    showStep('key');
+    return;
+  }
+  // Self-hosted: verify reachable + token works.
+  verifyEl.hidden = false; verifyEl.dataset.state = 'pending';
+  verifyEl.textContent = `→ ${url}/v1/health …`;
   try {
-    const res = await fetch(`${url}/v1/status`);
+    const res = await fetch(`${url}/v1/status`, { headers: chosenToken ? { Authorization: `Bearer ${chosenToken}` } : {} });
+    if (res.status === 401) throw new Error('token rejected — check the auth token');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     verifyEl.dataset.state = 'ok';
-    const dev = (data.devices || []).length;
-    verifyEl.textContent = [
-      `✓ Sunday ${data.version} · ${data.model}`,
-      `  ${data.messages} messages · ${data.tools?.length || 0} tools · ${dev} satellite${dev === 1 ? '' : 's'}`,
-    ].join('\n');
+    verifyEl.textContent = `✓ Sunday ${data.version} · ${data.model}`;
     setTimeout(() => showStep('mic'), 800);
   } catch (err) {
     verifyEl.dataset.state = 'fail';
-    verifyEl.textContent = `✗ Couldn't reach ${url}: ${err.message}`;
+    verifyEl.textContent = `✗ ${err.message}`;
   }
 }
 $('#onb-test-conn').addEventListener('click', testConnection);
-$('#onb-custom-url').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') testConnection();
+$('#onb-custom-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') testConnection(); });
+
+// ─── step: OpenRouter key (local installs) ─────────────────────────────
+$('#onb-or-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://openrouter.ai/keys'); });
+$('#onb-save-key')?.addEventListener('click', async () => {
+  const v = $('#onb-key-verify');
+  const key = $('#onb-or-key').value.trim();
+  if (!key) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Paste your key first.'; return; }
+  v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Saving + starting Sunday…';
+  const r = await window.sunday.setOpenRouterKey(key);
+  if (r.ok) { v.dataset.state = 'ok'; v.textContent = '✓ Sunday is running locally.'; setTimeout(() => showStep('mic'), 800); }
+  else { v.dataset.state = 'fail'; v.textContent = `✗ ${r.error || 'failed'}`; }
 });
+$('#onb-or-key')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#onb-save-key').click(); });
 
 // ─── step 3: microphone permission ─────────────────────────────────────
 
@@ -161,10 +177,16 @@ showStep = (name) => {
 // ─── step 4: finish ────────────────────────────────────────────────────
 
 $('#onb-finish').addEventListener('click', async () => {
-  // Persist + tell main process to open the chat window
+  // For a local install, the token lives in the daemon's own file — grab it
+  // so the app authenticates against the embedded daemon.
+  let token = chosenToken;
+  if (!token && chosenDaemonHttp.includes('127.0.0.1')) {
+    try { token = (await window.sunday.localToken()).token || ''; } catch {}
+  }
   await window.sunday.finishOnboarding({
     daemonHttp: chosenDaemonHttp,
     daemonWs:   chosenDaemonWs,
+    daemonToken: token,
     label:      chosenLabel,
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -96,6 +96,10 @@
       {
         "from": "build/observer.py",
         "to": "observer.py"
+      },
+      {
+        "from": "build/daemon-dist/sunday-daemon",
+        "to": "sunday-daemon"
       }
     ]
   },

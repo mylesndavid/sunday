@@ -31,25 +31,27 @@
 
     <!-- Step 2: pick node -->
     <section class="onb-step" data-step="node" hidden>
-      <h1>Which Sunday are you connecting to?</h1>
+      <h1>Where does Sunday live?</h1>
       <p class="lede">
-        The Sunday daemon is her central nervous system — chat history, memory, the brain. It can
-        live on your laptop, on a VPS you control, or anywhere else you've installed her.
+        Sunday's brain — chat, memory, everything — runs <strong>entirely on this Mac</strong> by
+        default. Nothing about you goes to anyone else's server. (You can point her at a daemon
+        you've hosted elsewhere if you prefer.)
       </p>
 
       <fieldset class="onb-choices">
         <label class="onb-choice">
           <input type="radio" name="node" value="local" checked>
           <div>
-            <div class="t">Local — this Mac</div>
-            <div class="m"><code>http://127.0.0.1:8765</code> · for development</div>
+            <div class="t">On this Mac (recommended)</div>
+            <div class="m">Runs locally, built right into the app. Private by default.</div>
           </div>
         </label>
         <label class="onb-choice">
           <input type="radio" name="node" value="custom">
           <div>
-            <div class="t">Self-hosted URL</div>
+            <div class="t">A daemon I host elsewhere</div>
             <input type="text" id="onb-custom-url" placeholder="https://your-sunday.example.com" class="onb-input">
+            <input type="text" id="onb-custom-token" placeholder="auth token (from ~/.sunday/auth.token)" class="onb-input" style="margin-top:8px">
             <div class="m">A daemon you've deployed yourself (VPS, home server, Tailscale, …)</div>
           </div>
         </label>
@@ -59,7 +61,23 @@
 
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="welcome">Back</button>
-        <button class="onb-btn primary" id="onb-test-conn">Test connection</button>
+        <button class="onb-btn primary" id="onb-test-conn">Continue</button>
+      </div>
+    </section>
+
+    <!-- Step: the one key Sunday needs to think -->
+    <section class="onb-step" data-step="key" hidden>
+      <h1>One key to give her a brain.</h1>
+      <p class="lede">
+        Sunday talks to an LLM through <strong>OpenRouter</strong> — one key, any model. It's stored
+        only on this Mac. Grab a key at <a href="#" id="onb-or-link">openrouter.ai/keys</a>, paste it
+        below, and you're done.
+      </p>
+      <input type="password" id="onb-or-key" placeholder="sk-or-..." class="onb-input" autocomplete="off" spellcheck="false">
+      <div class="onb-verify" id="onb-key-verify" hidden></div>
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="node">Back</button>
+        <button class="onb-btn primary" id="onb-save-key">Save &amp; continue</button>
       </div>
     </section>
 

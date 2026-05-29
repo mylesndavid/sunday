@@ -51,7 +51,11 @@ function resolveDaemon() {
     daemonHttp: httpUrl,
     daemonWs:   process.env.SUNDAY_DAEMON_WS   || prefs.daemonWs   || 'ws://127.0.0.1:8765/v1/ws',
     daemonToken,
-    onboarded:  !!prefs.daemonToken && !!prefs.onboarded,   // not onboarded without a token
+    // Onboarded once we have BOTH a usable token (from prefs, or the local
+    // daemon's own file) AND the onboarding flag. The file-read covers a
+    // fresh local install where the embedded daemon minted the token but the
+    // user hasn't saved anything to prefs yet.
+    onboarded:  !!daemonToken && !!prefs.onboarded,
   };
 }
 
@@ -61,6 +65,61 @@ function resolveDaemon() {
 function _bearer() {
   const { daemonToken } = resolveDaemon();
   return daemonToken ? { 'Authorization': `Bearer ${daemonToken}` } : {};
+}
+
+// ── Embedded daemon ─────────────────────────────────────────────────────
+// Sunday is two pieces: this desktop UI + a Python daemon (the brain). We
+// ship the daemon as a PyInstaller binary inside the app so a fresh install
+// needs zero terminal — the app spawns it on launch when the configured
+// daemon is local. Remote daemons (a self-hosted VPS) are left alone.
+let daemonChild = null;
+
+function bundledDaemonBinary() {
+  const rel = app.isPackaged
+    ? path.join(process.resourcesPath, 'sunday-daemon', 'sunday-daemon')
+    : path.join(__dirname, 'build', 'daemon-dist', 'sunday-daemon', 'sunday-daemon');
+  return fs.existsSync(rel) ? rel : null;
+}
+
+function isLocalDaemon() {
+  const { daemonHttp } = resolveDaemon();
+  return /^http:\/\/(127\.0\.0\.1|localhost)/.test(daemonHttp);
+}
+
+async function daemonHealthy() {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    const res = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
+    return res.ok;
+  } catch { return false; }
+}
+
+async function startEmbeddedDaemon() {
+  if (daemonChild) return true;
+  if (!isLocalDaemon()) return false;          // remote daemon — not ours to run
+  if (await daemonHealthy()) return true;       // already running (dev `sunday start`)
+  const bin = bundledDaemonBinary();
+  if (!bin) { console.warn('no bundled daemon binary'); return false; }
+  console.log('spawning embedded daemon:', bin);
+  daemonChild = require('node:child_process').spawn(bin, [], {
+    stdio: 'ignore',
+    env: { ...process.env },
+    detached: false,
+  });
+  daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });
+  daemonChild.on('error', (e) => { console.warn('daemon spawn error', e?.message); daemonChild = null; });
+  // Wait up to ~20s for it to come up.
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await daemonHealthy()) { console.log('embedded daemon healthy'); return true; }
+  }
+  console.warn('embedded daemon never became healthy');
+  return false;
+}
+
+function stopEmbeddedDaemon() {
+  try { daemonChild?.kill('SIGTERM'); } catch {}
+  daemonChild = null;
 }
 
 let mainWindow = null;
@@ -190,6 +249,36 @@ ipcMain.on('sunday:notch-mode', (_evt, mode) => positionNotch(['idle', 'active',
 ipcMain.handle('sunday:config', () => {
   const { daemonHttp, daemonWs, daemonToken } = resolveDaemon();
   return { daemonHttp, daemonWs, daemonToken };
+});
+
+// Save the OpenRouter key to ~/.sunday/credentials.env (the daemon's
+// credential store), then restart the embedded daemon so it loads it.
+// Local-only — same machine writing a 0600 file.
+ipcMain.handle('sunday:set-openrouter-key', async (_evt, key) => {
+  const k = String(key || '').trim();
+  if (!k) return { ok: false, error: 'empty key' };
+  try {
+    const dir = path.join(os.homedir(), '.sunday');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'credentials.env');
+    let lines = [];
+    try { lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() && !l.startsWith('OPENROUTER_API_KEY=')); } catch {}
+    lines.push(`OPENROUTER_API_KEY=${k}`);
+    fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+    // Restart embedded daemon so it reloads credentials.
+    if (daemonChild) { stopEmbeddedDaemon(); await new Promise((r) => setTimeout(r, 800)); }
+    await startEmbeddedDaemon();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e?.message || String(e) }; }
+});
+
+// The local daemon's auth token (read from its file). Used by onboarding to
+// persist the token into prefs for a local install.
+ipcMain.handle('sunday:local-token', () => {
+  try {
+    const p = path.join(os.homedir(), '.sunday', 'auth.token');
+    return { token: fs.existsSync(p) ? fs.readFileSync(p, 'utf8').trim() : '' };
+  } catch { return { token: '' }; }
 });
 
 ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label, daemonToken }) => {
@@ -438,6 +527,11 @@ function rebuildTrayMenu() {
 }
 
 app.whenReady().then(() => {
+  // Spawn the embedded daemon first thing (fire-and-forget) so it's coming
+  // up while the UI loads. Local installs get the brain with no terminal;
+  // remote daemons skip this.
+  startEmbeddedDaemon().catch(() => {});
+
   const { onboarded } = resolveDaemon();
   if (!onboarded) {
     createOnboardingWindow();
@@ -575,6 +669,7 @@ app.on('before-quit', () => {
   satellite.stop();
   stopNotchHud();
   stopObserver();
+  stopEmbeddedDaemon();
 });
 
 // ── ambient observer ──────────────────────────────────────────────────────

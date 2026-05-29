@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('sunday', {
   getConfig: () => ipcRenderer.invoke('sunday:config'),
   saveConnection: (cfg) => ipcRenderer.invoke('sunday:save-connection', cfg),
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
+  setOpenRouterKey: (key) => ipcRenderer.invoke('sunday:set-openrouter-key', key),
+  localToken: () => ipcRenderer.invoke('sunday:local-token'),
   openSettings: () => ipcRenderer.invoke('sunday:open-settings'),
   requestScreen: () => ipcRenderer.invoke('sunday:request-screen'),
   requestControl: () => ipcRenderer.invoke('sunday:request-control'),
