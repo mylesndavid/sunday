@@ -632,8 +632,9 @@ app.whenReady().then(() => {
   const prefs = loadPrefs();
   // Auto-start the ambient observer if the user left it on last time.
   if (prefs.onboarded && prefs.observer === true) startObserver();
-  // "Hey Sunday" wake word — on by default once onboarded (opt out via prefs.wake).
-  if (prefs.onboarded && prefs.wake !== false) startWake();
+  // "Hey Sunday" wake word — opt-in (prefs.wake === true). Off unless you turn
+  // it on, so nothing always-listens without you choosing it. VAD-gated when on.
+  if (prefs.onboarded && prefs.wake === true) startWake();
 
   // Auto-install local transcription in the background. Sunday's promise is
   // self-hosted personal AI — audio shouldn't be leaving the Mac by default.
