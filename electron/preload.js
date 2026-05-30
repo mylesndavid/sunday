@@ -39,9 +39,11 @@ contextBridge.exposeInMainWorld('sunday', {
   observerSet: (on) => ipcRenderer.invoke('sunday:observer-set', !!on),
   transcriptionStatus: () => ipcRenderer.invoke('sunday:transcription-status'),
   installLocalTranscription: () => ipcRenderer.invoke('sunday:install-local-transcription'),
-  meetingStart: () => ipcRenderer.invoke('sunday:meeting-start'),
-  meetingStop: () => ipcRenderer.invoke('sunday:meeting-stop'),
+  meetingBegin: () => ipcRenderer.invoke('sunday:meeting-begin'),
+  meetingChunk: (track, bytes) => ipcRenderer.invoke('sunday:meeting-chunk', track, bytes),
+  meetingFinalize: () => ipcRenderer.invoke('sunday:meeting-finalize-now'),
   meetingState: () => ipcRenderer.invoke('sunday:meeting-state'),
   meetingAudio: (cid) => ipcRenderer.invoke('sunday:meeting-audio', cid),
+  onMeetingStopNow: (h) => ipcRenderer.on('sunday:meeting-stop-now', () => h()),
   onInstallLog: (handler) => ipcRenderer.on('sunday:install-log', (_evt, line) => handler(line)),
 });

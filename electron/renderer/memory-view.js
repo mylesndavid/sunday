@@ -163,23 +163,73 @@ async function openMeetingView(cid) {
   }
 }
 
+// Capture state lives here in the main renderer — getDisplayMedia (system
+// audio) needs the user gesture from THIS button click, which a hidden
+// window doesn't have.
+let _mtgSysStream = null, _mtgMicStream = null, _mtgSysRec = null, _mtgMicRec = null;
+
 async function toggleMeetingRecording() {
   const btn = document.getElementById('mtg-rec-btn');
   const subEl = document.getElementById('mtg-rec-sub');
   btn.disabled = true;
   try {
     if (!_mtgRecording) {
-      const r = await window.sunday.meetingStart();
-      if (r.ok) setMeetingRecordingUI(true, Date.now());
-      else subEl.textContent = `Couldn't start: ${r.error || 'unknown'}`;
+      // Acquire BOTH streams first (user gesture is live right now).
+      let sysTrack = null, micErr = null, sysErr = null;
+      try {
+        _mtgSysStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        _mtgSysStream.getVideoTracks().forEach((t) => t.stop());
+        sysTrack = _mtgSysStream.getAudioTracks()[0] || null;
+      } catch (e) { sysErr = e.name || String(e); }
+      try {
+        _mtgMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) { micErr = e.name || String(e); }
+
+      if (!sysTrack && !_mtgMicStream) {
+        subEl.textContent = `Couldn't capture audio (system: ${sysErr || 'none'}, mic: ${micErr || 'none'}). Grant Screen Recording + Microphone in Permissions.`;
+        return;
+      }
+      // Tell main to set up files.
+      const begin = await window.sunday.meetingBegin();
+      if (!begin.ok) { subEl.textContent = `Couldn't start: ${begin.error}`; return; }
+      // Stream each track to main.
+      if (sysTrack) _mtgSysRec = recordTrack(new MediaStream([sysTrack]), 'system');
+      if (_mtgMicStream) _mtgMicRec = recordTrack(_mtgMicStream, 'mic');
+      setMeetingRecordingUI(true, Date.now());
+      if (!sysTrack) subEl.textContent = 'Note: system audio not captured (only your mic). Grant Screen Recording for both sides.';
     } else {
-      setMeetingRecordingUI(false);
-      document.getElementById('mtg-rec-title').textContent = 'Writing your notes…';
-      const r = await window.sunday.meetingStop();
-      if (r.ok) { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; loadMeetings(); }
-      else subEl.textContent = `Stopped — ${r.error || 'no notes produced'}.`;
+      await stopAndFinalizeMeeting();
     }
   } finally { btn.disabled = false; }
+}
+
+function recordTrack(stream, label) {
+  let mr;
+  try { mr = new MediaRecorder(stream, { mimeType: 'audio/webm' }); }
+  catch { mr = new MediaRecorder(stream); }
+  mr.ondataavailable = async (e) => {
+    if (!e.data || !e.data.size) return;
+    try { const buf = await e.data.arrayBuffer(); await window.sunday.meetingChunk(label, new Uint8Array(buf)); } catch {}
+  };
+  mr.start(4000);
+  return mr;
+}
+
+async function stopAndFinalizeMeeting() {
+  setMeetingRecordingUI(false);
+  document.getElementById('mtg-rec-title').textContent = 'Writing your notes…';
+  // Stop recorders + tracks, flush.
+  for (const mr of [_mtgSysRec, _mtgMicRec]) { try { mr && mr.state !== 'inactive' && mr.stop(); } catch {} }
+  for (const s of [_mtgSysStream, _mtgMicStream]) { try { s && s.getTracks().forEach((t) => t.stop()); } catch {} }
+  _mtgSysRec = _mtgMicRec = _mtgSysStream = _mtgMicStream = null;
+  await new Promise((r) => setTimeout(r, 700));   // let last chunks land
+  const r = await window.sunday.meetingFinalize();
+  if (r.ok) { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; loadMeetings(); }
+  else { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; document.getElementById('mtg-rec-sub').textContent = `Stopped — ${r.error || 'no notes produced'}.`; }
+}
+// The notch's stop-request comes here.
+if (window.sunday && window.sunday.onMeetingStopNow) {
+  window.sunday.onMeetingStopNow(() => { if (_mtgRecording) stopAndFinalizeMeeting(); });
 }
 
 let _convShowAll = false;
