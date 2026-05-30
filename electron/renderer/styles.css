@@ -211,6 +211,30 @@ textarea#composer::placeholder { color: var(--text-3); }
 .send-btn:active:not(:disabled) { transform: scale(0.9); }
 .send-btn:disabled { background: var(--surface-3); color: var(--text-3); cursor: default; }
 
+/* Stop pill — sits above the composer while a task is running. */
+.stop-pill {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 0 auto 8px; padding: 6px 14px;
+  background: var(--surface); color: var(--text-2);
+  border: 1px solid var(--line-strong); border-radius: var(--r-pill);
+  font: 600 12px/1 var(--font-sans); cursor: pointer;
+  box-shadow: var(--shadow-1);
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.stop-pill { position: relative; left: 50%; transform: translateX(-50%); }
+.stop-pill:hover:not(:disabled) { background: var(--error-tint); color: var(--error); border-color: var(--error); }
+.stop-pill:active:not(:disabled) { transform: translateX(-50%) scale(0.96); }
+.stop-pill[hidden] { display: none; }
+
+/* Steering bubble — a message you sent mid-task; folded into the live loop. */
+.msg.user.steer .bubble { opacity: 0.92; box-shadow: inset 3px 0 0 var(--accent); }
+.msg.user.steer .bubble::after {
+  content: 'steering'; display: block; margin-top: 4px;
+  font: 600 10px/1 var(--font-sans); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--accent-press); opacity: 0.8;
+}
+
 /* ── MEMORY ───────────────────────────────────────────────────────────── */
 .view-memory { flex-direction: row; }
 .mem-stage { position: relative; flex: 1 1 auto; overflow: hidden; background: radial-gradient(circle at 50% 40%, var(--surface) 0%, var(--bg-2) 100%); }
@@ -743,6 +767,10 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
   background: var(--bg); overflow-y: auto;
   display: flex; flex-direction: column;
 }
+/* Without this, the class's display:flex overrides the [hidden] attribute, so
+   the detail overlay never hides — it sat on top of the record card + list,
+   which is why the Meetings tab looked dead ("can't start a meeting"). */
+.mtg-view[hidden] { display: none; }
 .mtg-view-bar {
   position: sticky; top: 0; z-index: 1;
   display: flex; align-items: center; gap: 14px;

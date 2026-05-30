@@ -129,7 +129,7 @@ function connectWs() {
 let stream = null;
 function handleWs(ev) {
   switch (ev.type) {
-    case 'stream_start': stream = beginStream(ev); return;
+    case 'stream_start': stream = beginStream(ev); showStop(true); return;
     case 'reasoning_delta':
       if (stream && stream.id === ev.stream_id) { stream.reason += (ev.content || ''); showThinking(stream); autoScroll(); }
       return;
@@ -142,7 +142,7 @@ function handleWs(ev) {
       if (stream && stream.id === ev.stream_id) finishToolRow(stream, ev); return;
     case 'stream_end':
       if (stream && stream.id === ev.stream_id) stream.el.classList.remove('streaming');
-      stream = null; refreshLog(); refreshStatus(); return;
+      stream = null; showStop(false); refreshLog(); refreshStatus(); return;
     case 'reply': if (!stream) refreshLog(); return;
     case 'browser_frame': case 'device_browser_frame': case 'device_screen': showLiveFrame(ev); return;
     case 'device_online': case 'device_offline': refreshStatus(); return;
@@ -404,6 +404,12 @@ async function send() {
     const res = await fetch(`${DAEMON_HTTP}/v1/say`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const d = await res.json();
     if (!res.ok) { appendMessage({ role: 'system', content: `Error: ${d.error || res.status}`, created_at: Date.now() / 1000 }); scrollToEnd(); return; }
+    // Typed while a task was running → the daemon folded it in as steering
+    // (not a new turn). Do NOT refreshLog here: the steer isn't in the server
+    // log until the next step, and a rebuild would tear down the live thinking
+    // stream and drop this bubble. Keep the bubble (tagged "steering"); the
+    // stream_end refreshLog reconciles it with the real message later.
+    if (d.steered) { w.classList.add('steer'); scrollToEnd(); return; }
     setTimeout(refreshLog, 50);
   } catch (err) { appendMessage({ role: 'system', content: `Network error: ${err.message}`, created_at: Date.now() / 1000 }); scrollToEnd(); }
 }
@@ -449,6 +455,16 @@ function startVoice() {
 function updateSend() { sendBtn.disabled = !(composerEl.value.trim() || pending.length); }
 function resize() { composerEl.style.height = 'auto'; composerEl.style.height = Math.min(composerEl.scrollHeight, 200) + 'px'; }
 sendBtn.addEventListener('click', send);
+
+// Stop the running task. Shown only while a stream is live (see handleWs).
+const stopBtn = $('#stop-btn');
+function showStop(on) { if (stopBtn) stopBtn.hidden = !on; }
+stopBtn?.addEventListener('click', async () => {
+  stopBtn.disabled = true;
+  try { await fetch(`${DAEMON_HTTP}/v1/task/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch {}
+  finally { stopBtn.disabled = false; }
+});
 composerEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
 composerEl.addEventListener('input', () => { resize(); updateSend(); });
 attachBtn.addEventListener('click', () => fileInput.click());
