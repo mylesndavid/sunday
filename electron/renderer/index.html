@@ -34,9 +34,6 @@
         <button id="connectors-btn" class="iconbtn" title="Connectors" aria-label="Connectors">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
         </button>
-        <button id="meeting-btn" class="iconbtn" title="Record meeting" aria-label="Record meeting">
-          <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg>
-        </button>
         <input id="file-input" type="file" multiple hidden>
         <textarea id="composer" rows="1" placeholder="Message Sunday…" aria-label="Message"></textarea>
         <button id="mic-btn" class="iconbtn" title="Voice (one-shot)" aria-label="Voice">
@@ -58,6 +55,9 @@
       </button>
       <button class="mem-subtab" data-mempane="conversations">
         Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
+      </button>
+      <button class="mem-subtab" data-mempane="meetings">
+        Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
       </button>
     </nav>
     <div class="mem-stage" id="mem-pane-map">
@@ -103,6 +103,20 @@
         <p>Turn on the ambient observer in Settings and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
       </div>
       <ul class="conv-list" id="conv-list"></ul>
+    </div>
+    <div class="atoms-pane" id="mem-pane-meetings" hidden>
+      <div class="mtg-record">
+        <div class="mtg-record-info">
+          <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
+          <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
+        </div>
+        <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
+      </div>
+      <ul class="conv-list" id="mtg-list"></ul>
+      <div class="atoms-empty" id="mtg-empty" hidden>
+        <h2>No meetings yet</h2>
+        <p>Hit Start recording before your next call. Sunday captures both sides, writes you Granola-style notes, and turns the action items into things she tracks.</p>
+      </div>
     </div>
   </section>
 

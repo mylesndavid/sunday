@@ -548,42 +548,8 @@ connBtn.addEventListener('click', (e) => {
   connPopOpen ? closeConnPop() : openConnPop();
 });
 
-// ── meeting record button ───────────────────────────────────────────────
-const meetingBtn = $('#meeting-btn');
-let meetingRecording = false;
-async function refreshMeetingBtn() {
-  try { meetingRecording = !!(await window.sunday.meetingState()).recording; } catch {}
-  meetingBtn.dataset.active = meetingRecording ? 'true' : 'false';
-  meetingBtn.title = meetingRecording ? 'Stop recording' : 'Record meeting';
-}
-meetingBtn?.addEventListener('click', async () => {
-  meetingBtn.disabled = true;
-  try {
-    if (!meetingRecording) {
-      const r = await window.sunday.meetingStart();
-      if (!r.ok) { addSystemNote(`Couldn't start recording: ${r.error || 'unknown'}`); }
-      else { meetingRecording = true; addSystemNote('🔴 Recording the meeting — both sides. Tap again to stop.'); }
-    } else {
-      addSystemNote('Wrapping up the meeting + writing your notes…');
-      const r = await window.sunday.meetingStop();
-      meetingRecording = false;
-      if (r.ok && r.notes) {
-        addSystemNote(`✓ ${r.notes.title}\n\n${r.notes.tldr}`);
-        refreshLog();   // the meeting Conversation + atoms are now stored
-      } else {
-        addSystemNote(`Recording stopped — ${r.error || 'no notes produced'}.`);
-      }
-    }
-  } finally { meetingBtn.disabled = false; refreshMeetingBtn(); }
-});
-// Lightweight inline system note in the chat stream.
-function addSystemNote(text) {
-  const el = document.createElement('div');
-  el.className = 'msg sunday';
-  el.innerHTML = `<div class="bubble">${text.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c])).replace(/\n/g, '<br>')}</div>`;
-  chatEl.appendChild(el); autoScroll();
-}
-refreshMeetingBtn();
+// Meeting mode lives in Memory → Meetings now — not the composer, not the
+// main chat. (See memory-view.js.)
 
 connPopQ.addEventListener('input', (e) => renderConnPop(e.target.value));
 

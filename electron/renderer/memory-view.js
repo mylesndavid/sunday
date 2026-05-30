@@ -54,16 +54,105 @@ function switchSubtab(name) {
   const detail = document.getElementById('mem-detail');
   const atoms = document.getElementById('mem-pane-atoms');
   const convs = document.getElementById('mem-pane-conversations');
+  const mtgs = document.getElementById('mem-pane-meetings');
+  const hideAll = () => { map.hidden = true; detail.hidden = true; atoms.hidden = true; convs.hidden = true; mtgs.hidden = true; };
   if (name === 'atoms') {
-    map.hidden = true; detail.hidden = true; atoms.hidden = false; convs.hidden = true;
-    loadAtoms();
+    hideAll(); atoms.hidden = false; loadAtoms();
   } else if (name === 'conversations') {
-    map.hidden = true; detail.hidden = true; atoms.hidden = true; convs.hidden = false;
-    loadConversations();
+    hideAll(); convs.hidden = false; loadConversations();
+  } else if (name === 'meetings') {
+    hideAll(); mtgs.hidden = false; loadMeetings();
   } else {
-    atoms.hidden = true; convs.hidden = true; map.hidden = false;
+    hideAll(); map.hidden = false;
     // mem-detail visibility is owned by selectNode; leave it alone
   }
+}
+
+// ── Meetings tab ─────────────────────────────────────────────────────────
+let _mtgRecording = false;
+let _mtgTimer = null;
+function fmtElapsed(secs) {
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+async function loadMeetings() {
+  const btn = document.getElementById('mtg-rec-btn');
+  const titleEl = document.getElementById('mtg-rec-title');
+  const subEl = document.getElementById('mtg-rec-sub');
+  // Wire the record button once.
+  if (btn && !btn.dataset.wired) {
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', () => toggleMeetingRecording());
+  }
+  // Reflect current recording state.
+  try {
+    const st = await window.sunday.meetingState();
+    setMeetingRecordingUI(!!st.recording, st.since);
+  } catch {}
+  // List past meetings (conversations with category=meeting).
+  const list = document.getElementById('mtg-list');
+  const empty = document.getElementById('mtg-empty');
+  const cb = document.getElementById('mem-mtg-count');
+  try {
+    const d = await (await fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&category=meeting`)).json();
+    const mtgs = (d.conversations || []);
+    if (cb) { if (mtgs.length) { cb.textContent = mtgs.length; cb.hidden = false; } else cb.hidden = true; }
+    if (!mtgs.length) { empty.hidden = false; list.innerHTML = ''; return; }
+    empty.hidden = true;
+    list.innerHTML = mtgs.map((c) => `
+      <li class="conv-card" data-cid="${c.id}">
+        <div class="conv-head"><div class="c-title">${esc(c.title || 'Meeting')}</div><div class="c-time">${esc(fmtTime(c.started_at))}</div></div>
+        <div class="conv-summary">${esc(c.summary || '').replace(/\n/g, '<br>')}</div>
+        <details class="conv-transcript"><summary>Show transcript</summary><pre data-loaded="false">loading…</pre></details>
+      </li>`).join('');
+    list.querySelectorAll('.conv-card').forEach((card) => {
+      const det = card.querySelector('details'); const pre = det.querySelector('pre');
+      det.addEventListener('toggle', async () => {
+        if (!det.open || pre.dataset.loaded === 'true') return;
+        pre.dataset.loaded = 'true';
+        try { const c = await (await fetch(`${cfg.daemonHttp}/v1/conversations/${card.dataset.cid}`)).json(); pre.textContent = c.transcript || '(no transcript)'; }
+        catch (e) { pre.textContent = `(error: ${e.message})`; }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load: ${esc(e.message)}</div></li>`;
+  }
+}
+function setMeetingRecordingUI(recording, since) {
+  _mtgRecording = recording;
+  const btn = document.getElementById('mtg-rec-btn');
+  const titleEl = document.getElementById('mtg-rec-title');
+  const subEl = document.getElementById('mtg-rec-sub');
+  if (_mtgTimer) { clearInterval(_mtgTimer); _mtgTimer = null; }
+  if (recording) {
+    btn.textContent = 'Stop recording'; btn.dataset.recording = 'true';
+    const start = since ? since : Date.now();
+    const tick = () => { titleEl.textContent = `● Recording — ${fmtElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)))}`; };
+    tick(); _mtgTimer = setInterval(tick, 1000);
+    subEl.textContent = 'Both sides, on this Mac. Stop when the meeting ends and your notes will appear below.';
+  } else {
+    btn.textContent = 'Start recording'; btn.dataset.recording = 'false';
+    titleEl.textContent = 'Record a meeting';
+    subEl.textContent = 'Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.';
+  }
+}
+async function toggleMeetingRecording() {
+  const btn = document.getElementById('mtg-rec-btn');
+  const subEl = document.getElementById('mtg-rec-sub');
+  btn.disabled = true;
+  try {
+    if (!_mtgRecording) {
+      const r = await window.sunday.meetingStart();
+      if (r.ok) setMeetingRecordingUI(true, Date.now());
+      else subEl.textContent = `Couldn't start: ${r.error || 'unknown'}`;
+    } else {
+      setMeetingRecordingUI(false);
+      document.getElementById('mtg-rec-title').textContent = 'Writing your notes…';
+      const r = await window.sunday.meetingStop();
+      if (r.ok) { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; loadMeetings(); }
+      else subEl.textContent = `Stopped — ${r.error || 'no notes produced'}.`;
+    }
+  } finally { btn.disabled = false; }
 }
 
 let _convShowAll = false;
