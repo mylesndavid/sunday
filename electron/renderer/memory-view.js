@@ -76,6 +76,12 @@ function fmtElapsed(secs) {
   return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 async function loadMeetings() {
+  // Always land on the record card + list — never a stuck detail overlay. The
+  // pop-out (mtg-view) only re-hid itself on its own Exit, so opening one
+  // meeting and switching tabs left it covering the whole pane (no record
+  // button, "can't start a meeting"). Reset it on every entry.
+  const mtgView = document.getElementById('mtg-view');
+  if (mtgView) mtgView.hidden = true;
   const btn = document.getElementById('mtg-rec-btn');
   const titleEl = document.getElementById('mtg-rec-title');
   const subEl = document.getElementById('mtg-rec-sub');
@@ -227,6 +233,17 @@ async function stopAndFinalizeMeeting() {
   if (r.ok) { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; loadMeetings(); }
   else { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; document.getElementById('mtg-rec-sub').textContent = `Stopped — ${r.error || 'no notes produced'}.`; }
 }
+// Tray "Start/Stop meeting" lands here. Main calls this via executeJavaScript
+// with the userGesture flag set, so getDisplayMedia's transient-activation
+// requirement is satisfied even though the click was in the menu bar. Brings
+// the Meetings tab forward first so you can see the recording state.
+window.__sundayTrayMeeting = async function () {
+  try { switchSubtab('meetings'); } catch {}
+  // Make sure the record card is wired + state is fresh, then toggle.
+  try { await loadMeetings(); } catch {}
+  return toggleMeetingRecording();
+};
+
 // The notch's stop-request comes here.
 if (window.sunday && window.sunday.onMeetingStopNow) {
   window.sunday.onMeetingStopNow(() => { if (_mtgRecording) stopAndFinalizeMeeting(); });

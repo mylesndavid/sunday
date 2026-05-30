@@ -504,6 +504,23 @@ function updateMenuItem() {
   }
 }
 
+// Start (or stop) a meeting straight from the menu bar. getDisplayMedia needs
+// transient activation, which a tray click doesn't give the renderer — so we
+// run the renderer entrypoint via executeJavaScript with userGesture=true,
+// which supplies it. Brings the window forward so the recording state is visible.
+function triggerTrayMeeting() {
+  if (!mainWindow) { createMainWindow(); }
+  try { mainWindow.show(); mainWindow.focus(); } catch { /* window gone */ }
+  switchToView('memory');   // surface the Meetings tab so the state is visible
+  const run = () => {
+    mainWindow.webContents
+      .executeJavaScript('window.__sundayTrayMeeting && window.__sundayTrayMeeting()', true)
+      .catch(() => {});
+  };
+  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', run);
+  else run();
+}
+
 function rebuildTrayMenu() {
   if (!tray) return;
   const { daemonHttp, onboarded } = resolveDaemon();
@@ -516,6 +533,9 @@ function rebuildTrayMenu() {
     { label: 'Chat',     accelerator: 'Command+1', click: () => switchToView('chat') },
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
     { label: 'Settings…', accelerator: 'Command+,', click: () => switchToView('settings') },
+    { type: 'separator' },
+    { label: meetingRecording ? '■  Stop meeting' : '●  Start a meeting',
+      click: () => triggerTrayMeeting() },
     { type: 'separator' },
     { label: notchHudChild ? 'Hide notch HUD' : 'Show notch HUD', click: () => {
         if (notchHudChild) { stopNotchHud(); savePrefs({ hud: false }); }
@@ -1028,6 +1048,7 @@ function beginMeeting() {
   fs.mkdirSync(meetingDir, { recursive: true });
   meetingStartedAt = Date.now();
   meetingRecording = true;
+  if (tray) rebuildTrayMenu();   // flip the tray item to "Stop meeting"
   meetingStreams = {
     system: fs.createWriteStream(path.join(meetingDir, 'system.webm')),
     mic: fs.createWriteStream(path.join(meetingDir, 'mic.webm')),
@@ -1086,6 +1107,7 @@ async function finalizeMeeting() {
   const dir = meetingDir;
   const startedAt = meetingStartedAt;
   meetingRecording = false;
+  if (tray) rebuildTrayMenu();   // flip the tray item back to "Start a meeting"
   // Close the webm streams (the renderer has already stopped sending chunks).
   try { meetingStreams.system.end(); meetingStreams.mic.end(); } catch {}
   await new Promise((r) => setTimeout(r, 500));
