@@ -13,7 +13,17 @@
 // Env vars SUNDAY_DAEMON_HTTP / SUNDAY_DAEMON_WS, when set, win over saved
 // prefs (lets you override without re-onboarding).
 
-const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage, desktopCapturer, systemPreferences } = require('electron');
+const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, shell, nativeImage, desktopCapturer, systemPreferences, nativeTheme } = require('electron');
+
+// Window chrome follows the macOS appearance so dark mode has no light flash
+// and the hidden-inset titlebar strip matches. Mirrors theme.css's --bg tokens.
+function windowBg() { return nativeTheme.shouldUseDarkColors ? '#191612' : '#fbfaf7'; }
+// Live-update open windows when the system flips light/dark (the CSS flips
+// instantly via prefers-color-scheme; this keeps the native titlebar strip in step).
+nativeTheme.on('updated', () => {
+  const bg = windowBg();
+  for (const w of BrowserWindow.getAllWindows()) { try { w.setBackgroundColor(bg); } catch { /* gone */ } }
+});
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs   = require('node:fs');
@@ -133,7 +143,7 @@ function createMainWindow() {
     height: 720,
     minWidth: 540,
     minHeight: 480,
-    backgroundColor: '#fbfaf7',
+    backgroundColor: windowBg(),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
@@ -396,7 +406,7 @@ function createOnboardingWindow() {
     height: 620,
     minWidth: 540,
     minHeight: 480,
-    backgroundColor: '#fbfaf7',
+    backgroundColor: windowBg(),
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     resizable: true,

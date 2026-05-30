@@ -74,6 +74,61 @@
   --topbar-h: 52px;
 }
 
+/* Dark mode — follows the macOS appearance automatically (no toggle). Same
+ * warm-paper system, inverted onto a warm near-black base (not pure #000, so
+ * shadows still read). The amber sun stays the single accent, lifted slightly
+ * for contrast on dark. Every view reads these tokens, so the whole UI flips. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* warm near-black neutrals */
+    --bg:          #191612;
+    --bg-2:        #201c17;
+    --surface:     #232019;
+    --surface-2:   #2b2620;
+    --surface-3:   #342e27;
+    --line:        #353029;
+    --line-strong: #463f36;
+
+    /* warm paper ink, inverted */
+    --text:        #f3efe7;
+    --text-2:      #b6ae9f;
+    --text-3:      #837b6d;
+    --text-on-accent: #2a1d08;
+
+    /* accent: amber (the sun), lifted for dark */
+    --accent:      #f0a23e;
+    --accent-hi:   #f6b257;
+    --accent-press:#d4882a;
+    --accent-tint: #382916;     /* warm amber wash for active/hover fills */
+    --accent-line: #6a4f25;
+
+    /* sent bubble: warm amber, dark ink */
+    --bubble-out:      #e8983a;
+    --bubble-out-hi:   #f0a64c;
+    --bubble-out-text: #2a1c05;
+    /* received bubble: warm dark gray */
+    --bubble-in:       #2e2922;
+    --bubble-in-text:  #f3efe7;
+
+    /* functional, tuned for dark */
+    --ok:     #5cb878;  --ok-tint:#1d2f23;
+    --warn:   #d59a3e;
+    --error:  #e0705a;  --error-tint:#3a221d;
+
+    /* graph categories: lifted to read on dark */
+    --g-person: #f0a23e;  --g-pet:    #e88468;  --g-place:  #66b3a1;
+    --g-org:    #7d9ad8;  --g-project:#a78fd6;  --g-thing:  #c6a368;
+    --g-event:  #df7ba6;  --g-topic:  #9aab6a;
+
+    /* shadows go to true-black on dark (the surface already carries the warmth) */
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.42);
+    --shadow-3: 0 14px 40px rgba(0, 0, 0, 0.55);
+  }
+  ::-webkit-scrollbar-thumb { background: var(--line-strong); }
+  ::-webkit-scrollbar-thumb:hover { background: #5a5249; }
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 body {
