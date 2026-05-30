@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Sunday — one-line install for the desktop app.
 #
-# Downloads the latest signed-by-no-one DMG from GitHub Releases, mounts it,
-# copies Sunday.app to /Applications, and strips the quarantine flag so macOS
-# doesn't yell about an unidentified developer on first launch.
+# Downloads the latest DMG from GitHub Releases, mounts it, copies Sunday.app
+# to /Applications, and clears the quarantine flag. The app is signed and
+# notarized, so the quarantine strip is just belt-and-suspenders.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/mylesndavid/sunday/main/install.sh | bash
@@ -40,9 +40,15 @@ note "Downloading …"
 curl -fL --progress-bar "$url" -o "$dmg"
 
 note "Mounting …"
-mount_out="$(hdiutil attach -nobrowse -quiet "$dmg")"
-mountpoint="$(echo "$mount_out" | tail -n1 | awk '{ $1=""; $2=""; sub(/^  */,""); print }')"
-[[ -d "$mountpoint" ]] || fail "Could not locate mount point."
+# Mount to a path we control. Parsing hdiutil's table output is fragile — the
+# volume is titled "Sunday <version>" (spaces), and -quiet suppresses the table
+# entirely, which is what produced "Could not locate mount point."
+mountpoint="$tmp/mnt"
+mkdir -p "$mountpoint"
+hdiutil attach -nobrowse -noverify -noautoopen -mountpoint "$mountpoint" "$dmg" >/dev/null \
+  || fail "Failed to mount the disk image."
+trap 'hdiutil detach -quiet "$mountpoint" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+[[ -d "$mountpoint/$APP" ]] || fail "Mounted image but ${APP} wasn't inside it."
 
 if [[ -d "$DEST" ]]; then
   note "Replacing existing ${DEST} …"
@@ -52,7 +58,7 @@ fi
 note "Copying ${APP} to /Applications …"
 cp -R "$mountpoint/$APP" "$DEST"
 
-hdiutil detach -quiet "$mountpoint" || true
+hdiutil detach -quiet "$mountpoint" 2>/dev/null || true
 
 # Unsigned build — strip Gatekeeper's quarantine attribute so it launches
 # without the "Sunday is damaged / can't be opened" dialog. Notarization is
