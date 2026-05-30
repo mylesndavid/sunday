@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -30,6 +30,7 @@
       "main.js",
       "preload.js",
       "preload-capture.js",
+      "preload-meeting.js",
       "satellite.js",
       "renderer/**/*",
       "overlay/**/*",
@@ -100,10 +101,6 @@
       {
         "from": "build/daemon-dist/sunday-daemon",
         "to": "sunday-daemon"
-      },
-      {
-        "from": "build/meeting-recorder",
-        "to": "meeting-recorder"
       }
     ]
   },

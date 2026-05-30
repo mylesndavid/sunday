@@ -527,6 +527,17 @@ function rebuildTrayMenu() {
 }
 
 app.whenReady().then(() => {
+  // Meeting capture: hand getDisplayMedia a screen source + system-audio
+  // loopback so the capture window records the other side of the call. This
+  // is the whole fix — the audio is attributed to Sunday (which has Screen
+  // Recording), not a detached helper that gets silence.
+  const { session: electronSession } = require('electron');
+  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch(() => callback({}));
+  }, { useSystemPicker: false });
+
   // Serve meeting recordings to the renderer's <audio> from ~/.sunday/meetings.
   const { protocol } = require('electron');
   protocol.handle?.('sunday-audio', async (req) => {
@@ -684,7 +695,7 @@ app.on('before-quit', () => {
   stopNotchHud();
   stopObserver();
   stopEmbeddedDaemon();
-  try { meetingProc?.kill('SIGTERM'); } catch {}
+  try { meetingWin?.close(); } catch {}
 });
 
 // ── ambient observer ──────────────────────────────────────────────────────
@@ -890,16 +901,15 @@ ipcMain.handle('sunday:transcription-status', () => localTranscriptionStatus());
 // Explicit, full-fidelity recording of a meeting: both sides (system audio +
 // mic) to two tracks → transcribe each with timestamps → interleave with
 // speaker labels → daemon summarizes (Granola-style) + stores + makes atoms.
-let meetingProc = null;
+// Meeting capture runs in a hidden Sunday window (getDisplayMedia for system
+// audio, getUserMedia for mic) so both grants are the APP's own — the detached
+// Swift recorder couldn't get the Screen Recording grant and captured silence.
+let meetingWin = null;
 let meetingDir = null;
 let meetingStartedAt = null;
-
-function meetingRecorderBinary() {
-  const p = app.isPackaged
-    ? path.join(process.resourcesPath, 'meeting-recorder')
-    : path.join(__dirname, 'build', 'meeting-recorder');
-  return fs.existsSync(p) ? p : null;
-}
+let meetingStreams = null;   // { system: WriteStream, mic: WriteStream }
+let meetingStopPoll = null;
+let meetingRecording = false;
 
 async function setMeetingHud(recording) {
   try {
@@ -912,35 +922,55 @@ async function setMeetingHud(recording) {
 }
 
 function startMeeting() {
-  if (meetingProc) return { ok: true, already: true };
-  const bin = meetingRecorderBinary();
-  if (!bin) return { ok: false, error: 'meeting recorder not bundled' };
+  if (meetingWin) return { ok: true, already: true };
   const id = `${Date.now()}`;
   meetingDir = path.join(os.homedir(), '.sunday', 'meetings', id);
   fs.mkdirSync(meetingDir, { recursive: true });
   meetingStartedAt = Date.now();
-  meetingProc = require('node:child_process').spawn(bin, [meetingDir], { stdio: 'ignore' });
-  meetingProc.on('exit', () => { meetingProc = null; });
+  meetingRecording = true;
+  // Open webm append streams for the two tracks.
+  meetingStreams = {
+    system: fs.createWriteStream(path.join(meetingDir, 'system.webm')),
+    mic: fs.createWriteStream(path.join(meetingDir, 'mic.webm')),
+  };
+  meetingWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-meeting.js'),
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  meetingWin.loadFile(path.join(__dirname, 'renderer', 'meeting-capture.html'));
+  meetingWin.on('closed', () => { meetingWin = null; });
   setMeetingHud(true);
-  // Watch for a stop-request coming from the notch (the user tapping the
-  // meeting bar). Poll the daemon's meeting state; stop when asked.
+  // Stop-request from the notch.
   if (meetingStopPoll) clearInterval(meetingStopPoll);
   meetingStopPoll = setInterval(async () => {
-    if (!meetingProc) { clearInterval(meetingStopPoll); meetingStopPoll = null; return; }
+    if (!meetingWin) { clearInterval(meetingStopPoll); meetingStopPoll = null; return; }
     try {
       const { daemonHttp } = resolveDaemon();
       const s = await (await fetch(`${daemonHttp}/v1/status`, { headers: { ..._bearer() } })).json();
       if (s.meeting && s.meeting.stop_requested) {
         clearInterval(meetingStopPoll); meetingStopPoll = null;
         await stopMeeting();
-        // Notify the renderer's Meetings tab to refresh if it's open.
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sunday:meeting-stopped', {});
       }
     } catch {}
   }, 2000);
   return { ok: true, id };
 }
-let meetingStopPoll = null;
+
+// Chunks from the capture window → append to the per-track webm files.
+ipcMain.handle('sunday:meeting-chunk', (_evt, track, bytes) => {
+  try { meetingStreams && meetingStreams[track] && meetingStreams[track].write(Buffer.from(bytes)); } catch {}
+  return { ok: true };
+});
+let meetingCaptureState = { system: false, mic: false };
+ipcMain.on('sunday:meeting-capture-state', (_evt, s) => {
+  if (typeof s.system === 'boolean') meetingCaptureState.system = s.system;
+  if (typeof s.mic === 'boolean') meetingCaptureState.mic = s.mic;
+});
 
 // whisper-cli WITH timestamps → [{start, text}] for one wav.
 async function transcribeTrackTimed(wav) {
@@ -967,20 +997,30 @@ async function transcribeTrackTimed(wav) {
   });
 }
 
+// Wait for the capture window to confirm it flushed.
+let _meetingStoppedResolve = null;
+ipcMain.on('sunday:meeting-capture-stopped', () => { if (_meetingStoppedResolve) _meetingStoppedResolve(); });
+
 async function stopMeeting() {
-  if (!meetingProc || !meetingDir) { await setMeetingHud(false); return { ok: false, error: 'no meeting running' }; }
+  if (!meetingWin || !meetingDir) { await setMeetingHud(false); return { ok: false, error: 'no meeting running' }; }
   const dir = meetingDir;
   const startedAt = meetingStartedAt;
-  // Stop the recorder + let it finalize the WAVs.
-  try { meetingProc.kill('SIGTERM'); } catch {}
-  meetingProc = null; meetingDir = null;
+  meetingRecording = false;
+  // Tell the capture window to stop + flush, wait for confirmation.
+  const stopped = new Promise((res) => { _meetingStoppedResolve = res; setTimeout(res, 4000); });
+  try { meetingWin.webContents.send('sunday:meeting-capture-stop'); } catch {}
+  await stopped;
+  // Close the webm streams, close the window.
+  try { meetingStreams.system.end(); meetingStreams.mic.end(); } catch {}
+  await new Promise((r) => setTimeout(r, 400));
+  try { meetingWin.close(); } catch {}
+  meetingWin = null; meetingDir = null; meetingStreams = null;
   await setMeetingHud(false);
-  await new Promise((r) => setTimeout(r, 1500));   // finalize window
 
-  const systemWav = path.join(dir, 'system.wav');
-  const micWav = path.join(dir, 'mic.wav');
-  const wavToMono = async (src) => {
-    const dst = src.replace(/\.wav$/, '-16k.wav');
+  // Convert each webm track → 16k mono wav for whisper.
+  const webmToMono = async (src) => {
+    if (!fs.existsSync(src) || fs.statSync(src).size < 1000) return null;
+    const dst = src.replace(/\.webm$/, '-16k.wav');
     try {
       await new Promise((res, rej) => {
         const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg, ['-y', '-i', src, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', dst], { stdio: 'ignore' });
@@ -992,14 +1032,10 @@ async function stopMeeting() {
   };
 
   const segs = [];
-  if (fs.existsSync(systemWav)) {
-    const s = await wavToMono(systemWav);
-    if (s) for (const seg of await transcribeTrackTimed(s)) segs.push({ ...seg, who: 'Others' });
-  }
-  if (fs.existsSync(micWav)) {
-    const m = await wavToMono(micWav);
-    if (m) for (const seg of await transcribeTrackTimed(m)) segs.push({ ...seg, who: 'You' });
-  }
+  const s = await webmToMono(path.join(dir, 'system.webm'));
+  if (s) for (const seg of await transcribeTrackTimed(s)) segs.push({ ...seg, who: 'Others' });
+  const m = await webmToMono(path.join(dir, 'mic.webm'));
+  if (m) for (const seg of await transcribeTrackTimed(m)) segs.push({ ...seg, who: 'You' });
   segs.sort((a, b) => a.start - b.start);
   const transcript = segs.map((s) => `${s.who}: ${s.text}`).join('\n');
 
@@ -1024,12 +1060,19 @@ async function stopMeeting() {
       if (cid) {
         const linkedDir = path.join(os.homedir(), '.sunday', 'meetings', String(cid));
         if (dir !== linkedDir) { try { fs.renameSync(dir, linkedDir); } catch {} }
-        const sys = path.join(linkedDir, 'system.wav'), mic = path.join(linkedDir, 'mic.wav');
-        if (fs.existsSync(sys) && fs.existsSync(mic)) {
+        const sys = path.join(linkedDir, 'system.webm'), mic = path.join(linkedDir, 'mic.webm');
+        const haveSys = fs.existsSync(sys), haveMic = fs.existsSync(mic);
+        if (haveSys && haveMic) {
           await new Promise((res) => {
             const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
               ['-y', '-i', sys, '-i', mic, '-filter_complex', 'amix=inputs=2:duration=longest', path.join(linkedDir, 'mix.wav')],
               { stdio: 'ignore' });
+            p.on('exit', res); p.on('error', res);
+          });
+        } else if (haveSys || haveMic) {
+          await new Promise((res) => {
+            const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
+              ['-y', '-i', haveSys ? sys : mic, path.join(linkedDir, 'mix.wav')], { stdio: 'ignore' });
             p.on('exit', res); p.on('error', res);
           });
         }
@@ -1056,7 +1099,7 @@ async function setMeetingDone(title) {
 
 ipcMain.handle('sunday:meeting-start', () => startMeeting());
 ipcMain.handle('sunday:meeting-stop', () => stopMeeting());
-ipcMain.handle('sunday:meeting-state', () => ({ recording: !!meetingProc, since: meetingStartedAt }));
+ipcMain.handle('sunday:meeting-state', () => ({ recording: meetingRecording, since: meetingStartedAt }));
 // Playback URL for a meeting's recording, if it's still on disk. Returns a
 // custom-scheme URL the renderer's <audio> can load (registered below).
 ipcMain.handle('sunday:meeting-audio', (_evt, cid) => {
