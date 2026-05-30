@@ -142,6 +142,33 @@ def _now_similar(a: str, b: str) -> bool:
     return union > 0 and (inter / union) >= 0.4
 
 
+class TurnControl:
+    """Lets the user grab the wheel on a running task. brain.respond() checks
+    this at each step boundary: pending steering messages get folded into the
+    chat (the model sees them next call), and a stop request ends the loop."""
+
+    def __init__(self) -> None:
+        self._stop = False
+        self._steer: list[str] = []
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def should_stop(self) -> bool:
+        return self._stop
+
+    def steer(self, text: str) -> bool:
+        t = (text or "").strip()
+        if not t:
+            return False
+        self._steer.append(t)
+        return True
+
+    def drain_steering(self) -> list[str]:
+        out, self._steer = self._steer, []
+        return out
+
+
 class Daemon:
     def __init__(self) -> None:
         ensure_home()
@@ -212,6 +239,9 @@ class Daemon:
         # Serializes agent turns (user-initiated + sub-agent wake turns) so the
         # single chat log never interleaves two concurrent respond() loops.
         self._turn_lock = asyncio.Lock()
+        # The control handle for the turn currently running (None when idle).
+        # Lets the user steer or stop a task mid-flight — see TurnControl.
+        self._active_control: TurnControl | None = None
 
     async def _broadcast_lazy(self, event: dict[str, Any]) -> None:
         # DeviceManager is built in __init__ before the event loop runs, so we
@@ -226,6 +256,12 @@ class Daemon:
         modality: str,
         attachments: list[dict] | None = None,
     ) -> dict[str, Any]:
+        # If a task is already running, a new message isn't a queued turn — it's
+        # the user grabbing the wheel. Fold it into the live loop as steering
+        # instead of blocking behind the lock until the task finishes.
+        if self._turn_lock.locked() and self._active_control is not None:
+            self._active_control.steer(text)
+            return {"steered": True, "reply": None}
         # Serialize turns: a user turn and a sub-agent wake turn must not run
         # concurrently or they'd interleave messages in the single chat.
         async with self._turn_lock:
@@ -241,25 +277,32 @@ class Daemon:
     ) -> str:
         """One agent turn: drive the loop, broadcast the reply, kick off the
         background memory + compaction passes. Caller MUST hold _turn_lock."""
-        reply = await respond(
-            self.chat, text, modality, self.config, self.registry,
-            runtime=self.runtime,
-            attachments=attachments,
-            user_metadata=user_metadata,
-            extras={
-                "broadcast": self._broadcast,
-                "devices":   self.devices,
-                "memory":    self.memory,
-                "runtime":       self.runtime,
-                # tiered tools: lean core + whatever find_tools has pulled in
-                # this session (persists across turns until the daemon restarts)
-                "registry":      self.registry,
-                "active_tools":  self._active_tools,
-                # async sub-agents: tools hand a finished result back here to
-                # be injected as a hidden message + folded in on a wake turn.
-                "inject_and_wake": self._inject_and_wake,
-            },
-        )
+        control = TurnControl()
+        self._active_control = control
+        try:
+            reply = await respond(
+                self.chat, text, modality, self.config, self.registry,
+                runtime=self.runtime,
+                attachments=attachments,
+                user_metadata=user_metadata,
+                extras={
+                    "broadcast": self._broadcast,
+                    "devices":   self.devices,
+                    "memory":    self.memory,
+                    "runtime":       self.runtime,
+                    # tiered tools: lean core + whatever find_tools has pulled in
+                    # this session (persists across turns until the daemon restarts)
+                    "registry":      self.registry,
+                    "active_tools":  self._active_tools,
+                    # async sub-agents: tools hand a finished result back here to
+                    # be injected as a hidden message + folded in on a wake turn.
+                    "inject_and_wake": self._inject_and_wake,
+                    # steer/stop handle — the user can grab the wheel mid-task.
+                    "control":       control,
+                },
+            )
+        finally:
+            self._active_control = None
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         # Fire-and-forget memory extraction so the brain returns immediately.
         if self.memory.available:
@@ -315,6 +358,21 @@ class Daemon:
                 params.get("modality") or "cli",
                 attachments if isinstance(attachments, list) else None,
             )
+
+        if method == "stop_task":
+            if self._active_control is None:
+                return {"ok": False, "error": "no task running"}
+            self._active_control.stop()
+            return {"ok": True}
+
+        if method == "steer":
+            text = (params.get("text") or "").strip()
+            if not text:
+                raise IpcError("'text' is required")
+            if self._active_control is None:
+                return await self._say(text, params.get("modality") or "cli")
+            self._active_control.steer(text)
+            return {"ok": True, "steered": True}
 
         if method == "log":
             limit = int(params.get("limit") or 20)
@@ -441,6 +499,26 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
         await self._broadcast({"type": "wake_reply", "text": result.get("reply") or ""})
         return web.json_response(result)
+
+    async def _http_task_stop(self, request: web.Request) -> web.Response:
+        """Stop the task running right now (cleanly, at the next step boundary).
+        No-op if nothing is running."""
+        if self._active_control is None:
+            return web.json_response({"ok": False, "error": "no task running"})
+        self._active_control.stop()
+        return web.json_response({"ok": True})
+
+    async def _http_task_steer(self, request: web.Request) -> web.Response:
+        """Steer the running task — fold a message into the live loop. If
+        nothing is running, it just becomes a normal turn."""
+        body = await request.json() if request.body_exists else {}
+        text = (body.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "'text' is required"}, status=400)
+        if self._active_control is None:
+            return web.json_response(await self._say(text, body.get("modality") or "chat"))
+        self._active_control.steer(text)
+        return web.json_response({"ok": True, "steered": True})
 
     async def _http_log(self, request: web.Request) -> web.Response:
         try:
@@ -1781,6 +1859,8 @@ class Daemon:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
         app.router.add_post("/v1/wake", self._http_wake)
+        app.router.add_post("/v1/task/stop", self._http_task_stop)
+        app.router.add_post("/v1/task/steer", self._http_task_steer)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/health", self._http_health)

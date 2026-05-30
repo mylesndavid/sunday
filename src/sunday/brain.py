@@ -182,6 +182,11 @@ async def respond(
 
     broadcast = (extras or {}).get("broadcast")
     memory    = (extras or {}).get("memory")
+    # Steer/stop: the daemon hands us a TurnControl so the user can grab the
+    # wheel mid-task. We check it at each step boundary — steering messages get
+    # appended to the chat (so the next provider call sees them like any user
+    # turn), and a stop request breaks the loop cleanly with what we have.
+    control   = (extras or {}).get("control")
     stream_id = uuid.uuid4().hex[:12]
 
     # Pull relevant memories ONCE per turn (not per tool iteration). The
@@ -250,6 +255,23 @@ async def respond(
     iteration = 0
     while budget.consume():
         iteration += 1
+        # Steer/stop check at the step boundary (between tool calls).
+        if control is not None:
+            for steer_text in control.drain_steering():
+                # Land it in the log as a user turn so the next provider call
+                # picks it up via _context_messages — no manual splicing.
+                chat.append("user", steer_text, modality, metadata={"steer": True})
+                log.info("turn steered", text=steer_text[:120])
+                if broadcast is not None:
+                    await broadcast({"type": "steered", "stream_id": stream_id, "text": steer_text})
+            if control.should_stop():
+                stopped = "Stopped — tell me how you want to pick it back up."
+                chat.append("sunday", stopped, modality, metadata={"stopped": True, "budget_used": budget.used})
+                log.info("turn stopped by user", iteration=iteration)
+                if broadcast is not None:
+                    await broadcast({"type": "stream_end", "stream_id": stream_id,
+                                     "modality": modality, "content_full": stopped, "stopped": True})
+                return stopped
         # Step callback — observability event before each provider call.
         # Lets the Electron app render "thinking", "calling tool X", etc.
         if broadcast is not None:
