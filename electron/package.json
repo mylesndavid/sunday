@@ -31,6 +31,7 @@
       "preload.js",
       "preload-capture.js",
       "preload-meeting.js",
+      "preload-wake.js",
       "satellite.js",
       "renderer/**/*",
       "overlay/**/*",

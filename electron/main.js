@@ -602,6 +602,8 @@ app.whenReady().then(() => {
   const prefs = loadPrefs();
   // Auto-start the ambient observer if the user left it on last time.
   if (prefs.onboarded && prefs.observer === true) startObserver();
+  // "Hey Sunday" wake word — on by default once onboarded (opt out via prefs.wake).
+  if (prefs.onboarded && prefs.wake !== false) startWake();
 
   // Auto-install local transcription in the background. Sunday's promise is
   // self-hosted personal AI — audio shouldn't be leaving the Mac by default.
@@ -747,6 +749,86 @@ function stopObserver() {
   try { captureWindow?.close(); } catch { /* already gone */ }
   captureWindow = null;
   observerState = { active: false, error: null, lastChunkAt: null };
+}
+
+// ── "Hey Sunday" wake word ──────────────────────────────────────────────────
+// A second hidden Sunday window records short ~2.5s windows (separate from the
+// 30s observer so wake stays responsive). Main transcribes each locally and
+// scans for the wake phrase; on a hit it POSTs the command to /v1/wake, which
+// pops the notch and runs the turn. Mic grant is the app's own — same honest
+// attribution as the observer.
+let wakeWindow = null;
+let wakeState = { active: false, error: null };
+// When the wake word is heard with no command after it, we "arm" for the next
+// window and treat that window's whole transcript as the command.
+let wakeArmedAt = 0;
+const WAKE_ARM_MS = 7000;
+// Match "hey/hi/ok sunday <command>" or a window that just starts with "sunday".
+const WAKE_RE = /\b(?:hey|hi|ok|okay)\s+sunday\b[\s,.:!?-]*(.*)$/i;
+const WAKE_START_RE = /^\s*sunday\b[\s,.:!?-]*(.*)$/i;
+
+async function startWake() {
+  if (wakeWindow) return;
+  let status = micStatus();
+  if (status === 'not-determined') {
+    try { await systemPreferences.askForMediaAccess('microphone'); } catch { /* dismissed */ }
+    status = micStatus();
+  }
+  if (status !== 'granted') {
+    wakeState = { active: false, error: `mic-${status}` };
+    return;
+  }
+  wakeWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-wake.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  wakeWindow.loadFile(path.join(__dirname, 'renderer', 'wake.html'));
+  wakeWindow.on('closed', () => { wakeWindow = null; wakeState.active = false; });
+}
+
+function stopWake() {
+  try { wakeWindow?.close(); } catch { /* already gone */ }
+  wakeWindow = null;
+  wakeState = { active: false, error: null };
+}
+
+// Pull a command out of a transcribed window. Returns:
+//   { command }   — wake word + a usable command in one breath, OR an armed
+//                   follow-up window providing the command
+//   { armed: true }— wake word heard but nothing useful after it yet
+//   null           — no wake word
+function matchWake(text) {
+  const t = (text || '').trim();
+  if (!t) return null;
+  const m = t.match(WAKE_RE) || t.match(WAKE_START_RE);
+  if (m) {
+    const cmd = (m[1] || '').trim();
+    // Need at least a couple words to count as a command; otherwise arm.
+    return cmd.split(/\s+/).filter(Boolean).length >= 2 ? { command: cmd } : { armed: true };
+  }
+  // No wake word this window — but if we were armed by the previous one, this
+  // whole window is the command.
+  if (Date.now() - wakeArmedAt < WAKE_ARM_MS && t.split(/\s+/).filter(Boolean).length >= 1) {
+    return { command: t };
+  }
+  return null;
+}
+
+async function submitWake(text) {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    await fetch(`${daemonHttp}/v1/wake`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._bearer() },
+      body: JSON.stringify({ text: text || '', modality: 'voice' }),
+    });
+  } catch { /* daemon unreachable; drop it */ }
 }
 
 // Read OPENAI key the same way the daemon credential store does: env →
@@ -1206,6 +1288,43 @@ ipcMain.handle('sunday:observer-set', async (_evt, on) => {
 ipcMain.on('sunday:observer-capture-state', (_evt, state) => {
   observerState.active = !!(state && state.active);
   observerState.error = (state && state.error) || null;
+});
+
+// The wake window reports whether it actually got the mic stream.
+ipcMain.on('sunday:wake-capture-state', (_evt, state) => {
+  wakeState.active = !!(state && state.active);
+  wakeState.error = (state && state.error) || null;
+});
+
+ipcMain.handle('sunday:wake-status', () => ({
+  running: !!(wakeWindow && wakeState.active),
+  mic: micStatus(),
+  error: wakeState.error,
+  enabled: loadPrefs().wake !== false,
+}));
+
+ipcMain.handle('sunday:wake-set', async (_evt, on) => {
+  if (on) { await startWake(); savePrefs({ wake: true }); }
+  else    { stopWake();        savePrefs({ wake: false }); }
+  return { running: !!(wakeWindow && wakeState.active), mic: micStatus(), error: wakeState.error };
+});
+
+// A finished ~2.5s window arrives from the wake window → transcribe → match.
+ipcMain.handle('sunday:wake-chunk', async (_evt, bytes) => {
+  const transcript = await transcribeChunk(bytes, 2.5);
+  const hit = matchWake(transcript);
+  if (!hit) return { ok: true };
+  if (hit.armed) {
+    // Heard "Hey Sunday" with no command yet — pop the notch (listening) and
+    // wait for the next window to carry the command.
+    wakeArmedAt = Date.now();
+    await submitWake('');
+    return { ok: true, armed: true };
+  }
+  // Full command in hand — clear the arm and run it.
+  wakeArmedAt = 0;
+  await submitWake(hit.command);
+  return { ok: true, command: hit.command };
 });
 
 // A finished ~30s chunk arrives from the capture window → transcribe → tick.
