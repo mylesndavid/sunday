@@ -42,5 +42,6 @@ contextBridge.exposeInMainWorld('sunday', {
   meetingStart: () => ipcRenderer.invoke('sunday:meeting-start'),
   meetingStop: () => ipcRenderer.invoke('sunday:meeting-stop'),
   meetingState: () => ipcRenderer.invoke('sunday:meeting-state'),
+  meetingAudio: (cid) => ipcRenderer.invoke('sunday:meeting-audio', cid),
   onInstallLog: (handler) => ipcRenderer.on('sunday:install-log', (_evt, line) => handler(line)),
 });

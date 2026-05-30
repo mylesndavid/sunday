@@ -77,13 +77,15 @@ class ConversationStore:
         return cid
 
     def list(self, limit: int = 50, since: float | None = None,
-             category: str | None = None) -> list[dict[str, Any]]:
-        cols = "id, started_at, ended_at, title, summary, category, participants, length(transcript) AS transcript_chars"
+             category: str | None = None, source: str | None = None) -> list[dict[str, Any]]:
+        cols = "id, started_at, ended_at, title, summary, category, participants, source, length(transcript) AS transcript_chars"
         where, params = [], []
         if since:
             where.append("started_at >= ?"); params.append(float(since))
         if category:
             where.append("category = ?"); params.append(category)
+        if source:
+            where.append("source = ?"); params.append(source)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         params.append(int(limit))
         rows = self._conn.execute(

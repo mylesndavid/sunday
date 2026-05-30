@@ -94,25 +94,19 @@ async function loadMeetings() {
   const empty = document.getElementById('mtg-empty');
   const cb = document.getElementById('mem-mtg-count');
   try {
-    const d = await (await fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&category=meeting`)).json();
+    const d = await (await fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&source=meeting&min_value=all`)).json();
     const mtgs = (d.conversations || []);
     if (cb) { if (mtgs.length) { cb.textContent = mtgs.length; cb.hidden = false; } else cb.hidden = true; }
     if (!mtgs.length) { empty.hidden = false; list.innerHTML = ''; return; }
     empty.hidden = true;
     list.innerHTML = mtgs.map((c) => `
-      <li class="conv-card" data-cid="${c.id}">
+      <li class="conv-card mtg-card" data-cid="${c.id}">
         <div class="conv-head"><div class="c-title">${esc(c.title || 'Meeting')}</div><div class="c-time">${esc(fmtTime(c.started_at))}</div></div>
-        <div class="conv-summary">${esc(c.summary || '').replace(/\n/g, '<br>')}</div>
-        <details class="conv-transcript"><summary>Show transcript</summary><pre data-loaded="false">loading…</pre></details>
+        <div class="conv-summary">${esc((c.summary || '').split('\n')[0])}</div>
+        <div class="mtg-card-open">Open meeting →</div>
       </li>`).join('');
-    list.querySelectorAll('.conv-card').forEach((card) => {
-      const det = card.querySelector('details'); const pre = det.querySelector('pre');
-      det.addEventListener('toggle', async () => {
-        if (!det.open || pre.dataset.loaded === 'true') return;
-        pre.dataset.loaded = 'true';
-        try { const c = await (await fetch(`${cfg.daemonHttp}/v1/conversations/${card.dataset.cid}`)).json(); pre.textContent = c.transcript || '(no transcript)'; }
-        catch (e) { pre.textContent = `(error: ${e.message})`; }
-      });
+    list.querySelectorAll('.mtg-card').forEach((card) => {
+      card.addEventListener('click', () => openMeetingView(card.dataset.cid));
     });
   } catch (e) {
     list.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load: ${esc(e.message)}</div></li>`;
@@ -136,6 +130,39 @@ function setMeetingRecordingUI(recording, since) {
     subEl.textContent = 'Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.';
   }
 }
+// Full meeting view — pops over the tab, Exit to close.
+async function openMeetingView(cid) {
+  const view = document.getElementById('mtg-view');
+  view.hidden = false;
+  document.getElementById('mtg-view-title').textContent = 'Loading…';
+  document.getElementById('mtg-view-notes').innerHTML = '';
+  document.getElementById('mtg-view-transcript').textContent = '';
+  document.getElementById('mtg-view-exit').onclick = () => { view.hidden = true; };
+  try {
+    const c = await (await fetch(`${cfg.daemonHttp}/v1/conversations/${cid}`)).json();
+    document.getElementById('mtg-view-title').textContent = c.title || 'Meeting';
+    document.getElementById('mtg-view-time').textContent = fmtTime(c.started_at);
+    // Render the structured summary as readable blocks (it was stored with
+    // newlines + bullets).
+    document.getElementById('mtg-view-notes').innerHTML =
+      esc(c.summary || '').replace(/\n/g, '<br>');
+    // Speaker-labeled transcript → styled lines.
+    const tx = c.transcript || '(no transcript)';
+    document.getElementById('mtg-view-transcript').innerHTML = tx.split('\n').map((line) => {
+      const who = line.startsWith('You:') ? 'you' : (line.startsWith('Others:') ? 'others' : '');
+      return `<div class="mtg-line${who ? ' ' + who : ''}">${esc(line)}</div>`;
+    }).join('');
+    // Audio playback if this meeting's recording is still on disk.
+    const audio = document.getElementById('mtg-view-audio');
+    try {
+      const a = await window.sunday.meetingAudio(cid);
+      if (a && a.url) { audio.src = a.url; audio.hidden = false; } else { audio.hidden = true; audio.removeAttribute('src'); }
+    } catch { audio.hidden = true; }
+  } catch (e) {
+    document.getElementById('mtg-view-title').textContent = `Error: ${e.message}`;
+  }
+}
+
 async function toggleMeetingRecording() {
   const btn = document.getElementById('mtg-rec-btn');
   const subEl = document.getElementById('mtg-rec-sub');

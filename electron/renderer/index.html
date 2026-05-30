@@ -113,6 +113,20 @@
         <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
       </div>
       <ul class="conv-list" id="mtg-list"></ul>
+      <!-- Full meeting view, pops over the tab; Exit to close. -->
+      <div class="mtg-view" id="mtg-view" hidden>
+        <div class="mtg-view-bar">
+          <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
+          <div class="mtg-view-title" id="mtg-view-title"></div>
+          <div class="mtg-view-time" id="mtg-view-time"></div>
+        </div>
+        <div class="mtg-view-body">
+          <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
+          <div class="mtg-view-notes" id="mtg-view-notes"></div>
+          <h3 class="mtg-view-h">Transcript</h3>
+          <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
+        </div>
+      </div>
       <div class="atoms-empty" id="mtg-empty" hidden>
         <h2>No meetings yet</h2>
         <p>Hit Start recording before your next call. Sunday captures both sides, writes you Granola-style notes, and turns the action items into things she tracks.</p>

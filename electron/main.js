@@ -527,6 +527,20 @@ function rebuildTrayMenu() {
 }
 
 app.whenReady().then(() => {
+  // Serve meeting recordings to the renderer's <audio> from ~/.sunday/meetings.
+  const { protocol } = require('electron');
+  protocol.handle?.('sunday-audio', async (req) => {
+    try {
+      const u = new URL(req.url);   // sunday-audio://<cid>/<file>
+      const cid = u.hostname;
+      const file = decodeURIComponent(u.pathname.replace(/^\//, ''));
+      if (!/^[\w.-]+$/.test(file)) return new Response('bad', { status: 400 });
+      const p = path.join(os.homedir(), '.sunday', 'meetings', cid, file);
+      const data = fs.readFileSync(p);
+      return new Response(data, { headers: { 'Content-Type': 'audio/wav' } });
+    } catch { return new Response('not found', { status: 404 }); }
+  });
+
   // Spawn the embedded daemon first thing (fire-and-forget) so it's coming
   // up while the UI loads. Local installs get the brain with no terminal;
   // remote daemons skip this.
@@ -908,8 +922,25 @@ function startMeeting() {
   meetingProc = require('node:child_process').spawn(bin, [meetingDir], { stdio: 'ignore' });
   meetingProc.on('exit', () => { meetingProc = null; });
   setMeetingHud(true);
+  // Watch for a stop-request coming from the notch (the user tapping the
+  // meeting bar). Poll the daemon's meeting state; stop when asked.
+  if (meetingStopPoll) clearInterval(meetingStopPoll);
+  meetingStopPoll = setInterval(async () => {
+    if (!meetingProc) { clearInterval(meetingStopPoll); meetingStopPoll = null; return; }
+    try {
+      const { daemonHttp } = resolveDaemon();
+      const s = await (await fetch(`${daemonHttp}/v1/status`, { headers: { ..._bearer() } })).json();
+      if (s.meeting && s.meeting.stop_requested) {
+        clearInterval(meetingStopPoll); meetingStopPoll = null;
+        await stopMeeting();
+        // Notify the renderer's Meetings tab to refresh if it's open.
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sunday:meeting-stopped', {});
+      }
+    } catch {}
+  }, 2000);
   return { ok: true, id };
 }
+let meetingStopPoll = null;
 
 // whisper-cli WITH timestamps → [{start, text}] for one wav.
 async function transcribeTrackTimed(wav) {
@@ -982,15 +1013,61 @@ async function stopMeeting() {
       body: JSON.stringify({ transcript, started_at: startedAt / 1000, ended_at: Date.now() / 1000 }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      // 422 no_audio etc. — surface the daemon's detail, don't pretend it worked.
+      return { ok: false, error: data.detail || data.error || `HTTP ${res.status}` };
+    }
+    // Link the recording to its conversation id so the meeting view can play
+    // it back: rename the dir to <conversation_id> + mix the two tracks.
+    try {
+      const cid = data.conversation_id;
+      if (cid) {
+        const linkedDir = path.join(os.homedir(), '.sunday', 'meetings', String(cid));
+        if (dir !== linkedDir) { try { fs.renameSync(dir, linkedDir); } catch {} }
+        const sys = path.join(linkedDir, 'system.wav'), mic = path.join(linkedDir, 'mic.wav');
+        if (fs.existsSync(sys) && fs.existsSync(mic)) {
+          await new Promise((res) => {
+            const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
+              ['-y', '-i', sys, '-i', mic, '-filter_complex', 'amix=inputs=2:duration=longest', path.join(linkedDir, 'mix.wav')],
+              { stdio: 'ignore' });
+            p.on('exit', res); p.on('error', res);
+          });
+        }
+      }
+    } catch {}
+    // Notify the notch the summary is ready.
+    setMeetingDone(data.notes?.title || 'Meeting');
     return { ok: true, notes: data.notes, conversation_id: data.conversation_id };
   } catch (e) {
     return { ok: false, error: e?.message || String(e) };
   }
 }
 
+// Tell the notch a meeting summary is ready (it shows a toast).
+async function setMeetingDone(title) {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    await fetch(`${daemonHttp}/v1/meetings/done`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
+      body: JSON.stringify({ title }),
+    });
+  } catch {}
+}
+
 ipcMain.handle('sunday:meeting-start', () => startMeeting());
 ipcMain.handle('sunday:meeting-stop', () => stopMeeting());
 ipcMain.handle('sunday:meeting-state', () => ({ recording: !!meetingProc, since: meetingStartedAt }));
+// Playback URL for a meeting's recording, if it's still on disk. Returns a
+// custom-scheme URL the renderer's <audio> can load (registered below).
+ipcMain.handle('sunday:meeting-audio', (_evt, cid) => {
+  try {
+    const dir = path.join(os.homedir(), '.sunday', 'meetings', String(cid));
+    for (const f of ['mix.wav', 'system.wav', 'mic.wav']) {
+      if (fs.existsSync(path.join(dir, f))) return { url: `sunday-audio://${cid}/${f}` };
+    }
+  } catch {}
+  return { url: null };
+});
 
 // One-click install of the local transcription stack. Two pieces:
 //   1. whisper-cpp + ffmpeg via Homebrew (already installed; user has it).

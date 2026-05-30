@@ -95,17 +95,20 @@ Return ONLY JSON:
 }"""
 
 
-CONV_SYSTEM = """Summarize a real conversation transcript captured from a mic (single channel; the user is the dominant voice, others may come through speakers, and some chunks may be video/podcast bleed).
+CONV_SYSTEM = """Summarize a conversation transcript captured ambiently from a mic (single channel; the user is the dominant voice, others may come through speakers, and some chunks may be video/podcast bleed).
 
 Return ONLY JSON:
 {
   "title": "<5-8 word title>",
   "summary": "<2-4 sentence summary of what was discussed + any decisions/outcomes>",
   "category": "meeting|call|personal|media|unclear",
-  "participants": ["<name>", ...]
+  "participants": ["<name>", ...],
+  "significant": true|false
 }
 
-If it's clearly not a real conversation (TV, music, silence, ambient noise), set category="media" and a terse summary."""
+significant — the most important field. TRUE only if this is worth keeping a permanent record of: real work, a meeting, decisions, plans, commitments, a meaningful personal moment, something the user would plausibly want to look back on. FALSE for idle banter, chess/game play-by-play, food/takeout orders, sports chatter, ambient TV/media bleed, casual back-and-forth with no outcome, or anything fragmentary. When in doubt, FALSE — a sparse, high-signal record beats a pile of noise. Most ambient chatter is NOT significant.
+
+If it's clearly not a real conversation (TV, music, silence, ambient noise), set category="media" and significant=false."""
 
 
 def _parse_json(content: str) -> dict[str, Any]:
@@ -244,4 +247,5 @@ async def summarize_conversation(transcript: str, config: SundayConfig) -> dict[
         "summary": out.get("summary") or "",
         "category": out.get("category") or "unclear",
         "participants": out.get("participants") or [],
+        "significant": bool(out.get("significant", False)),
     }

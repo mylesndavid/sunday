@@ -504,6 +504,7 @@ class Daemon:
             limit=limit * 3 if floor > 0 else limit,
             since=float(since) if since else None,
             category=request.query.get("category"),
+            source=request.query.get("source"),
         )
         out, skipped = [], {"low": 0, "medium": 0, "high": 0}
         for c in raw:
@@ -903,6 +904,23 @@ class Daemon:
         }
         return web.json_response({"ok": True, "meeting": self._meeting})
 
+    async def _http_meeting_done(self, request: web.Request) -> web.Response:
+        """Broadcast a 'summary ready' toast to the notch HUD."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        title = (body.get("title") or "Meeting").strip()
+        await self._broadcast({"type": "toast", "text": f"Meeting notes ready · {title}"})
+        return web.json_response({"ok": True})
+
+    async def _http_meeting_stop_request(self, request: web.Request) -> web.Response:
+        """The notch (or anything) requests the active meeting stop. The Mac
+        app polls meeting state and stops the recorder when it sees this."""
+        if self._meeting.get("recording"):
+            self._meeting["stop_requested"] = True
+        return web.json_response({"ok": True})
+
     async def _http_meeting_finalize(self, request: web.Request) -> web.Response:
         """The Mac records + transcribes a meeting locally, then POSTs the
         speaker-labeled transcript here. We summarize (Granola-style), store
@@ -917,8 +935,14 @@ class Daemon:
         except Exception:  # noqa: BLE001
             return web.json_response({"error": "invalid json"}, status=400)
         transcript = (body.get("transcript") or "").strip()
-        if not transcript:
-            return web.json_response({"error": "empty transcript"}, status=400)
+        # Reject near-empty captures rather than storing a junk "meeting".
+        # If we got this little, audio capture failed (usually system audio
+        # without a Screen Recording grant) — tell the app so, don't store.
+        if len(transcript) < 120:
+            return web.json_response({
+                "error": "no_audio",
+                "detail": "Barely any speech was captured. Make sure Screen Recording is granted to Sunday — system audio (the other people on the call) needs it.",
+            }, status=422)
         started = float(body.get("started_at") or time.time())
         ended = float(body.get("ended_at") or time.time())
 
@@ -998,11 +1022,26 @@ class Daemon:
         self._obs_buffer = []
         self._obs_conv_started = None
         self._obs_silent_streak = 0
+
+        # Don't even summarize trivially short windows — that's the source of
+        # the one-sentence "conversations". Needs real substance to count.
+        if len(transcript) < 280:
+            log.info("observer conversation discarded (too short)", chars=len(transcript))
+            return None
         try:
             summary = await obs.summarize_conversation(transcript, self.config)
         except Exception as exc:  # noqa: BLE001
             log.warning("observer conversation summary failed", error=str(exc))
             return None
+
+        # Discard at the source unless the summarizer judged it worth keeping.
+        # "significant" = real work, decisions, plans, meaningful moments —
+        # not chess banter, food orders, sports chatter, or media bleed.
+        if not summary.get("significant", False):
+            log.info("observer conversation discarded (not significant)",
+                     category=summary["category"], title=summary["title"][:40])
+            return None
+
         cid = self.conversations.add(
             started_at=started, ended_at=ended,
             title=summary["title"], summary=summary["summary"],
@@ -1731,6 +1770,8 @@ class Daemon:
         app.router.add_get("/v1/observer/buffer", self._http_observer_buffer)
         app.router.add_post("/v1/meetings/finalize", self._http_meeting_finalize)
         app.router.add_post("/v1/meetings/hud", self._http_meeting_hud)
+        app.router.add_post("/v1/meetings/done", self._http_meeting_done)
+        app.router.add_post("/v1/meetings/stop-request", self._http_meeting_stop_request)
         app.router.add_get("/v1/interjections", self._http_interjections_latest)
         app.router.add_post("/v1/interjections/{id}/engage", self._http_interjection_engage)
         app.router.add_post("/v1/interjections/{id}/dismiss", self._http_interjection_dismiss)
