@@ -41,18 +41,26 @@ npm start
 - `main.js`      — Electron main process. Window + overlay + IPC.
 - `preload.js`   — context bridge.
 - `renderer/`    — main chat window. `app.js` is the whole UI logic.
-- `renderer/wake.js` — "Hey Sunday" continuous SpeechRecognition listener.
+- `renderer/wake.js` — "Hey Sunday" wake loop (runs in a hidden window).
 - `overlay/`     — always-on-top ambient pill.
 
 ## Voice + wake word
 
-v0.1 uses the browser's `SpeechRecognition` (free, ships with Chromium).
-"Hey Sunday" triggers a focused single-utterance recording that lands in
-the composer and sends to the daemon.
+"Hey Sunday" runs fully on-device. A hidden Sunday window (`wake.html` +
+`wake.js`) records short ~2.5s mic windows; `main.js` transcribes each with
+the local Whisper pipeline and scans for the wake phrase. On a hit it POSTs
+the command to the daemon's `/v1/wake`, which pops the notch (`wake_listening`),
+runs the turn, then pushes the answer back (`wake_reply`). Mic capture lives
+in-app so the macOS grant is attributed to Sunday — same reason the ambient
+observer captures in a Sunday window rather than a detached child.
+
+One-breath commands ("Hey Sunday, what's on my calendar") run immediately; a
+bare "Hey Sunday" arms the next window to carry the command. On by default once
+onboarded; opt out via `prefs.wake` (`wakeStatus` / `wakeSet` IPC).
 
 Future drop-in upgrades:
-- Porcupine Web for offline wake word (license required).
-- Whisper via a `/v1/voice/transcribe` daemon route for higher accuracy.
+- A VAD gate so Whisper only runs on speech (cuts idle CPU/battery).
+- Porcupine for instant sub-300ms detection (license + custom keyword model).
 
 ## Live view
 

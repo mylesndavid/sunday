@@ -23,7 +23,7 @@ There is exactly one conversation between you and Sunday — ever. iMessage, voi
 | **Channels** | Inbound paths: Sendblue webhook (text Sunday from anywhere), HTTP, WS. Outbound: Sendblue API, iMessage via satellite, VAPI calls. |
 | **Devices** | Install `sunday-satellite` on any Mac. It dials home over WebSocket and exposes shell, screen capture, CDP browser control, and (on macOS) iMessage read+send. |
 | **Cloud tools** | Cloudflare Browser Rendering for headless browsing + screenshots. Optional Cloudflare Sandbox Worker for untrusted code. |
-| **Electron app** | Single-column chat UI, warm-dark theme, streaming token-by-token. Drag-drop files, voice via `SpeechRecognition`, "Hey Sunday" wake word. |
+| **Electron app** | Single-column chat UI, system-following light/dark theme, streaming token-by-token. Drag-drop files, voice input, on-device "Hey Sunday" wake word (local Whisper → notch pop-out). |
 
 ## Install — desktop app
 
