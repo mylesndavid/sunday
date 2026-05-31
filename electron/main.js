@@ -648,7 +648,10 @@ app.whenReady().then(() => {
   }
 
   if (prefs.onboarded && prefs.embeddedSatellite !== false) {
-    satellite.start(prefs);
+    // Hand the satellite launcher the bundled daemon binary path — on a
+    // packaged install (no repo/venv) it runs `<bin> satellite` so a device
+    // actually connects. No-op on dev machines, which prefer their venv.
+    satellite.start({ ...prefs, bundledDaemonBin: bundledDaemonBinary() });
   }
 });
 

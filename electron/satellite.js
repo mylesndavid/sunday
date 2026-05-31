@@ -39,13 +39,21 @@ function resolveSatellite(prefs) {
   if (process.env.SUNDAY_SATELLITE_CMD) {
     candidates.push(process.env.SUNDAY_SATELLITE_CMD.split(/\s+/));
   }
-  // Known dev venv console script + a couple of common spots.
+  // Known dev venv console script + a couple of common spots (dev machines win).
   for (const base of [
     path.join(home, 'Development', 'Repos', 'sunday', '.venv', 'bin'),
     path.join(home, '.sunday', 'venv', 'bin'),
     '/opt/sunday/.venv/bin',
   ]) {
     candidates.push([path.join(base, 'sunday-satellite')]);
+  }
+  // PACKAGED INSTALL fallback: the bundled daemon binary also runs the satellite
+  // via a subcommand (see daemon-entry.py). This is what makes a friend's Mac —
+  // no repo, no venv — able to connect a device at all. main.js passes the
+  // binary path via prefs.bundledDaemonBin; we invoke it as `<bin> satellite`.
+  // Last so a real dev venv (above) keeps winning on developer machines.
+  if (prefs.bundledDaemonBin && fs.existsSync(prefs.bundledDaemonBin)) {
+    candidates.push([prefs.bundledDaemonBin, 'satellite']);
   }
 
   for (const c of candidates) {
