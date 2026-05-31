@@ -101,18 +101,23 @@ def _context_messages(chat: Chat, memory_block: str = "") -> list[dict]:
     prefix_parts = [summary, memory_block]
     prefix = "\n\n".join(p for p in prefix_parts if p).strip()
 
-    if prefix and messages:
-        # Find the LAST user message and prepend the context block to it.
-        # We do this on a copy of the message so chat storage is untouched.
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "user":
-                base = messages[i].get("content")
-                if isinstance(base, str):
-                    messages[i] = {**messages[i], "content": prefix + "\n\n" + base}
-                elif isinstance(base, list):
-                    # Multimodal — prepend a text block
-                    messages[i] = {**messages[i], "content": [{"type": "text", "text": prefix}, *base]}
-                break
+    if prefix:
+        # Sunday's running summary + recalled memory are HER OWN context, not
+        # the user's words. Glomming them onto the latest user message (the old
+        # behavior) made the model read its own second-person summary as user
+        # input — hence "that summary vomit was meant for me, not you." Carry
+        # them as a distinct, clearly-framed system message at the top instead.
+        # Bonus: this block is stable until the summary re-folds, so it caches
+        # better than re-prepending to a fresh user turn every time.
+        messages.insert(0, {
+            "role": "system",
+            "content": (
+                "Sunday's own working context for this conversation — your running "
+                "summary and recalled memory about the user. This is NOT a message "
+                "from the user: don't reply to it, quote it, or repeat it back. Use "
+                "it silently for continuity.\n\n" + prefix
+            ),
+        })
 
     if sanitize_messages_surrogates(messages):
         log.info("sanitized surrogate code points in messages")

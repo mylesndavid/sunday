@@ -102,6 +102,12 @@ def _save_state(summary: str, through_id: int) -> None:
     )
 
 
+def reset_state() -> None:
+    """Forget the rolling summary — used when the conversation is cleared so a
+    fresh chat doesn't inherit the old thread's summary."""
+    _save_state("", 0)
+
+
 def summary_block() -> str:
     """The rolling summary as a prependable context block (empty until one
     exists). Prepended to the latest user message — never to the system

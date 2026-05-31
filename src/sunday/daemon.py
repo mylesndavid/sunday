@@ -359,6 +359,16 @@ class Daemon:
                 attachments if isinstance(attachments, list) else None,
             )
 
+        if method == "clear":
+            n = self.chat.clear()
+            try:
+                from sunday.compaction import reset_state
+                reset_state()
+            except Exception:  # noqa: BLE001
+                log.warning("compaction reset failed during clear")
+            await self._broadcast({"type": "cleared"})
+            return {"ok": True, "removed": n}
+
         if method == "stop_task":
             if self._active_control is None:
                 return {"ok": False, "error": "no task running"}
@@ -519,6 +529,19 @@ class Daemon:
             return web.json_response(await self._say(text, body.get("modality") or "chat"))
         self._active_control.steer(text)
         return web.json_response({"ok": True, "steered": True})
+
+    async def _http_chat_clear(self, request: web.Request) -> web.Response:
+        """Wipe the conversation (fresh start). Clears the message log + the
+        rolling compaction summary. Durable memory facts are untouched."""
+        n = self.chat.clear()
+        try:
+            from sunday.compaction import reset_state
+            reset_state()
+        except Exception:  # noqa: BLE001
+            log.warning("compaction reset failed during clear")
+        await self._broadcast({"type": "cleared"})
+        log.info("conversation cleared", removed=n)
+        return web.json_response({"ok": True, "removed": n})
 
     async def _http_log(self, request: web.Request) -> web.Response:
         try:
@@ -1861,6 +1884,7 @@ class Daemon:
         app.router.add_post("/v1/wake", self._http_wake)
         app.router.add_post("/v1/task/stop", self._http_task_stop)
         app.router.add_post("/v1/task/steer", self._http_task_steer)
+        app.router.add_post("/v1/chat/clear", self._http_chat_clear)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/health", self._http_health)

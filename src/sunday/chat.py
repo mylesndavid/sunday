@@ -155,6 +155,15 @@ class Chat:
         self._conn.commit()
         return cursor.lastrowid or 0
 
+    def clear(self) -> int:
+        """Wipe the whole conversation log (a fresh start). Returns how many
+        messages were removed. Does NOT touch the memory DB — durable facts
+        survive a chat clear. Compaction state is reset separately by the caller."""
+        n = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        self._conn.execute("DELETE FROM messages")
+        self._conn.commit()
+        return int(n or 0)
+
     def recent(self, limit: int = 50) -> list[Message]:
         rows = self._conn.execute(
             "SELECT id, role, modality, content, created_at, metadata "
