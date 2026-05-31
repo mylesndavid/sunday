@@ -2037,6 +2037,10 @@ def main() -> None:
             structlog.dev.ConsoleRenderer(),
         ],
     )
+    # Local eval tracing (Raindrop Workshop). No-op unless RAINDROP_LOCAL_DEBUGGER
+    # is set, so prod is unaffected.
+    from sunday import tracing
+    tracing.init()
     # Only render the banner on attached terminals — keeps systemd /
     # launchd logs clean of ANSI gradient escape sequences.
     import sys as _sys

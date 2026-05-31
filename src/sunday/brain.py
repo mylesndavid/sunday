@@ -256,6 +256,10 @@ async def respond(
             "modality": modality,
         })
 
+    # Local eval tracing — opens an interaction for this turn (inert in prod).
+    from sunday import tracing
+    _trace = tracing.begin_turn(user_text, modality)
+
     budget = IterationBudget(max_iterations or MAX_TOOL_ITERATIONS)
     iteration = 0
     while budget.consume():
@@ -273,6 +277,7 @@ async def respond(
                 stopped = "Stopped — tell me how you want to pick it back up."
                 chat.append("sunday", stopped, modality, metadata={"stopped": True, "budget_used": budget.used})
                 log.info("turn stopped by user", iteration=iteration)
+                tracing.finish_turn(_trace, stopped)
                 if broadcast is not None:
                     await broadcast({"type": "stream_end", "stream_id": stream_id,
                                      "modality": modality, "content_full": stopped, "stopped": True})
@@ -333,7 +338,8 @@ async def respond(
                         "tool_call_id": tc["id"],
                         "args_preview": (tc["arguments"] or "")[:200],
                     })
-                tool_result = await registry.execute(tc["name"], tc["arguments"], ctx)
+                with tracing.tool_span(tc["name"]):
+                    tool_result = await registry.execute(tc["name"], tc["arguments"], ctx)
                 content = (
                     tool_result
                     if isinstance(tool_result, str)
@@ -402,6 +408,7 @@ async def respond(
                 "modality": modality,
                 "content_full": reply,
             })
+        tracing.finish_turn(_trace, reply)
         return reply
 
     truncated = "I hit my tool-call ceiling. Let me know if you want me to keep going."
@@ -414,4 +421,5 @@ async def respond(
             "modality": modality,
             "content_full": truncated,
         })
+    tracing.finish_turn(_trace, truncated)
     return truncated
