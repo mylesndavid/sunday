@@ -1278,6 +1278,20 @@ class Daemon:
             valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex"}
             if prov not in valid:
                 return web.json_response({"error": f"provider must be one of {sorted(valid)}"}, status=400)
+            if prov == "codex":
+                # Codex reads ~/.codex on THIS daemon's host. Refuse the switch if
+                # there's no login here — otherwise the next turn crashes on a
+                # missing auth file (e.g. selecting Codex while pointed at a VPS).
+                from sunday.runtime.providers.codex import codex_available
+                if not codex_available():
+                    return web.json_response({"error": (
+                        "No Codex login on this daemon. Codex runs where you're signed into the "
+                        "codex CLI (~/.codex) — switch the app to 'This Mac' to use it."
+                    )}, status=400)
+                # ChatGPT accounts use the chat models; default to a working one.
+                if not (self.config.model.name or "").startswith("gpt-5"):
+                    self.config.model = replace(self.config.model, name="gpt-5.2")
+                    applied["model_name"] = "gpt-5.2"
             self.config.model = replace(self.config.model, provider=prov)
             applied["provider"] = prov
 
