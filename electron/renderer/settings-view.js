@@ -37,7 +37,7 @@ export async function loadAll() {
     $('#set-model').value = c.model?.name || '';
     const psel = $('#set-provider-select');
     if (psel) { psel.value = c.model?.provider || 'openrouter'; updateKeyField(); }
-    refreshRunMode();
+    await refreshRunMode();
     await loadModels();
     showCurrentModel();
     defaultPrompt = c.identity_prompt?.default || '';
@@ -397,9 +397,20 @@ async function refreshRunMode() {
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
     const mig = $('#set-migrate-row');
     if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
+    // The Codex card is always visible (so the feature is discoverable), but it
+    // only works on a local brain — the OAuth callback is localhost and the token
+    // lives in ~/.codex on this Mac. On cloud, show it disabled with a hint.
     const codexRow = $('#set-codex-row');
-    if (codexRow) codexRow.hidden = !m.local;  // "use my ChatGPT" only makes sense on This Mac
-    await refreshBrainProvider();
+    const codexToggle = $('#set-codex-toggle');
+    if (codexRow) codexRow.classList.toggle('disabled', !m.local);
+    if (codexToggle) codexToggle.disabled = !m.local;
+    if (m.local) {
+      await refreshBrainProvider();
+    } else {
+      if (codexToggle) codexToggle.checked = false;
+      applyCodexUI(false);
+      setCodexStatus('Available on This Mac — switch the brain above to use your ChatGPT subscription.', 'wait');
+    }
   } catch {}
 }
 
@@ -755,6 +766,12 @@ function wire() {
     if (on) {
       toggle.disabled = true;
       try {
+        // Re-sync the daemon URL + verify we're local before touching it — the
+        // renderer's DAEMON_HTTP can lag a brain switch, and Codex is local-only.
+        const cfg = await window.sunday.getConfig();
+        if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
+        const m = await window.sunday.runMode();
+        if (!m.local) throw new Error('Using your ChatGPT subscription runs on this Mac. Switch the brain to “This Mac” above — use “Bring my history over” first to keep your chat + memory.');
         await connectCodex();           // opens browser, waits for sign-in, activates Codex daemon-side
         applyCodexUI(true);
       } catch (err) {

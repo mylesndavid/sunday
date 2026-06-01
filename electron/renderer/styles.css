@@ -320,6 +320,8 @@ textarea#composer::placeholder { color: var(--text-3); }
 .brain-codex { display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-md); cursor: pointer; margin-bottom: 12px; font-size: 13.5px; }
 .brain-codex input { margin-top: 3px; flex: 0 0 auto; }
 .brain-codex:hover { background: var(--surface-2); }
+.brain-codex.disabled { opacity: 0.62; cursor: default; }
+.brain-codex.disabled:hover { background: transparent; }
 .brain-codex > span { display: block; font: 400 13.5px/1.45 var(--font-sans); letter-spacing: normal; text-transform: none; color: var(--text); margin: 0; }
 .brain-codex strong { font-weight: 600; }
 .brain-codex .brain-card-d { text-transform: none; letter-spacing: normal; color: var(--text-2); margin-top: 3px; }
