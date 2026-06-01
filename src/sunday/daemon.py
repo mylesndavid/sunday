@@ -200,6 +200,10 @@ class Daemon:
         self._unix_server: asyncio.Server | None = None
         self._http_runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
+        # One-click Codex sign-in: in-flight OAuth state + the temporary
+        # localhost:1455 callback server that catches OpenAI's redirect.
+        self._codex_login: dict[str, Any] | None = None
+        self._codex_cb_runner: web.AppRunner | None = None
         self._stop = asyncio.Event()
         self._started_at = time.time()
         # "What is the user doing right now" — pushed in by the observer (the
@@ -1312,6 +1316,112 @@ class Daemon:
 
         return web.json_response({"applied": applied, "ok": True})
 
+    async def _http_codex_login(self, request: web.Request) -> web.Response:
+        """Start a one-click ChatGPT (Codex) sign-in. Spins up the localhost:1455
+        callback server, returns the authorize URL for the app to open. The
+        browser redirect lands on the callback below, which exchanges the code,
+        writes ~/.codex/auth.json, and flips the provider to Codex."""
+        from sunday.runtime.providers import codex_auth
+
+        # Already signed in? Skip the browser dance — just activate Codex.
+        from sunday.runtime.providers.codex import codex_available
+        if codex_available():
+            await self._codex_activate()
+            return web.json_response({"connected": True, "email": codex_auth.account_email()})
+
+        verifier = codex_auth.new_verifier()
+        state = codex_auth.new_state()
+        self._codex_login = {"verifier": verifier, "state": state,
+                             "connected": False, "email": None, "error": None}
+        try:
+            await self._start_codex_callback()
+        except OSError as exc:
+            self._codex_login = None
+            return web.json_response({"error": f"could not open the sign-in listener on port 1455 ({exc})"}, status=500)
+        return web.json_response({"auth_url": codex_auth.build_authorize(verifier, state)})
+
+    async def _http_codex_status(self, request: web.Request) -> web.Response:
+        from sunday.runtime.providers import codex_auth
+        from sunday.runtime.providers.codex import codex_available
+        connected = codex_available()
+        pend = self._codex_login or {}
+        return web.json_response({
+            "connected": connected,
+            "email": codex_auth.account_email() if connected else None,
+            "pending": bool(self._codex_login) and not pend.get("connected") and not pend.get("error"),
+            "error": pend.get("error"),
+        })
+
+    async def _start_codex_callback(self) -> None:
+        """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
+        catches the OAuth redirect. Torn down once we have the code."""
+        from sunday.runtime.providers import codex_auth
+
+        async def _cb(req: web.Request) -> web.Response:
+            done_html = ("<!doctype html><meta charset=utf-8><title>Sunday</title>"
+                         "<body style=\"font-family:-apple-system,system-ui;background:#f7f4ef;"
+                         "color:#1c1b19;display:flex;align-items:center;justify-content:center;"
+                         "height:100vh;margin:0\"><div style=\"text-align:center\">"
+                         "<h2 style=\"font-weight:650\">{title}</h2><p style=\"color:#6b6357\">{msg}</p>"
+                         "</div>")
+            login = self._codex_login or {}
+            if req.query.get("state") != login.get("state"):
+                return web.Response(text=done_html.format(title="Sign-in mismatch",
+                    msg="Please try connecting again from Sunday."), content_type="text/html", status=400)
+            err = req.query.get("error")
+            if err:
+                login["error"] = req.query.get("error_description") or err
+                return web.Response(text=done_html.format(title="Sign-in cancelled",
+                    msg="You can close this tab."), content_type="text/html")
+            code = req.query.get("code")
+            if not code:
+                login["error"] = "no authorization code returned"
+                return web.Response(text=done_html.format(title="Sign-in failed",
+                    msg="No code returned. Close this tab and try again."), content_type="text/html", status=400)
+            try:
+                tokens = await codex_auth.exchange_code(code, login["verifier"])
+                email = codex_auth.write_auth(tokens)
+                await self._codex_activate()
+                login["connected"] = True
+                login["email"] = email
+                log.info("codex connected", email=email)
+            except Exception as exc:  # noqa: BLE001
+                login["error"] = str(exc)
+                log.exception("codex code exchange failed")
+                return web.Response(text=done_html.format(title="Sign-in failed",
+                    msg="Something went wrong. Close this tab and try again."), content_type="text/html", status=500)
+            # Tear the callback server down after we've handled the redirect.
+            asyncio.create_task(self._stop_codex_callback())
+            who = f"Connected as {email}." if email else "Connected."
+            return web.Response(text=done_html.format(title="ChatGPT connected",
+                msg=f"{who} You can close this tab and return to Sunday."), content_type="text/html")
+
+        await self._stop_codex_callback()
+        app = web.Application()
+        app.router.add_get("/auth/callback", _cb)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", codex_auth.REDIRECT_PORT)
+        await site.start()
+        self._codex_cb_runner = runner
+
+    async def _stop_codex_callback(self) -> None:
+        if self._codex_cb_runner is not None:
+            try:
+                await self._codex_cb_runner.cleanup()
+            except Exception:  # noqa: BLE001
+                pass
+            self._codex_cb_runner = None
+
+    async def _codex_activate(self) -> None:
+        """Switch the live config to Codex (gpt-5.2) + rebuild the runtime."""
+        from dataclasses import replace
+        if not (self.config.model.name or "").startswith("gpt-5"):
+            self.config.model = replace(self.config.model, name="gpt-5.2")
+        self.config.model = replace(self.config.model, provider="codex")
+        from sunday.runtime import build_runtime
+        self.runtime = build_runtime(self.config)
+
     async def _http_memory_facts(self, request: web.Request) -> web.Response:
         try:
             limit = int(request.query.get("limit", "500"))
@@ -1987,6 +2097,8 @@ class Daemon:
         app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/config", self._http_get_config)
         app.router.add_post("/v1/config", self._http_post_config)
+        app.router.add_post("/v1/codex/login", self._http_codex_login)
+        app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
