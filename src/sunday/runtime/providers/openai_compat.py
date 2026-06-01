@@ -116,7 +116,13 @@ class OpenAICompatProvider:
         # non-OpenRouter base URLs (they ignore unknown extra_body keys, but we
         # only attach it for OpenRouter to be safe).
         if "openrouter" in (self.config.model.base_url or ""):
-            kwargs["extra_body"] = {"provider": {"sort": "latency"}}
+            extra: dict[str, Any] = {"provider": {"sort": "latency"}}
+            # Actually ENABLE reasoning when config asks for it. The flag existed
+            # but was never sent — so the model ran with reasoning off and flailed
+            # on multi-step tool routing. OpenRouter's unified param turns it on.
+            if getattr(self.config.model, "reasoning", False):
+                extra["reasoning"] = {"enabled": True}
+            kwargs["extra_body"] = extra
 
         started = time.monotonic()
         stream = await client.chat.completions.create(**kwargs)
