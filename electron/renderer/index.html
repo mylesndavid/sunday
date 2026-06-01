@@ -170,9 +170,7 @@
   <!-- ─── SETTINGS ─────────────────────────────────────────────────── -->
   <section class="view view-settings" id="view-settings">
     <nav class="set-nav" id="set-nav">
-      <a data-target="sec-connection" class="active">Connection</a>
-      <a data-target="sec-provider">Provider</a>
-      <a data-target="sec-model">Model</a>
+      <a data-target="sec-brain" class="active">Brain</a>
       <a data-target="sec-connections">Connections</a>
       <a data-target="sec-mcp">MCP</a>
       <a data-target="sec-personality">Personality</a>
@@ -184,51 +182,37 @@
       <div class="set-inner">
         <span class="set-saved" id="set-saved" hidden>saved</span>
 
-        <section class="set-block" id="sec-connection">
-          <h2>Connection</h2>
-          <p class="set-help">Run Sunday's brain in the cloud (your VPS) or locally on this Mac. Local mode runs the bundled daemon and can use <strong>Codex</strong> (your ChatGPT login). No IP to type.</p>
-          <div class="runmode" id="set-runmode">
-            <button class="runmode-opt" data-mode="cloud"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.5-8.74A6 6 0 0 0 4.6 12 3.5 3.5 0 0 0 5.5 19z"/></svg>Cloud</button>
-            <button class="runmode-opt" data-mode="local"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M2 20.5h20"/></svg>This Mac</button>
-          </div>
-          <div class="set-actions" id="set-migrate-row" hidden>
-            <span class="set-verify" id="set-migrate-note">Switching to local starts a fresh chat — copy your cloud history + memory down first.</span>
-            <button class="btn btn-primary" id="set-migrate">Copy my history & run locally</button>
-          </div>
-          <details class="set-advanced"><summary>Advanced — set daemon URL manually</summary>
-          <p class="set-help">Which Sunday daemon this app talks to. Change a field and save — the chat reconnects.</p>
-          <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
-          <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
-          <div class="set-actions">
-            <span class="set-verify" id="set-conn-verify"></span>
-            <button class="btn" id="set-conn-test">Test</button>
-            <button class="btn btn-primary" id="set-conn-save">Save connection</button>
-          </div>
-          </details>
-        </section>
+        <section class="set-block" id="sec-brain">
+          <h2>Sunday's brain</h2>
+          <p class="set-help">Where Sunday runs, and which model it thinks with.</p>
 
-        <section class="set-block" id="sec-provider">
-          <h2>Provider</h2>
-          <p class="set-help">Where Sunday's brain runs. OpenRouter (any model, your key) or a direct provider — or <strong>Codex</strong>, which uses your ChatGPT subscription with no API key (it reads your local <code>codex</code> login). Takes effect on the next message.</p>
-          <select id="set-provider-select" class="field">
-            <option value="openrouter">OpenRouter</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="deepseek-direct">DeepSeek</option>
-            <option value="codex">Codex — ChatGPT subscription (no key)</option>
-          </select>
-          <input type="password" id="set-api-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" style="margin-top:8px;">
-          <div class="set-actions">
-            <span class="set-verify" id="set-provider-note"></span>
-            <button class="btn btn-primary" id="set-provider-save">Save provider</button>
+          <!-- WHERE IT RUNS -->
+          <div class="brain-label">Where it runs</div>
+          <div class="brain-cards" id="set-runmode">
+            <button class="brain-card" data-mode="cloud">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.5-8.74A6 6 0 0 0 4.6 12 3.5 3.5 0 0 0 5.5 19z"/></svg>
+              <div class="brain-card-t">Cloud</div>
+              <div class="brain-card-d">Always on. Runs on your server, reachable from anywhere.</div>
+            </button>
+            <button class="brain-card" data-mode="local">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M2 20.5h20"/></svg>
+              <div class="brain-card-t">This Mac</div>
+              <div class="brain-card-d">Private and free. Can use your ChatGPT subscription.</div>
+            </button>
           </div>
-        </section>
+          <div class="brain-inline" id="set-migrate-row" hidden>
+            <span class="set-verify" id="set-migrate-note">Bring your cloud history and memory to this Mac so you don't start fresh.</span>
+            <button class="btn btn-primary" id="set-migrate">Bring my history over</button>
+          </div>
 
-        <section class="set-block" id="sec-model">
-          <h2>Model</h2>
-          <p class="set-help">Sunday's brain — the full OpenRouter catalog. Search, then click one. Models tagged <strong>sees images</strong> can look at the screenshots you send; the rest answer text-only. Takes effect on the next message.</p>
-          <p class="set-help" id="set-model-provider-note" style="color:var(--accent-press);" hidden></p>
-          <div class="model-pick">
+          <!-- MODEL -->
+          <div class="brain-label">Model</div>
+          <!-- This Mac only: use the ChatGPT subscription (Codex) with no key -->
+          <label class="brain-codex" id="set-codex-row" hidden>
+            <input type="checkbox" id="set-codex-toggle">
+            <span><strong>Use my ChatGPT subscription</strong><br><span class="brain-card-d">No API key — runs on your local ChatGPT login (gpt-5.2). Off = pick any model below.</span></span>
+          </label>
+          <div class="model-pick" id="set-model-pick">
             <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
             <div class="model-results" id="set-model-results" hidden></div>
           </div>
@@ -239,6 +223,34 @@
             <span class="set-verify" id="set-model-note"></span>
             <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
           </div>
+
+          <!-- ADVANCED: direct providers, API keys, manual connection -->
+          <details class="set-advanced">
+            <summary>Advanced — direct providers, API keys, manual connection</summary>
+            <p class="set-help">Use a provider directly with your own key (instead of OpenRouter), or point the app at a specific daemon.</p>
+            <label class="brain-field"><span>Provider</span>
+              <select id="set-provider-select" class="field">
+                <option value="openrouter">OpenRouter (any model)</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="deepseek-direct">DeepSeek</option>
+                <option value="codex">Codex — ChatGPT subscription</option>
+              </select>
+            </label>
+            <input type="password" id="set-api-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" style="margin-top:8px;">
+            <div class="set-actions">
+              <span class="set-verify" id="set-provider-note"></span>
+              <button class="btn" id="set-provider-save">Save provider</button>
+            </div>
+            <p class="set-help" id="set-model-provider-note" style="color:var(--accent-press);" hidden></p>
+            <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
+            <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
+            <div class="set-actions">
+              <span class="set-verify" id="set-conn-verify"></span>
+              <button class="btn" id="set-conn-test">Test</button>
+              <button class="btn" id="set-conn-save">Save connection</button>
+            </div>
+          </details>
         </section>
 
         <section class="set-block" id="sec-connections">
