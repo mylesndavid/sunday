@@ -410,7 +410,38 @@ async function refreshBrainProvider() {
     const isCodex = c.model?.provider === 'codex';
     const t = $('#set-codex-toggle'); if (t) t.checked = isCodex;
     applyCodexUI(isCodex);
+    // Show "Connected as …" when a ChatGPT login exists (independent of whether
+    // Codex is the active provider — they may have it connected but toggled off).
+    try {
+      const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json();
+      if (s.connected && s.email) setCodexStatus(`Connected as ${s.email}`, 'ok');
+      else if (!isCodex) setCodexStatus('', '');
+    } catch {}
   } catch {}
+}
+function setCodexStatus(text, state) {
+  const el = $('#set-codex-status'); if (!el) return;
+  el.textContent = text; el.hidden = !text;
+  if (state) el.dataset.state = state; else el.removeAttribute('data-state');
+}
+// Run (or resume) the one-click ChatGPT sign-in. Returns true once connected.
+async function connectCodex() {
+  setCodexStatus('Starting sign-in…', 'wait');
+  const res = await fetch(`${DAEMON_HTTP}/v1/codex/login`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (data.connected) { setCodexStatus(data.email ? `Connected as ${data.email}` : 'Connected', 'ok'); return true; }
+  if (!data.auth_url) throw new Error('no sign-in URL returned');
+  await window.sunday.openExternal(data.auth_url);
+  setCodexStatus('Opening your browser — sign in to ChatGPT, then come back.', 'wait');
+  // Poll until the daemon's callback completes (~3 min budget).
+  for (let i = 0; i < 120; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    let s; try { s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json(); } catch { continue; }
+    if (s.connected) { setCodexStatus(s.email ? `Connected as ${s.email}` : 'Connected', 'ok'); return true; }
+    if (s.error) throw new Error(s.error);
+  }
+  throw new Error('timed out waiting for sign-in');
 }
 // When Codex is on, the model is fixed (gpt-5.2) — hide the OpenRouter picker.
 function applyCodexUI(on) {
@@ -716,19 +747,35 @@ function wire() {
     if (r && r.error) alert(`Couldn't switch: ${r.error}`);
     await refreshRunMode();
   }));
-  // "Use my ChatGPT subscription" (Codex) — This Mac only. Flips provider.
+  // "Use my ChatGPT subscription" (Codex) — This Mac only. Turning it on runs a
+  // one-click browser sign-in (no terminal, no daemon setup); turning it off
+  // just flips the provider back. The login is remembered between toggles.
   $('#set-codex-toggle')?.addEventListener('change', async (e) => {
-    const on = e.target.checked; const note = $('#set-model-note');
+    const on = e.target.checked; const toggle = e.target;
+    if (on) {
+      toggle.disabled = true;
+      try {
+        await connectCodex();           // opens browser, waits for sign-in, activates Codex daemon-side
+        applyCodexUI(true);
+      } catch (err) {
+        toggle.checked = false;
+        setCodexStatus(err.message || 'Sign-in failed', 'fail');
+      } finally { toggle.disabled = false; }
+      return;
+    }
+    // Turning off — back to the OpenRouter catalog. Keep the ChatGPT login.
+    const note = $('#set-model-note');
     try {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: on ? 'codex' : 'openrouter' }),
+        body: JSON.stringify({ provider: 'openrouter' }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { e.target.checked = !on; if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; } return; }
-      applyCodexUI(on);
-      if (note && !on) { note.dataset.state = ''; note.textContent = 'Pick any model below.'; }
-    } catch (err) { e.target.checked = !on; if (note) { note.dataset.state = 'fail'; note.textContent = err.message; } }
+      if (!res.ok) { toggle.checked = true; if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; } return; }
+      applyCodexUI(false);
+      await refreshBrainProvider();     // restores "Connected as …" subtext
+      if (note) { note.dataset.state = ''; note.textContent = 'Pick any model below.'; }
+    } catch (err) { toggle.checked = true; if (note) { note.dataset.state = 'fail'; note.textContent = err.message; } }
   });
   $('#set-migrate')?.addEventListener('click', async () => {
     const note = $('#set-migrate-note'); const btn = $('#set-migrate');
