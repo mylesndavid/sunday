@@ -214,6 +214,36 @@ def _attachments_for(conn: sqlite3.Connection, message_rowid: int) -> list[dict[
     ]
 
 
+def _decode_attributed_body(blob: bytes | None) -> str:
+    """macOS 26 stores almost all message text in `attributedBody` (a binary
+    NSAttributedString `streamtyped` archive), leaving the `text` column NULL —
+    so reading only `text` drops ~all messages. Pull the string out of the
+    archive: it sits after the `NSString` class marker, past a `+` (0x2b) byte,
+    then a length (1 byte, or 0x81/0x82 + little-endian length for longer text)."""
+    if not blob:
+        return ""
+    try:
+        idx = blob.find(b"NSString")
+        if idx == -1:
+            return ""
+        plus = blob.find(b"\x2b", idx)
+        if plus == -1:
+            return ""
+        q = plus + 1
+        marker = blob[q]
+        if marker == 0x81:
+            length = int.from_bytes(blob[q + 1:q + 3], "little"); q += 3
+        elif marker == 0x82:
+            length = int.from_bytes(blob[q + 1:q + 5], "little"); q += 5
+        else:
+            length = marker; q += 1
+        if length <= 0 or q + length > len(blob):
+            return ""
+        return blob[q:q + length].decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _clean_text(raw: str | None) -> str:
     # iMessage embeds U+FFFC (object replacement) where inline attachments sit, and
     # U+FFFD shows up from binary noise. Strip both so previews read clean.
@@ -221,9 +251,12 @@ def _clean_text(raw: str | None) -> str:
 
 
 def _compose_text(raw: str | None, bundle_id: str | None,
-                  payload: bytes | None, atts: list[dict[str, Any]] | None) -> str:
+                  payload: bytes | None, atts: list[dict[str, Any]] | None,
+                  attributed_body: bytes | None = None) -> str:
     """The most readable one-line rendering of a message: text + rich content + attachments."""
-    base = _clean_text(raw)
+    # The `text` column is NULL for almost all messages on modern macOS — the
+    # words live in attributedBody. Fall back to it before anything else.
+    base = _clean_text(raw) or _clean_text(_decode_attributed_body(attributed_body))
     rich = _decode_balloon(bundle_id, payload)
     if rich:
         url = rich.get("url")
@@ -277,11 +310,12 @@ def list_threads(limit: int = 20) -> list[dict[str, Any]]:
                 last_msg.is_from_me,
                 last_msg.date,
                 last_msg.balloon_bundle_id,
-                last_msg.payload_data
+                last_msg.payload_data,
+                last_msg.attributedBody
             FROM chat c
             JOIN (
                 SELECT cmj.chat_id, m.text, m.is_from_me, m.date,
-                       m.balloon_bundle_id, m.payload_data,
+                       m.balloon_bundle_id, m.payload_data, m.attributedBody,
                        ROW_NUMBER() OVER (PARTITION BY cmj.chat_id ORDER BY m.date DESC) AS rn
                 FROM message m
                 JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -296,7 +330,7 @@ def list_threads(limit: int = 20) -> list[dict[str, Any]]:
             participants = _thread_participants(conn, row[0])
             is_group = len(participants) > 1 or bool(row[2])
             name = _chat_label(conn, row[0], row[2], row[1])
-            preview = _compose_text(row[3], row[6], row[7], None)
+            preview = _compose_text(row[3], row[6], row[7], None, row[8])
             if not preview:
                 last_id = conn.execute(
                     "SELECT MAX(m.ROWID) FROM message m "
@@ -326,7 +360,8 @@ def read_thread(chat_identifier: str, limit: int = 30) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT m.ROWID, m.text, m.is_from_me, m.date, h.id AS handle,
-                   m.balloon_bundle_id, m.payload_data, m.associated_message_type
+                   m.balloon_bundle_id, m.payload_data, m.associated_message_type,
+                   m.attributedBody
             FROM message m
             LEFT JOIN handle h ON h.ROWID = m.handle_id
             JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -341,7 +376,7 @@ def read_thread(chat_identifier: str, limit: int = 30) -> list[dict[str, Any]]:
         for row in rows:
             atts = _attachments_for(conn, row[0])
             handle = row[4]
-            text = _compose_text(row[1], row[5], row[6], atts)
+            text = _compose_text(row[1], row[5], row[6], atts, row[8])
             tap = _tapback_label(row[7])
             if tap:
                 text = tap
@@ -369,7 +404,7 @@ def read_recent(limit: int = 20) -> list[dict[str, Any]]:
             """
             SELECT m.ROWID, m.text, m.is_from_me, m.date, h.id, c.chat_identifier,
                    c.display_name, m.balloon_bundle_id, m.payload_data,
-                   m.associated_message_type, c.ROWID
+                   m.associated_message_type, c.ROWID, m.attributedBody
             FROM message m
             LEFT JOIN handle h ON h.ROWID = m.handle_id
             JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
@@ -383,7 +418,7 @@ def read_recent(limit: int = 20) -> list[dict[str, Any]]:
         for row in rows:
             atts = _attachments_for(conn, row[0])
             handle = row[4]
-            text = _compose_text(row[1], row[7], row[8], atts)
+            text = _compose_text(row[1], row[7], row[8], atts, row[11])
             tap = _tapback_label(row[9])
             if tap:
                 text = tap
