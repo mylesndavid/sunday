@@ -5,6 +5,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sunday', {
   getConfig: () => ipcRenderer.invoke('sunday:config'),
   saveConnection: (cfg) => ipcRenderer.invoke('sunday:save-connection', cfg),
+  runMode: () => ipcRenderer.invoke('sunday:run-mode'),
+  setRunMode: (mode) => ipcRenderer.invoke('sunday:set-run-mode', mode),
+  migrateToLocal: () => ipcRenderer.invoke('sunday:migrate-to-local'),
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
   setOpenRouterKey: (key) => ipcRenderer.invoke('sunday:set-openrouter-key', key),
   localToken: () => ipcRenderer.invoke('sunday:local-token'),

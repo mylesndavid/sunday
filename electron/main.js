@@ -307,6 +307,71 @@ ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs, daemonTo
   return true;
 });
 
+// ── run mode: Cloud (remote daemon) ↔ Local (bundled daemon on this Mac) ──
+// A toggle so you never type an IP. Local mode runs the bundled daemon and can
+// use Codex (it reads your ~/.codex login). The cloud URL is remembered so you
+// can flip back.
+const LOCAL_HTTP = 'http://127.0.0.1:8765';
+const LOCAL_WS = 'ws://127.0.0.1:8765/v1/ws';
+function localDaemonToken() {
+  try { return fs.readFileSync(path.join(os.homedir(), '.sunday', 'auth.token'), 'utf8').trim(); } catch { return ''; }
+}
+
+ipcMain.handle('sunday:run-mode', () => {
+  const prefs = loadPrefs();
+  return { local: isLocalDaemon(), cloudHttp: prefs.cloudDaemonHttp || (isLocalDaemon() ? '' : prefs.daemonHttp) || '' };
+});
+
+ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
+  const prefs = loadPrefs();
+  if (mode === 'local') {
+    if (!isLocalDaemon()) savePrefs({ cloudDaemonHttp: prefs.daemonHttp, cloudDaemonWs: prefs.daemonWs, cloudDaemonToken: prefs.daemonToken });
+    savePrefs({ daemonHttp: LOCAL_HTTP, daemonWs: LOCAL_WS });
+    await startEmbeddedDaemon();
+    savePrefs({ daemonToken: localDaemonToken() });
+  } else {
+    const ch = prefs.cloudDaemonHttp, cw = prefs.cloudDaemonWs;
+    if (!ch) return { ok: false, error: 'no cloud daemon saved to switch back to' };
+    savePrefs({ daemonHttp: ch, daemonWs: cw, daemonToken: prefs.cloudDaemonToken || prefs.daemonToken || '' });
+    stopEmbeddedDaemon();
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+  rebuildTrayMenu();
+  return { ok: true, local: mode === 'local' };
+});
+
+// Copy the current (cloud) daemon's data down to this Mac, then switch to
+// local — so you keep your whole history + memory and gain Codex.
+ipcMain.handle('sunday:migrate-to-local', async () => {
+  if (isLocalDaemon()) return { ok: false, error: 'already running locally' };
+  const { daemonHttp, daemonWs } = resolveDaemon();
+  try {
+    const home = path.join(os.homedir(), '.sunday');
+    fs.mkdirSync(home, { recursive: true });
+    const listRes = await fetch(`${daemonHttp}/v1/export`, { headers: _bearer() });
+    if (!listRes.ok) return { ok: false, error: `export list failed: HTTP ${listRes.status}` };
+    const { files } = await listRes.json();
+    const backup = path.join(home, `pre-migrate-${Date.now()}`);
+    for (const f of files) {
+      const r = await fetch(`${daemonHttp}/v1/export?file=${encodeURIComponent(f)}`, { headers: _bearer() });
+      if (!r.ok) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      const dst = path.join(home, f);
+      // back up any existing local db + clear stale WAL/SHM so the copy wins
+      if (fs.existsSync(dst)) { fs.mkdirSync(backup, { recursive: true }); try { fs.renameSync(dst, path.join(backup, f)); } catch {} }
+      for (const suf of ['-wal', '-shm']) { try { fs.unlinkSync(dst + suf); } catch {} }
+      fs.writeFileSync(dst, buf);
+    }
+    savePrefs({ cloudDaemonHttp: daemonHttp, cloudDaemonWs: daemonWs, cloudDaemonToken: loadPrefs().daemonToken,
+                daemonHttp: LOCAL_HTTP, daemonWs: LOCAL_WS });
+    await startEmbeddedDaemon();
+    savePrefs({ daemonToken: localDaemonToken() });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+    rebuildTrayMenu();
+    return { ok: true, files };
+  } catch (e) { return { ok: false, error: e?.message || String(e) }; }
+});
+
 ipcMain.handle('sunday:open-settings', () => {
   switchToView('settings');
   return true;

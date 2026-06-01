@@ -304,6 +304,14 @@ textarea#composer::placeholder { color: var(--text-3); }
 .set-inner { max-width: 600px; margin: 0 auto; }
 .set-saved { position: sticky; top: 0; float: right; font: 500 11px/1 var(--font-mono); color: var(--ok); background: var(--ok-tint); padding: 6px 11px; border-radius: var(--r-pill); animation: pop var(--t-mid) var(--ease-out); }
 @keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; } }
+/* Cloud/Local run-mode segmented toggle */
+.runmode { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-pill); overflow: hidden; margin: 4px 0 12px; }
+.runmode-opt { -webkit-app-region: no-drag; appearance: none; border: 0; background: var(--surface); color: var(--text-2); font: 600 13px/1 var(--font-sans); padding: 9px 18px; cursor: pointer; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.runmode-opt:not(:last-child) { border-right: 1px solid var(--line-strong); }
+.runmode-opt.active { background: var(--accent); color: var(--text-on-accent); }
+.set-advanced { margin-top: 12px; }
+.set-advanced > summary { cursor: pointer; color: var(--text-3); font-size: 13px; list-style: revert; }
+
 .set-block { padding: 6px 0 28px; margin-bottom: 26px; border-bottom: 1px solid var(--line); scroll-margin-top: 12px; }
 .set-block:last-child { border-bottom: 0; }
 .set-block h2 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
