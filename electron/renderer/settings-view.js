@@ -754,9 +754,13 @@ function wire() {
   document.querySelectorAll('#set-runmode .brain-card').forEach((b) => b.addEventListener('click', async () => {
     const mode = b.dataset.mode;
     if (mode === 'local' && !confirm('Run Sunday on this Mac? If you want your cloud chat + memory to come along, use "Bring my history over" first.')) return;
+    b.style.opacity = '0.6';
     const r = await window.sunday.setRunMode(mode);
-    if (r && r.error) alert(`Couldn't switch: ${r.error}`);
-    await refreshRunMode();
+    b.style.opacity = '';
+    // On success the main process reloads the window, which re-inits everything
+    // cleanly — running refreshRunMode() here would race that reload and paint a
+    // half-switched state. Only refresh when the switch FAILED (no reload).
+    if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
   }));
   // "Use my ChatGPT subscription" (Codex) — This Mac only. Turning it on runs a
   // one-click browser sign-in (no terminal, no daemon setup); turning it off

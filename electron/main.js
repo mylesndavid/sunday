@@ -327,7 +327,13 @@ ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
   if (mode === 'local') {
     if (!isLocalDaemon()) savePrefs({ cloudDaemonHttp: prefs.daemonHttp, cloudDaemonWs: prefs.daemonWs, cloudDaemonToken: prefs.daemonToken });
     savePrefs({ daemonHttp: LOCAL_HTTP, daemonWs: LOCAL_WS });
-    await startEmbeddedDaemon();
+    const up = await startEmbeddedDaemon();
+    if (!up) {
+      // Don't strand the user on a "local" brain that never came up — revert so
+      // the UI keeps pointing at the working cloud daemon instead of half-switching.
+      savePrefs({ daemonHttp: prefs.daemonHttp, daemonWs: prefs.daemonWs, daemonToken: prefs.daemonToken });
+      return { ok: false, error: "the local brain didn't start on this Mac — still on cloud" };
+    }
     savePrefs({ daemonToken: localDaemonToken() });
   } else {
     const ch = prefs.cloudDaemonHttp, cw = prefs.cloudDaemonWs;
