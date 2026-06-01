@@ -57,8 +57,15 @@ def _jwt_exp(token: str) -> float | None:
 
 async def _fresh_token(force: bool = False) -> tuple[str, str]:
     """Return (access_token, account_id), refreshing + persisting if expired."""
+    if not AUTH_PATH.exists():
+        raise RuntimeError(
+            "No Codex login on this host (~/.codex/auth.json missing). Run `codex` to "
+            "sign in, or point Sunday at a daemon where you're logged into Codex."
+        )
     auth = json.loads(AUTH_PATH.read_text())
-    tokens = auth["tokens"]
+    tokens = auth.get("tokens") or {}
+    if not tokens.get("refresh_token"):
+        raise RuntimeError("Codex auth.json has no refresh_token — run `codex` to sign in again.")
     access = tokens.get("access_token", "")
     exp = _jwt_exp(access)
     needs = force or not access or (exp is not None and exp - time.time() < 120)

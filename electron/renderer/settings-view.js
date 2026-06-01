@@ -402,12 +402,20 @@ async function refreshRunMode() {
 function updateKeyField() {
   const prov = $('#set-provider-select')?.value;
   const keyInput = $('#set-api-key');
-  if (!keyInput) return;
-  if (prov === 'codex') {
-    keyInput.hidden = true; keyInput.value = '';
-  } else {
-    keyInput.hidden = false;
-    keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`;
+  if (keyInput) {
+    if (prov === 'codex') { keyInput.hidden = true; keyInput.value = ''; }
+    else { keyInput.hidden = false; keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`; }
+  }
+  // The model picker is the OpenRouter catalog — note when it doesn't apply.
+  const note = document.getElementById('set-model-provider-note');
+  if (note) {
+    if (prov === 'openrouter') { note.hidden = true; }
+    else {
+      note.hidden = false;
+      note.textContent = prov === 'codex'
+        ? 'Provider is Codex — using gpt-5.2 on your ChatGPT subscription. The OpenRouter catalog below only applies if you switch the provider back to OpenRouter.'
+        : `Provider is ${prov} — the OpenRouter catalog below only applies when the provider is OpenRouter.`;
+    }
   }
 }
 
@@ -714,7 +722,13 @@ function wire() {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // e.g. picking Codex on a daemon with no ~/.codex login — show the
+        // daemon's real reason instead of pretending it worked.
+        if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; }
+        return;
+      }
       $('#set-api-key').value = '';
       if (note) { note.dataset.state = 'ok'; note.textContent = prov === 'codex' ? 'on — using your ChatGPT login' : `saved${key ? ' (key updated)' : ''}`; }
     } catch (err) {
