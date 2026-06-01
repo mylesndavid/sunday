@@ -137,21 +137,21 @@ def _decode_balloon(bundle_id: str | None, payload: bytes | None) -> dict[str, A
     bid = (bundle_id or "")
     if "Maps" in bid or "location" in bid.lower():
         return {"kind": "location",
-                "summary": "📍 Shared location" + (f": {title}" if title else "") + (f" ({primary})" if primary else "")}
+                "summary": "Shared location" + (f": {title}" if title else "") + (f" ({primary})" if primary else "")}
     if "PeerPayment" in bid or "Passbook" in bid:
-        return {"kind": "payment", "summary": "💸 Apple Cash / payment"}
+        return {"kind": "payment", "summary": "Apple Cash / payment"}
     if primary:
         host = re.sub(r"^https?://(www\.)?", "", primary).split("/")[0]
         label = title or host
         return {"kind": "link", "url": primary, "title": title,
-                "summary": f"🔗 {label} — {primary}" if title else f"🔗 {primary}"}
+                "summary": f"Link: {label} — {primary}" if title else f"Link: {primary}"}
     return None
 
 
 # Tapback reactions: associated_message_type encodes which one (2000s add, 3000s remove).
 _TAPBACKS = {
-    2000: "❤️ Loved", 2001: "👍 Liked", 2002: "👎 Disliked",
-    2003: "😂 Laughed at", 2004: "‼️ Emphasized", 2005: "❓ Questioned",
+    2000: "Loved", 2001: "Liked", 2002: "Disliked",
+    2003: "Laughed at", 2004: "Emphasized", 2005: "Questioned",
 }
 
 
@@ -169,12 +169,12 @@ def _describe_attachment(att: dict[str, Any]) -> str:
     mime = (att.get("mime_type") or "").lower()
     name = att.get("filename") or "file"
     if mime.startswith("image/"):
-        return f"🖼 image ({name})"
+        return f"image ({name})"
     if mime.startswith("video/"):
-        return f"🎬 video ({name})"
+        return f"video ({name})"
     if mime.startswith("audio/"):
-        return "🎙 audio message"
-    return f"📎 {name}"
+        return "audio message"
+    return name
 
 
 def _connect_read_only() -> sqlite3.Connection:
