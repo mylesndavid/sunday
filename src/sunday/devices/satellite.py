@@ -8,7 +8,16 @@ machine via tools — same shape as everything else.
 Usage:
     sunday-satellite --server ws://<main-host>:8765/v1/devices/ws \\
                      --device-id mac-studio \\
-                     --token <shared-secret>
+                     --token <daemon-auth-token>
+
+The daemon authenticates the device connection with its bearer token (the
+one at ~/.sunday/auth.token on the daemon host). Resolution order:
+
+    --token  >  $SUNDAY_AUTH_TOKEN  >  local ~/.sunday/auth.token
+
+so a satellite running on the SAME machine as the daemon needs no flag at
+all, while a satellite on another box must be given the daemon's token
+explicitly (copy it from the daemon host, or set SUNDAY_AUTH_TOKEN).
 """
 
 from __future__ import annotations
@@ -16,6 +25,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import os
 import platform
 import sys
 import uuid
@@ -348,6 +358,33 @@ HANDLERS = {
 # ─── main loop ──────────────────────────────────────────────────────────
 
 
+def _resolve_token(cli_token: str | None) -> str | None:
+    """Find the daemon's bearer token: explicit flag, then env, then the
+    local token file (covers a satellite co-located with the daemon)."""
+    for candidate in (cli_token, os.environ.get("SUNDAY_AUTH_TOKEN")):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    try:
+        from sunday.paths import auth_token_path
+        p = auth_token_path()
+        if p.exists():
+            tok = p.read_text(encoding="utf-8").strip()
+            if tok:
+                return tok
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _handshake_status(exc: Exception) -> int | None:
+    """Pull the HTTP status out of a websockets handshake rejection, across
+    library versions (v13's InvalidStatus.response.status_code and v12's
+    InvalidStatusCode.status_code)."""
+    resp = getattr(exc, "response", None)
+    code = getattr(resp, "status_code", None) if resp is not None else None
+    return code if code is not None else getattr(exc, "status_code", None)
+
+
 async def _serve(server_url: str, device_id: str, token: str | None) -> None:
     try:
         import websockets
@@ -401,8 +438,19 @@ async def _serve(server_url: str, device_id: str, token: str | None) -> None:
             log.info("shutting down")
             return
         except Exception as exc:  # noqa: BLE001
-            log.warning("connection lost, reconnecting in 5s", error=str(exc))
-            await asyncio.sleep(5)
+            status = _handshake_status(exc)
+            if status in (401, 403):
+                log.error(
+                    "daemon rejected the device connection — bad or missing auth token. "
+                    "Pass the daemon's token via --token or SUNDAY_AUTH_TOKEN "
+                    "(it's the value in ~/.sunday/auth.token on the daemon host). "
+                    "Retrying in 30s.",
+                    status=status,
+                )
+                await asyncio.sleep(30)
+            else:
+                log.warning("connection lost, reconnecting in 5s", error=str(exc))
+                await asyncio.sleep(5)
 
 
 async def _dispatch(ws: Any, cmd: dict[str, Any]) -> None:
@@ -440,7 +488,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="sunday-satellite", description=__doc__)
     parser.add_argument("--server", required=True, help="ws://host:port/v1/devices/ws of the main Sunday daemon.")
     parser.add_argument("--device-id", default=platform.node(), help="Identifier for this machine.")
-    parser.add_argument("--token", default=None, help="Optional shared secret bearer token.")
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Daemon bearer token. Falls back to $SUNDAY_AUTH_TOKEN, then the "
+             "local ~/.sunday/auth.token (so a co-located satellite needs none).",
+    )
     args = parser.parse_args()
 
     structlog.configure(processors=[
@@ -449,8 +502,16 @@ def main() -> None:
         structlog.dev.ConsoleRenderer(),
     ])
 
+    token = _resolve_token(args.token)
+    if not token:
+        log.warning(
+            "no auth token found (looked at --token, $SUNDAY_AUTH_TOKEN, and "
+            "~/.sunday/auth.token) — the daemon will reject this connection. "
+            "Copy the daemon's token from ~/.sunday/auth.token on its host."
+        )
+
     try:
-        asyncio.run(_serve(args.server, args.device_id, args.token))
+        asyncio.run(_serve(args.server, args.device_id, token))
     except KeyboardInterrupt:
         log.info("bye")
 

@@ -92,9 +92,16 @@ function start(prefs) {
     return false;
   }
   logLine(logPath, `[satellite] spawning ${resolved.command} ${resolved.args.join(' ')}`);
+  // The daemon now authenticates device connections. Hand the satellite the
+  // bearer token via the environment (NOT a CLI arg — args get logged above,
+  // env doesn't). A local satellite can still self-discover ~/.sunday/auth.token,
+  // so this mainly matters when pointing at a remote daemon.
+  const childEnv = { ...process.env, PATH: `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:${process.env.PATH || ''}` };
+  const token = prefs.daemonToken || process.env.SUNDAY_AUTH_TOKEN || '';
+  if (token) childEnv.SUNDAY_AUTH_TOKEN = token;
   child = spawn(resolved.command, resolved.args, {
     cwd: resolved.cwd,
-    env: { ...process.env, PATH: `/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:${process.env.PATH || ''}` },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (d) => logLine(logPath, `[out] ${d.toString().trimEnd()}`));

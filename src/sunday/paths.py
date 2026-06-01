@@ -26,6 +26,12 @@ def socket_path() -> Path:
     return sunday_home() / "sunday.sock"
 
 
+def auth_token_path() -> Path:
+    """The shared bearer token for the HTTP/WS API. Minted by the daemon on
+    first start; read by the desktop app and by a local satellite."""
+    return sunday_home() / "auth.token"
+
+
 def db_path() -> Path:
     return sunday_home() / "sunday.db"
 

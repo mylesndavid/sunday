@@ -29,7 +29,7 @@ from sunday.config import load_config
 from sunday.devices.manager import DeviceManager
 from sunday.ipc import IpcError, read_json, write_json
 from sunday.memory import Memory, extract_facts
-from sunday.paths import ensure_home, socket_path, sunday_home
+from sunday.paths import auth_token_path, ensure_home, socket_path
 from sunday.tools import default_registry
 
 log = structlog.get_logger("sunday.daemon")
@@ -67,7 +67,7 @@ _AUTH_TOKEN_CACHE: str | None = None
 
 
 def _auth_token_path() -> Path:
-    return sunday_home() / "auth.token"
+    return auth_token_path()
 
 
 def get_or_create_auth_token() -> str:
@@ -99,7 +99,16 @@ def get_or_create_auth_token() -> str:
 #                        and have no way to carry our bearer token
 #   /v1/health        — load balancer / uptime probes
 #   /v1/auth/check    — for the desktop app to verify a token is valid
-_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/devices/ws")
+#   /v1/ws            — browser WebSocket; the handshake can't set an
+#                        Authorization header, so _ws_handler enforces the
+#                        token via the ?token= query param instead.
+#
+# /v1/devices/ws is deliberately NOT exempt. A satellite is a real client
+# (the `websockets` lib, not a browser) and CAN set Authorization on the
+# handshake — it already sends `Bearer <token>`. Letting it ride the normal
+# middleware means an unauthenticated peer can't register a device, hijack a
+# device_id, or feed the brain forged tool results over a public daemon.
+_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws")
 
 
 @web.middleware
