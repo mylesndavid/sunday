@@ -1304,7 +1304,8 @@ ipcMain.handle('sunday:install-local-transcription', async (evt) => {
 });
 
 ipcMain.handle('sunday:observer-status', () => ({
-  running: !!(captureWindow && observerState.active),
+  enabled: loadPrefs().observer === true,      // the on/off intent (what the toggle reflects)
+  running: !!(captureWindow && observerState.active),   // capture confirmed live (status text)
   mic: micStatus(),
   error: observerState.error,
   lastChunkAt: observerState.lastChunkAt,
@@ -1314,6 +1315,7 @@ ipcMain.handle('sunday:observer-set', async (_evt, on) => {
   if (on) { await startObserver(); savePrefs({ observer: true }); }
   else    { stopObserver();        savePrefs({ observer: false }); }
   return {
+    enabled: !!on,
     running: !!(captureWindow && observerState.active),
     mic: micStatus(),
     error: observerState.error,
@@ -1333,16 +1335,16 @@ ipcMain.on('sunday:wake-capture-state', (_evt, state) => {
 });
 
 ipcMain.handle('sunday:wake-status', () => ({
+  enabled: loadPrefs().wake === true,          // opt-in: only enabled when explicitly true
   running: !!(wakeWindow && wakeState.active),
   mic: micStatus(),
   error: wakeState.error,
-  enabled: loadPrefs().wake !== false,
 }));
 
 ipcMain.handle('sunday:wake-set', async (_evt, on) => {
   if (on) { await startWake(); savePrefs({ wake: true }); }
   else    { stopWake();        savePrefs({ wake: false }); }
-  return { running: !!(wakeWindow && wakeState.active), mic: micStatus(), error: wakeState.error };
+  return { enabled: !!on, running: !!(wakeWindow && wakeState.active), mic: micStatus(), error: wakeState.error };
 });
 
 // A finished ~2.5s window arrives from the wake window → transcribe → match.

@@ -474,26 +474,27 @@ function wire() {
     const statusEl = $('#set-observer-status');
     const btn = $('#set-observer-toggle');
     const mic = s.mic || 'unknown';
-    if (s.running) {
-      statusEl.dataset.state = 'ok';
-      statusEl.textContent = 'on — listening';
-      btn.textContent = 'Turn off';
-    } else if (s.error && s.error.startsWith('mic-denied')) {
+    // The BUTTON reflects the on/off intent (enabled) so it always flips and
+    // you can always turn it off. The STATUS text reflects the live state.
+    btn.textContent = s.enabled ? 'Turn off' : 'Turn on';
+    if (s.error && s.error.startsWith('mic-denied')) {
       statusEl.dataset.state = 'fail';
       statusEl.textContent = 'mic permission denied — enable Sunday in System Settings → Privacy → Microphone';
-      btn.textContent = 'Turn on';
     } else if (s.error && s.error.startsWith('mic-')) {
       statusEl.dataset.state = 'fail';
       statusEl.textContent = `mic not available (${mic})`;
-      btn.textContent = 'Turn on';
     } else if (s.error) {
       statusEl.dataset.state = 'fail';
       statusEl.textContent = `couldn't start: ${s.error}`;
-      btn.textContent = 'Turn on';
+    } else if (s.enabled && s.running) {
+      statusEl.dataset.state = 'ok';
+      statusEl.textContent = 'on — listening';
+    } else if (s.enabled) {
+      statusEl.dataset.state = '';
+      statusEl.textContent = 'on — starting…';
     } else {
       statusEl.dataset.state = '';
       statusEl.textContent = 'off';
-      btn.textContent = 'Turn on';
     }
   }
   async function refreshObserverUI() {
@@ -522,7 +523,7 @@ function wire() {
         return;
       }
       const s = await window.sunday.observerStatus();
-      const result = await window.sunday.observerSet(!s.running);
+      const result = await window.sunday.observerSet(!s.enabled);   // toggle the intent, not live-state
       setObserverUI(result);
       // Always poll after Turn-on: state may take a few ticks to settle
       // (capture window has to load + getUserMedia has to succeed).
@@ -541,21 +542,20 @@ function wire() {
     const statusEl = $('#set-wake-status');
     const btn = $('#set-wake-toggle');
     if (!statusEl || !btn) return;
-    if (s.running) {
-      statusEl.dataset.state = 'ok'; statusEl.textContent = 'on — listening for "Hey Sunday"';
-      btn.textContent = 'Turn off';
-    } else if (s.error && s.error.startsWith('mic-denied')) {
+    btn.textContent = s.enabled ? 'Turn off' : 'Turn on';
+    if (s.error && s.error.startsWith('mic-denied')) {
       statusEl.dataset.state = 'fail';
       statusEl.textContent = 'mic permission denied — enable Sunday in System Settings → Privacy → Microphone';
-      btn.textContent = 'Turn on';
     } else if (s.error && s.error.startsWith('mic-')) {
       statusEl.dataset.state = 'fail'; statusEl.textContent = `mic not available (${s.mic || 'unknown'})`;
-      btn.textContent = 'Turn on';
     } else if (s.error) {
       statusEl.dataset.state = 'fail'; statusEl.textContent = `couldn't start: ${s.error}`;
-      btn.textContent = 'Turn on';
+    } else if (s.enabled && s.running) {
+      statusEl.dataset.state = 'ok'; statusEl.textContent = 'on — listening for "Hey Sunday"';
+    } else if (s.enabled) {
+      statusEl.dataset.state = ''; statusEl.textContent = 'on — starting…';
     } else {
-      statusEl.dataset.state = ''; statusEl.textContent = 'off'; btn.textContent = 'Turn on';
+      statusEl.dataset.state = ''; statusEl.textContent = 'off';
     }
   }
   async function refreshWakeUI() {
@@ -575,7 +575,7 @@ function wire() {
         return;
       }
       const s = await window.sunday.wakeStatus();
-      setWakeUI(await window.sunday.wakeSet(!s.running));
+      setWakeUI(await window.sunday.wakeSet(!s.enabled));   // toggle the intent, not live-state
       startWakePolling();
     } finally { btn.disabled = false; }
   });
