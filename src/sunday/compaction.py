@@ -138,19 +138,20 @@ def tail_messages(chat) -> list:
         if budget <= 0:
             break
 
-    # Boundary alignment: a valid sequence must begin at a user turn. Advance
-    # forward to the first user message at/after the budget cut.
-    kept = recent[start:]
-    for i, m in enumerate(kept):
-        if m.role == "user":
-            return kept[i:]
-    # No user message in the budgeted slice — this happens when a huge tool
-    # result eats the whole budget. Never strand the model with only tool
-    # output and no question: walk back to the most recent user message.
-    for i in range(len(recent) - 1, -1, -1):
+    # Boundary alignment: a valid sequence must begin at a user turn. Align
+    # BACKWARD — to the user message that STARTS the turn the budget cut landed
+    # in — not forward to the next one. Forward alignment drops a whole recent
+    # assistant turn when the cut lands inside it (e.g. a 14-iteration tool turn
+    # with no user message and big tool blobs that eat the budget). That strips
+    # the assistant's OWN just-produced conclusion from the next turn's context —
+    # the agent gives you guest emails right after it said it lacked them and has
+    # no memory of the event it just made. Backward alignment keeps the most
+    # recent turn whole (worst case ~one extra turn over budget, which is fine).
+    for i in range(start, -1, -1):
         if recent[i].role == "user":
             return recent[i:]
-    return kept
+    # No user message at all in the recent window — return what we budgeted.
+    return recent[start:]
 
 
 async def maybe_compact(chat, config: SundayConfig) -> None:
