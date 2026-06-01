@@ -1245,6 +1245,32 @@ class Daemon:
             # The router caches Provider instances per provider_name; we patch in-place.
             applied["model_name"] = new_name.strip()
 
+        # Provider swap (e.g. "codex" to use your ChatGPT subscription). Rebuilds
+        # the runtime below so the next turn routes through the new provider.
+        if "provider" in body:
+            from dataclasses import replace
+            prov = body["provider"]
+            valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex"}
+            if prov not in valid:
+                return web.json_response({"error": f"provider must be one of {sorted(valid)}"}, status=400)
+            self.config.model = replace(self.config.model, provider=prov)
+            applied["provider"] = prov
+
+        # API keys — write a credential (OPENROUTER_API_KEY, OPENAI_API_KEY, …).
+        if isinstance(body.get("credentials"), dict):
+            from sunday.credentials import set_credential
+            saved = []
+            for k, v in body["credentials"].items():
+                if isinstance(v, str) and v.strip():
+                    set_credential(k.strip(), v.strip())
+                    saved.append(k.strip())
+            applied["credentials"] = saved
+
+        # Rebuild the runtime if anything affecting routing changed.
+        if any(x in applied for x in ("provider", "credentials")):
+            from sunday.runtime import build_runtime
+            self.runtime = build_runtime(self.config)
+
         return web.json_response({"applied": applied, "ok": True})
 
     async def _http_memory_facts(self, request: web.Request) -> web.Response:
