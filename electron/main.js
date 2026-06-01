@@ -104,24 +104,66 @@ async function daemonHealthy() {
   } catch { return false; }
 }
 
+// The local bearer token. The APP owns it: read ~/.sunday/auth.token, or mint
+// one and persist it. We hand this to the daemon via env so the two always
+// agree — the daemon used to mint its own in memory and could drift from what
+// the app reads off disk, breaking This Mac auth.
+function localAuthToken() {
+  const p = path.join(os.homedir(), '.sunday', 'auth.token');
+  try { const t = fs.readFileSync(p, 'utf8').trim(); if (t) return t; } catch {}
+  const tok = 'sunday_' + require('node:crypto').randomBytes(32).toString('base64url');
+  try { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, tok, { mode: 0o600 }); } catch {}
+  return tok;
+}
+
+// Does the daemon on 8765 accept OUR token? A stale daemon (old token cached in
+// memory) is healthy but unauthable — we must not reuse it.
+async function daemonAcceptsToken(token) {
+  try {
+    const res = await fetch(`${LOCAL_HTTP}/v1/auth/check`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }), signal: AbortSignal.timeout(1500),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
+// Kill whatever is squatting the local daemon port (a stale daemon from a prior
+// run that won't accept our token). Best-effort; macOS/Linux.
+function killStaleDaemon() {
+  try {
+    require('node:child_process').execSync(
+      "lsof -ti tcp:8765 -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; pkill -9 -f sunday-daemon/sunday-daemon 2>/dev/null",
+      { stdio: 'ignore', shell: '/bin/bash' });
+  } catch {}
+}
+
 async function startEmbeddedDaemon() {
   if (daemonChild) return true;
   if (!isLocalDaemon()) return false;          // remote daemon — not ours to run
-  if (await daemonHealthy()) return true;       // already running (dev `sunday start`)
+  const token = localAuthToken();
+  // Reuse an already-running local daemon ONLY if it accepts our token; otherwise
+  // it's stale — kill it and spawn a fresh one that uses the token we pass.
+  if (await daemonHealthy()) {
+    if (await daemonAcceptsToken(token)) return true;
+    console.warn('local daemon on 8765 rejects our token — killing stale instance');
+    killStaleDaemon();
+    await new Promise((r) => setTimeout(r, 1000));
+  }
   const bin = bundledDaemonBinary();
   if (!bin) { console.warn('no bundled daemon binary'); return false; }
   console.log('spawning embedded daemon:', bin);
   daemonChild = require('node:child_process').spawn(bin, [], {
     stdio: 'ignore',
-    env: { ...process.env },
+    env: { ...process.env, SUNDAY_AUTH_TOKEN: token },   // app-owned token wins
     detached: false,
   });
   daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });
   daemonChild.on('error', (e) => { console.warn('daemon spawn error', e?.message); daemonChild = null; });
-  // Wait up to ~20s for it to come up.
+  // Wait up to ~20s for it to come up AND accept our token.
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 500));
-    if (await daemonHealthy()) { console.log('embedded daemon healthy'); return true; }
+    if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('embedded daemon healthy'); return true; }
   }
   console.warn('embedded daemon never became healthy');
   return false;
