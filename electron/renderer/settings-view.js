@@ -393,11 +393,31 @@ const _KEY_FOR = {
 async function refreshRunMode() {
   try {
     const m = await window.sunday.runMode();
-    document.querySelectorAll('#set-runmode .runmode-opt').forEach((b) =>
+    document.querySelectorAll('#set-runmode .brain-card').forEach((b) =>
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
-    const row = $('#set-migrate-row');
-    if (row) row.hidden = !!m.local;   // only offer "copy history down" while on cloud
+    const mig = $('#set-migrate-row');
+    if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
+    const codexRow = $('#set-codex-row');
+    if (codexRow) codexRow.hidden = !m.local;  // "use my ChatGPT" only makes sense on This Mac
+    await refreshBrainProvider();
   } catch {}
+}
+
+// Reflect the daemon's current provider into the Codex toggle + model picker.
+async function refreshBrainProvider() {
+  try {
+    const c = await (await fetch(`${DAEMON_HTTP}/v1/config`)).json();
+    const isCodex = c.model?.provider === 'codex';
+    const t = $('#set-codex-toggle'); if (t) t.checked = isCodex;
+    applyCodexUI(isCodex);
+  } catch {}
+}
+// When Codex is on, the model is fixed (gpt-5.2) — hide the OpenRouter picker.
+function applyCodexUI(on) {
+  const pick = $('#set-model-pick'); if (pick) pick.style.display = on ? 'none' : '';
+  const save = $('#set-model-save'); if (save) save.style.display = on ? 'none' : '';
+  const note = $('#set-model-note');
+  if (note && on) { note.dataset.state = 'ok'; note.textContent = 'Using ChatGPT (gpt-5.2) — no model to pick.'; }
 }
 function updateKeyField() {
   const prov = $('#set-provider-select')?.value;
@@ -689,13 +709,27 @@ function wire() {
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
   // ── run mode (cloud / local) + migrate ──
-  document.querySelectorAll('#set-runmode .runmode-opt').forEach((b) => b.addEventListener('click', async () => {
+  document.querySelectorAll('#set-runmode .brain-card').forEach((b) => b.addEventListener('click', async () => {
     const mode = b.dataset.mode;
-    if (mode === 'local' && !confirm('Run Sunday locally on this Mac? If you want to keep your cloud chat + memory, use "Copy my history" first.')) return;
+    if (mode === 'local' && !confirm('Run Sunday on this Mac? If you want your cloud chat + memory to come along, use "Bring my history over" first.')) return;
     const r = await window.sunday.setRunMode(mode);
     if (r && r.error) alert(`Couldn't switch: ${r.error}`);
     await refreshRunMode();
   }));
+  // "Use my ChatGPT subscription" (Codex) — This Mac only. Flips provider.
+  $('#set-codex-toggle')?.addEventListener('change', async (e) => {
+    const on = e.target.checked; const note = $('#set-model-note');
+    try {
+      const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: on ? 'codex' : 'openrouter' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { e.target.checked = !on; if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; } return; }
+      applyCodexUI(on);
+      if (note && !on) { note.dataset.state = ''; note.textContent = 'Pick any model below.'; }
+    } catch (err) { e.target.checked = !on; if (note) { note.dataset.state = 'fail'; note.textContent = err.message; } }
+  });
   $('#set-migrate')?.addEventListener('click', async () => {
     const note = $('#set-migrate-note'); const btn = $('#set-migrate');
     btn.disabled = true; const prev = note ? note.textContent : '';
