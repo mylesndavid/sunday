@@ -186,6 +186,16 @@
 
         <section class="set-block" id="sec-connection">
           <h2>Connection</h2>
+          <p class="set-help">Run Sunday's brain in the cloud (your VPS) or locally on this Mac. Local mode runs the bundled daemon and can use <strong>Codex</strong> (your ChatGPT login). No IP to type.</p>
+          <div class="runmode" id="set-runmode">
+            <button class="runmode-opt" data-mode="cloud">☁ Cloud</button>
+            <button class="runmode-opt" data-mode="local">💻 This Mac</button>
+          </div>
+          <div class="set-actions" id="set-migrate-row" hidden>
+            <span class="set-verify" id="set-migrate-note">Switching to local starts a fresh chat — copy your cloud history + memory down first.</span>
+            <button class="btn btn-primary" id="set-migrate">Copy my history & run locally</button>
+          </div>
+          <details class="set-advanced"><summary>Advanced — set daemon URL manually</summary>
           <p class="set-help">Which Sunday daemon this app talks to. Change a field and save — the chat reconnects.</p>
           <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
           <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
@@ -194,6 +204,7 @@
             <button class="btn" id="set-conn-test">Test</button>
             <button class="btn btn-primary" id="set-conn-save">Save connection</button>
           </div>
+          </details>
         </section>
 
         <section class="set-block" id="sec-provider">

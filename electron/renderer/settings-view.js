@@ -37,6 +37,7 @@ export async function loadAll() {
     $('#set-model').value = c.model?.name || '';
     const psel = $('#set-provider-select');
     if (psel) { psel.value = c.model?.provider || 'openrouter'; updateKeyField(); }
+    refreshRunMode();
     await loadModels();
     showCurrentModel();
     defaultPrompt = c.identity_prompt?.default || '';
@@ -389,6 +390,15 @@ const _KEY_FOR = {
   openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY', 'deepseek-direct': 'DEEPSEEK_API_KEY',
 };
+async function refreshRunMode() {
+  try {
+    const m = await window.sunday.runMode();
+    document.querySelectorAll('#set-runmode .runmode-opt').forEach((b) =>
+      b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
+    const row = $('#set-migrate-row');
+    if (row) row.hidden = !!m.local;   // only offer "copy history down" while on cloud
+  } catch {}
+}
 function updateKeyField() {
   const prov = $('#set-provider-select')?.value;
   const keyInput = $('#set-api-key');
@@ -670,6 +680,28 @@ function wire() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`); flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
+  // ── run mode (cloud / local) + migrate ──
+  document.querySelectorAll('#set-runmode .runmode-opt').forEach((b) => b.addEventListener('click', async () => {
+    const mode = b.dataset.mode;
+    if (mode === 'local' && !confirm('Run Sunday locally on this Mac? If you want to keep your cloud chat + memory, use "Copy my history" first.')) return;
+    const r = await window.sunday.setRunMode(mode);
+    if (r && r.error) alert(`Couldn't switch: ${r.error}`);
+    await refreshRunMode();
+  }));
+  $('#set-migrate')?.addEventListener('click', async () => {
+    const note = $('#set-migrate-note'); const btn = $('#set-migrate');
+    btn.disabled = true; const prev = note ? note.textContent : '';
+    if (note) note.textContent = 'Copying your history + memory down…';
+    try {
+      const r = await window.sunday.migrateToLocal();
+      if (note) note.textContent = r.ok
+        ? `Copied ${(r.files || []).length} databases — now running locally on this Mac.`
+        : `Failed: ${r.error}`;
+      await refreshRunMode();
+    } catch (e) { if (note) note.textContent = `Failed: ${e.message}`; }
+    finally { btn.disabled = false; }
+  });
+
   // ── provider + API key ──
   $('#set-provider-select')?.addEventListener('change', updateKeyField);
   $('#set-provider-save')?.addEventListener('click', async () => {

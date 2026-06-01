@@ -539,6 +539,31 @@ class Daemon:
         self._active_control.steer(text)
         return web.json_response({"ok": True, "steered": True})
 
+    async def _http_export(self, request: web.Request) -> web.Response:
+        """Hand off this daemon's data so it can be migrated to another machine
+        (e.g. cloud -> local to use Codex). Without ?file: list the available
+        DBs. With ?file=<name>: stream that DB (WAL-checkpointed for a
+        consistent copy). Auth-gated by the middleware."""
+        import sqlite3
+        from sunday.paths import sunday_home
+        allowed = ["sunday.db", "memories.db", "atoms.db", "conversations.db", "interjections.db"]
+        home = sunday_home()
+        name = request.query.get("file", "")
+        if not name:
+            return web.json_response({"files": [n for n in allowed if (home / n).exists()]})
+        if name not in allowed:
+            return web.json_response({"error": "not exportable"}, status=400)
+        p = home / name
+        if not p.exists():
+            return web.json_response({"error": "no such db"}, status=404)
+        try:
+            c = sqlite3.connect(str(p))
+            c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            c.close()
+        except Exception:  # noqa: BLE001
+            pass   # best-effort checkpoint; a slightly-behind copy is still fine
+        return web.FileResponse(p, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
     async def _http_chat_clear(self, request: web.Request) -> web.Response:
         """Wipe the conversation (fresh start). Clears the message log + the
         rolling compaction summary. Durable memory facts are untouched."""
@@ -1920,6 +1945,7 @@ class Daemon:
         app.router.add_post("/v1/task/stop", self._http_task_stop)
         app.router.add_post("/v1/task/steer", self._http_task_steer)
         app.router.add_post("/v1/chat/clear", self._http_chat_clear)
+        app.router.add_get("/v1/export", self._http_export)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/health", self._http_health)
