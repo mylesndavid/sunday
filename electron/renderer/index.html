@@ -195,6 +195,23 @@
           </div>
         </section>
 
+        <section class="set-block" id="sec-provider">
+          <h2>Provider</h2>
+          <p class="set-help">Where Sunday's brain runs. OpenRouter (any model, your key) or a direct provider — or <strong>Codex</strong>, which uses your ChatGPT subscription with no API key (it reads your local <code>codex</code> login). Takes effect on the next message.</p>
+          <select id="set-provider-select" class="field">
+            <option value="openrouter">OpenRouter</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="deepseek-direct">DeepSeek</option>
+            <option value="codex">Codex — ChatGPT subscription (no key)</option>
+          </select>
+          <input type="password" id="set-api-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" style="margin-top:8px;">
+          <div class="set-actions">
+            <span class="set-verify" id="set-provider-note"></span>
+            <button class="btn btn-primary" id="set-provider-save">Save provider</button>
+          </div>
+        </section>
+
         <section class="set-block" id="sec-model">
           <h2>Model</h2>
           <p class="set-help">Sunday's brain — the full OpenRouter catalog. Search, then click one. Models tagged <strong>sees images</strong> can look at the screenshots you send; the rest answer text-only. Takes effect on the next message.</p>
