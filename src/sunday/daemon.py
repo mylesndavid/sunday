@@ -71,11 +71,28 @@ def _auth_token_path() -> Path:
 
 
 def get_or_create_auth_token() -> str:
-    """Read the bearer token from disk; generate + persist one if missing."""
+    """Read the bearer token from disk; generate + persist one if missing.
+
+    When the desktop app spawns the embedded daemon it passes the token it will
+    use via the SUNDAY_AUTH_TOKEN env var — that takes precedence so the app and
+    daemon can never disagree (the old file-only path raced: the daemon could
+    cache a token the app never managed to read). We still persist it so a
+    satellite or a later read picks it up."""
+    import os
     global _AUTH_TOKEN_CACHE
     if _AUTH_TOKEN_CACHE:
         return _AUTH_TOKEN_CACHE
     p = _auth_token_path()
+    env_tok = (os.environ.get("SUNDAY_AUTH_TOKEN") or "").strip()
+    if env_tok:
+        _AUTH_TOKEN_CACHE = env_tok
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(env_tok, encoding="utf-8")
+            p.chmod(0o600)
+        except Exception:  # noqa: BLE001
+            pass
+        return env_tok
     if p.exists():
         tok = p.read_text(encoding="utf-8").strip()
         if tok:
