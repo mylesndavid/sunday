@@ -35,6 +35,8 @@ export async function loadAll() {
     const c = await res.json();
     $('#set-provider').value = c.model?.provider || '';
     $('#set-model').value = c.model?.name || '';
+    const psel = $('#set-provider-select');
+    if (psel) { psel.value = c.model?.provider || 'openrouter'; updateKeyField(); }
     await loadModels();
     showCurrentModel();
     defaultPrompt = c.identity_prompt?.default || '';
@@ -382,6 +384,23 @@ function pollProviderConnected(name, n) {
 
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
 
+// Codex needs no key (uses the local ChatGPT login); the others take one.
+const _KEY_FOR = {
+  openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY', 'deepseek-direct': 'DEEPSEEK_API_KEY',
+};
+function updateKeyField() {
+  const prov = $('#set-provider-select')?.value;
+  const keyInput = $('#set-api-key');
+  if (!keyInput) return;
+  if (prov === 'codex') {
+    keyInput.hidden = true; keyInput.value = '';
+  } else {
+    keyInput.hidden = false;
+    keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`;
+  }
+}
+
 // ── model picker (searchable OpenRouter catalog) ──
 let allModels = [];
 let modelsLoaded = false;
@@ -651,6 +670,26 @@ function wire() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`); flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
+  // ── provider + API key ──
+  $('#set-provider-select')?.addEventListener('change', updateKeyField);
+  $('#set-provider-save')?.addEventListener('click', async () => {
+    const prov = $('#set-provider-select').value;
+    const note = $('#set-provider-note');
+    const body = { provider: prov };
+    const key = $('#set-api-key').value.trim();
+    if (prov !== 'codex' && key) body.credentials = { [_KEY_FOR[prov]]: key };
+    try {
+      const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      $('#set-api-key').value = '';
+      if (note) { note.dataset.state = 'ok'; note.textContent = prov === 'codex' ? 'on — using your ChatGPT login' : `saved${key ? ' (key updated)' : ''}`; }
+    } catch (err) {
+      if (note) { note.dataset.state = 'fail'; note.textContent = `save failed: ${err.message}`; }
+    }
+  });
+
   $('#set-prompt').addEventListener('input', updateChars);
   $('#set-prompt-show-default').addEventListener('click', () => { $('#set-prompt').value = defaultPrompt; $('#set-prompt-status').textContent = 'showing default — edit and save to override'; updateChars(); });
   $('#set-prompt-reset').addEventListener('click', async () => {
