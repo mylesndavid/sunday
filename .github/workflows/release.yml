@@ -1,0 +1,94 @@
+name: Build & release macOS app
+
+# Auto-builds the signed + notarized desktop app and publishes a GitHub Release
+# whenever electron/package.json's version changes on main (or on manual run).
+# This replaces the manual local build loop.
+#
+# REQUIRED REPO SECRETS (Settings → Secrets and variables → Actions):
+#   MAC_CERT_P12_BASE64          Developer ID Application cert exported as .p12, base64-encoded:
+#                                  security find-identity -v -p codesigning   # find it
+#                                  # export from Keychain Access → .p12, then:
+#                                  base64 -i cert.p12 | pbcopy
+#   MAC_CERT_PASSWORD            the password you set when exporting the .p12
+#   APPLE_ID                     Apple ID in the Developer Program (mylesnosa@gmail.com)
+#   APPLE_APP_SPECIFIC_PASSWORD  appleid.apple.com app-specific password
+#   APPLE_TEAM_ID                10-char team id (6PG9CR3SRN)
+#   CSC_NAME                     "Developer ID Application: Myles Iyabor-David (6PG9CR3SRN)"
+
+on:
+  push:
+    branches: [main]
+    paths: ['electron/**', 'src/sunday/**', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create releases
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read app version
+        id: ver
+        run: echo "version=$(node -p "require('./electron/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already released
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.version }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v${{ steps.ver.outputs.version }} already released — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.exists == 'false'
+        with: { python-version: '3.13' }
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.exists == 'false'
+        with: { node-version: '20' }
+
+      - name: Build bundled daemon binary (PyInstaller)
+        if: steps.gate.outputs.exists == 'false'
+        run: |
+          python3 -m venv .venv && source .venv/bin/activate
+          pip install -e ".[devices]" pyinstaller
+          pyinstaller --onedir --noconfirm --name sunday-daemon --collect-all sunday \
+            --distpath electron/build/daemon-dist --workpath /tmp/pyi-work --specpath /tmp/pyi-spec \
+            electron/build/daemon-entry.py
+          test -x electron/build/daemon-dist/sunday-daemon/sunday-daemon
+
+      - name: Build notch HUD (Swift)
+        if: steps.gate.outputs.exists == 'false'
+        run: |
+          mkdir -p electron/build/NotchHUD.app/Contents/MacOS
+          swiftc -O -o electron/build/NotchHUD.app/Contents/MacOS/notch-hud electron/build/notch-hud.swift
+
+      - name: Build, sign, notarize, publish
+        if: steps.gate.outputs.exists == 'false'
+        working-directory: electron
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # electron-builder reads these to import the cert + sign:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # notarize.js + ensure-secrets.js read these:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_NAME: ${{ secrets.CSC_NAME }}
+        run: |
+          npm ci || npm install
+          npm run dist:mac:signed
+          gh release create "v${{ steps.ver.outputs.version }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Sunday ${{ steps.ver.outputs.version }}" \
+            --notes "Automated build of v${{ steps.ver.outputs.version }}." \
+            dist/Sunday-${{ steps.ver.outputs.version }}-arm64.dmg \
+            dist/Sunday-${{ steps.ver.outputs.version }}-arm64-mac.zip
