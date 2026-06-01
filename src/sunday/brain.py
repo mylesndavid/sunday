@@ -60,7 +60,7 @@ MAX_TOOL_RESULT_CHARS = 8000
 PARALLEL_SAFE_TOOLS = frozenset({
     # Reads
     "recall", "list_skills", "load_skill",
-    "imessage_list_threads", "imessage_read_thread", "imessage_read_recent",
+    "imessage_list_threads", "imessage_read_thread", "imessage_read_recent", "imessage_search",
     "browser_markdown", "browser_screenshot", "browser_scrape",
     "device_screenshot",
     # Pure: no side effects on Sunday's state

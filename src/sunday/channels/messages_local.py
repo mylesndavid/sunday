@@ -92,6 +92,16 @@ _READ_RECENT_PARAMS = {
     },
 }
 
+_SEARCH_PARAMS = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Keyword(s) to find across all iMessage threads."},
+        "limit": {"type": "integer", "default": 20, "description": "Max matches to return."},
+        **_DEVICE_PARAM,
+    },
+    "required": ["query"],
+}
+
 _SEND_PARAMS = {
     "type": "object",
     "properties": {
@@ -129,6 +139,15 @@ async def _t_read_recent(args: dict[str, Any], ctx: ToolContext) -> Any:
                         args.get("device_id"))
 
 
+async def _t_search(args: dict[str, Any], ctx: ToolContext) -> Any:
+    query = args.get("query")
+    if not query:
+        return {"error": "'query' is required"}
+    return await _proxy(ctx, "imessage_search",
+                        {"query": str(query), "limit": int(args.get("limit") or 20)},
+                        args.get("device_id"))
+
+
 async def _t_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     to = args.get("to")
     body = args.get("body") or ""
@@ -162,6 +181,16 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         description="Read the most recent iMessages across all threads on your Mac.",
         parameters=_READ_RECENT_PARAMS,
         run=_t_read_recent,
+    ))
+    registry.register(Tool(
+        name="imessage_search",
+        description=(
+            "Search across ALL iMessage threads for a keyword (e.g. a name, a link, "
+            "a phrase someone sent). Returns matching messages with who said it, which "
+            "thread, and when — without needing to open each thread."
+        ),
+        parameters=_SEARCH_PARAMS,
+        run=_t_search,
     ))
     registry.register(Tool(
         name="imessage_send",

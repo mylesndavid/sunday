@@ -354,6 +354,56 @@ def list_threads(limit: int = 20) -> list[dict[str, Any]]:
     return out
 
 
+# How many recent messages to scan when searching. The text lives in a binary
+# blob SQLite LIKE can't see into, so we decode in Python — bounded to the
+# recent window (covers "find that link someone sent"; full-history search
+# would need a built FTS index, a separate project).
+_SEARCH_SCAN = 8000
+
+
+def search_messages(query: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Keyword search across recent iMessages. SQLite LIKE can't match the
+    attributedBody blob, so we pull the most recent ~8k messages, decode each,
+    and filter in Python. Returns matches with sender, thread, date, and text."""
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    conn = _connect_read_only()
+    try:
+        rows = conn.execute(
+            """
+            SELECT m.ROWID, m.text, m.is_from_me, m.date, h.id, c.chat_identifier,
+                   c.display_name, m.attributedBody, m.balloon_bundle_id, m.payload_data, c.ROWID
+            FROM message m
+            LEFT JOIN handle h ON h.ROWID = m.handle_id
+            JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+            JOIN chat c ON c.ROWID = cmj.chat_id
+            ORDER BY m.date DESC
+            LIMIT ?
+            """,
+            (_SEARCH_SCAN,),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            text = _compose_text(row[1], row[8], row[9], None, row[7])
+            if q not in text.lower():
+                continue
+            handle = row[4]
+            out.append({
+                "text": text,
+                "is_from_me": bool(row[2]),
+                "date": _mac_ns_to_unix_seconds(row[3] or 0),
+                "sender": "me" if row[2] else (_resolve_name(handle) or handle),
+                "chat_identifier": row[5],
+                "thread": _chat_label(conn, row[10], row[6], row[5]),
+            })
+            if len(out) >= limit:
+                break
+    finally:
+        conn.close()
+    return out
+
+
 def read_thread(chat_identifier: str, limit: int = 30) -> list[dict[str, Any]]:
     conn = _connect_read_only()
     try:

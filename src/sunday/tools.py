@@ -35,7 +35,7 @@ CORE_TOOLS = frozenset({
     "device_screen_text", "device_screenshot", "device_run_command",
     "browser_read", "browser_click", "browser_type",
     "app_snapshot", "app_click", "app_type",
-    "imessage_read_recent", "imessage_read_thread", "imessage_send",
+    "imessage_read_recent", "imessage_read_thread", "imessage_search", "imessage_send",
     "delegate", "delegate_parallel",
 })
 

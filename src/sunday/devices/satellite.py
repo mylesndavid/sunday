@@ -240,6 +240,13 @@ async def _h_imessage_read_recent(params: dict[str, Any]) -> dict[str, Any]:
     return {"messages": imessage_macos.read_recent(int(params.get("limit") or 20))}
 
 
+async def _h_imessage_search(params: dict[str, Any]) -> dict[str, Any]:
+    query = params.get("query")
+    if not query:
+        return {"error": "'query' is required"}
+    return {"matches": imessage_macos.search_messages(str(query), int(params.get("limit") or 20))}
+
+
 async def _h_imessage_send(params: dict[str, Any]) -> dict[str, Any]:
     to = params.get("to")
     if not to:
@@ -323,6 +330,7 @@ HANDLERS = {
     "imessage_list_threads":  _h_imessage_list_threads,
     "imessage_read_thread":   _h_imessage_read_thread,
     "imessage_read_recent":   _h_imessage_read_recent,
+    "imessage_search":        _h_imessage_search,
     "imessage_send":          _h_imessage_send,
     "rewind_start":           _h_rewind_start,
     "rewind_stop":            _h_rewind_stop,
