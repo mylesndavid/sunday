@@ -319,6 +319,10 @@ textarea#composer::placeholder { color: var(--text-3); }
 .brain-inline .set-verify { flex: 1; }
 .brain-codex { display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-md); cursor: pointer; margin-bottom: 12px; font-size: 13.5px; }
 .brain-codex input { margin-top: 3px; flex: 0 0 auto; }
+.brain-codex:hover { background: var(--surface-2); }
+.brain-codex > span { display: block; font: 400 13.5px/1.45 var(--font-sans); letter-spacing: normal; text-transform: none; color: var(--text); margin: 0; }
+.brain-codex strong { font-weight: 600; }
+.brain-codex .brain-card-d { text-transform: none; letter-spacing: normal; color: var(--text-2); margin-top: 3px; }
 .brain-field { display: block; margin: 4px 0 0; }
 .set-advanced { margin-top: 18px; }
 .set-advanced > summary { cursor: pointer; color: var(--text-3); font-size: 13px; padding: 4px 0; list-style: revert; }
@@ -381,7 +385,7 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
   color: var(--text-2);
   white-space: pre-wrap; word-break: break-all;
 }
-.set-verify { font: 12px/1.4 var(--font-mono); color: var(--text-3); flex: 1; text-align: left; }
+.set-verify { font: 400 13px/1.5 var(--font-sans); color: var(--text-2); flex: 1; text-align: left; }
 .set-verify[data-state="ok"] { color: var(--ok); } .set-verify[data-state="fail"] { color: var(--error); }
 
 /* Permissions list — one structured row per macOS privacy permission. */
