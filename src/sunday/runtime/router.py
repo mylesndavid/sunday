@@ -66,6 +66,15 @@ def _credentialed_providers(config: SundayConfig) -> list[str]:
         }[candidate]
         if get_credential(cred_key):
             chain.append(candidate)
+    # Codex (ChatGPT subscription) — available whenever the machine is logged
+    # into the codex CLI; no API key needed.
+    if "codex" != primary:
+        try:
+            from sunday.runtime.providers.codex import codex_available
+            if codex_available():
+                chain.append("codex")
+        except Exception:  # noqa: BLE001
+            pass
     return chain
 
 
@@ -83,10 +92,17 @@ def _build_provider(config: SundayConfig, provider_name: str) -> Provider:
             "openai":          ("gpt-4o-mini",                    "https://api.openai.com/v1"),
             "deepseek-direct": ("deepseek-chat",                  "https://api.deepseek.com/v1"),
         }
-        if provider_name in defaults:
+        if provider_name == "codex":
+            # Codex uses your ChatGPT subscription; ChatGPT accounts accept the
+            # chat models, not the -codex variants.
+            cloned.model = replace(cloned.model, name="gpt-5.2", base_url="")
+        elif provider_name in defaults:
             model, base_url = defaults[provider_name]
             cloned.model = replace(cloned.model, name=model, base_url=base_url)
 
+    if provider_name == "codex":
+        from sunday.runtime.providers.codex import CodexProvider
+        return CodexProvider(cloned)
     from sunday.runtime.providers.openai_compat import OpenAICompatProvider
     return OpenAICompatProvider(cloned)
 
