@@ -109,8 +109,14 @@ pip install -e ".[devices]"
 
 sunday-satellite \
   --server ws://your-sunday.example.com:8765/v1/devices/ws \
-  --device-id $(hostname -s)
+  --device-id $(hostname -s) \
+  --token "$(ssh your-sunday.example.com cat ~/.sunday/auth.token)"
 ```
+
+**Auth.** The daemon authenticates device connections with its bearer token — the same one in `~/.sunday/auth.token` on the daemon host. A satellite **must** present it, since it exposes shell, screen, and iMessage to whoever connects. Resolution order is `--token` → `$SUNDAY_AUTH_TOKEN` → the local `~/.sunday/auth.token`, so:
+
+- A satellite on the **same machine** as the daemon needs no token flag — it reads the local file.
+- A satellite on **another machine** must be given the daemon's token (copy it over, or set `SUNDAY_AUTH_TOKEN`). The desktop app does this for you automatically.
 
 The satellite auto-advertises capabilities: `shell`, `screen`, `cdp`. On macOS it also adds `imessage` when `~/Library/Messages/chat.db` is readable — that requires giving the process **Full Disk Access** (System Settings → Privacy & Security → Full Disk Access).
 

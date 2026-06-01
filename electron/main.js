@@ -651,7 +651,13 @@ app.whenReady().then(() => {
     // Hand the satellite launcher the bundled daemon binary path — on a
     // packaged install (no repo/venv) it runs `<bin> satellite` so a device
     // actually connects. No-op on dev machines, which prefer their venv.
-    satellite.start({ ...prefs, bundledDaemonBin: bundledDaemonBinary() });
+    // Also pass the resolved daemon token so the satellite can authenticate
+    // (resolveDaemon reads the local token file, or prefs for a remote daemon).
+    satellite.start({
+      ...prefs,
+      daemonToken: resolveDaemon().daemonToken,
+      bundledDaemonBin: bundledDaemonBinary(),
+    });
   }
 });
 
