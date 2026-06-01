@@ -210,8 +210,13 @@
           <!-- This Mac only: use the ChatGPT subscription (Codex) with no key -->
           <label class="brain-codex" id="set-codex-row" hidden>
             <input type="checkbox" id="set-codex-toggle">
-            <span><strong>Use my ChatGPT subscription</strong><br><span class="brain-card-d">No API key. Sign in once with your ChatGPT account and Sunday runs on gpt-5.2 — off = pick any model below.</span><span class="brain-codex-status" id="set-codex-status" hidden></span></span>
+            <span><strong>Use my ChatGPT subscription</strong><br><span class="brain-card-d">No API key. Sign in once with your ChatGPT account and pick which model it runs — off = choose any model below.</span><span class="brain-codex-status" id="set-codex-status" hidden></span></span>
           </label>
+          <!-- When ChatGPT is on, choose among the models your plan runs (not the OpenRouter catalog). -->
+          <div class="codex-models" id="set-codex-models" hidden>
+            <button type="button" class="codex-model" data-model="gpt-5.2"><span class="cm-n">gpt-5.2</span><span class="cm-d">Fast, balanced</span></button>
+            <button type="button" class="codex-model" data-model="gpt-5.5"><span class="cm-n">gpt-5.5</span><span class="cm-d">Most capable</span></button>
+          </div>
           <div class="model-pick" id="set-model-pick">
             <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
             <div class="model-results" id="set-model-results" hidden></div>
