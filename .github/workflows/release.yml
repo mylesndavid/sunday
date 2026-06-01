@@ -85,10 +85,15 @@ jobs:
           CSC_NAME: ${{ secrets.CSC_NAME }}
         run: |
           npm ci || npm install
+          # Build (this also generates dist/latest-mac.yml — the update feed
+          # electron-updater reads), then publish a real (non-draft) release
+          # including it, so both the installer (/releases/latest) and in-app
+          # "Check for updates" see the new version.
           npm run dist:mac:signed
           gh release create "v${{ steps.ver.outputs.version }}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Sunday ${{ steps.ver.outputs.version }}" \
             --notes "Automated build of v${{ steps.ver.outputs.version }}." \
             dist/Sunday-${{ steps.ver.outputs.version }}-arm64.dmg \
-            dist/Sunday-${{ steps.ver.outputs.version }}-arm64-mac.zip
+            dist/Sunday-${{ steps.ver.outputs.version }}-arm64-mac.zip \
+            dist/latest-mac.yml

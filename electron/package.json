@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -71,8 +71,9 @@
     },
     "afterSign": "build/notarize.js",
     "publish": {
-      "provider": "generic",
-      "url": "https://www.betterbotagent.com/sunday/"
+      "provider": "github",
+      "owner": "mylesndavid",
+      "repo": "sunday"
     },
     "dmg": {
       "title": "Sunday ${version}",
