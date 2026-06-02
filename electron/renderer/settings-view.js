@@ -460,23 +460,10 @@ function setCodexModelActive(model) {
     b.classList.toggle('active', b.dataset.model === model));
 }
 function updateKeyField() {
+  // Advanced is now only the direct-key providers (OpenAI/Anthropic/DeepSeek).
   const prov = $('#set-provider-select')?.value;
   const keyInput = $('#set-api-key');
-  if (keyInput) {
-    if (prov === 'codex') { keyInput.hidden = true; keyInput.value = ''; }
-    else { keyInput.hidden = false; keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`; }
-  }
-  // The model picker is the OpenRouter catalog — note when it doesn't apply.
-  const note = document.getElementById('set-model-provider-note');
-  if (note) {
-    if (prov === 'openrouter') { note.hidden = true; }
-    else {
-      note.hidden = false;
-      note.textContent = prov === 'codex'
-        ? 'Provider is Codex — using gpt-5.2 on your ChatGPT subscription. The OpenRouter catalog below only applies if you switch the provider back to OpenRouter.'
-        : `Provider is ${prov} — the OpenRouter catalog below only applies when the provider is OpenRouter.`;
-    }
-  }
+  if (keyInput) keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`;
 }
 
 // ── model picker (searchable OpenRouter catalog) ──
@@ -740,12 +727,21 @@ function wire() {
     if (e.key === 'Enter') { const v = search.value.trim(); if (v && allModels.some((m) => m.id === v)) pickModel(v); }
     if (e.key === 'Escape') { $('#set-model-results').hidden = true; }
   });
+  // Save the chosen OpenRouter model + (optionally) your OpenRouter key together.
+  const orKey = $('#set-or-key');
+  if (orKey) orKey.addEventListener('input', () => { $('#set-model-save').disabled = !$('#set-model').value.trim() && !orKey.value.trim(); });
   $('#set-model-save').addEventListener('click', async () => {
     const model = $('#set-model').value.trim();
-    if (!model) { flashError('pick a model first'); return; }
+    const key = orKey?.value.trim();
+    if (!model && !key) { flashError('pick a model or enter a key'); return; }
+    const body = {};
+    if (model) body.model_name = model;
+    if (key) body.credentials = { OPENROUTER_API_KEY: key };
     try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_name: model }) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`); flashSaved();
+      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (orKey) orKey.value = '';
+      flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
   // ── run mode (cloud / local) + migrate ──
@@ -793,15 +789,14 @@ function wire() {
   // Pick which ChatGPT model Codex runs (gpt-5.2 / gpt-5.5) — only shown when Codex is on.
   document.querySelectorAll('#set-codex-models .codex-model').forEach((b) => b.addEventListener('click', async () => {
     const model = b.dataset.model;
-    setCodexModelActive(model);
+    setCodexModelActive(model);          // the highlight is the feedback — same as the provider cards
     try {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model_name: model }),
       });
-      const note = $('#set-model-note');
-      if (note) { note.dataset.state = res.ok ? 'ok' : 'fail'; note.textContent = res.ok ? `Now thinking with ${model}.` : `HTTP ${res.status}`; }
-    } catch (e) { const note = $('#set-model-note'); if (note) { note.dataset.state = 'fail'; note.textContent = e.message; } }
+      if (res.ok) flashSaved(); else flashError(`HTTP ${res.status}`);
+    } catch (e) { flashError(e.message); }
   }));
   $('#set-migrate')?.addEventListener('click', async () => {
     const note = $('#set-migrate-note'); const btn = $('#set-migrate');
