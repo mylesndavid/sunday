@@ -65,6 +65,9 @@ def register_background_task(task: BackgroundTask) -> None:
 
 _AUTH_TOKEN_CACHE: str | None = None
 
+# Extract durable facts every N exchanges (batched) rather than once per turn.
+_EXTRACT_EVERY = 3
+
 
 def _auth_token_path() -> Path:
     return auth_token_path()
@@ -221,6 +224,8 @@ class Daemon:
         # localhost:1455 callback server that catches OpenAI's redirect.
         self._codex_login: dict[str, Any] | None = None
         self._codex_cb_runner: web.AppRunner | None = None
+        # Buffered (user, reply) exchanges awaiting batched fact extraction.
+        self._extract_buf: list[tuple[str, str]] = []
         self._stop = asyncio.Event()
         self._started_at = time.time()
         # "What is the user doing right now" — pushed in by the observer (the
@@ -334,9 +339,12 @@ class Daemon:
         finally:
             self._active_control = None
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
-        # Fire-and-forget memory extraction so the brain returns immediately.
+        # Buffer this exchange; extract facts in batches (every few turns) on the
+        # cheap utility model instead of one full-model call per turn.
         if self.memory.available:
-            asyncio.create_task(self._extract_memories(text, reply))
+            self._extract_buf.append((text, reply))
+            if len(self._extract_buf) >= _EXTRACT_EVERY:
+                asyncio.create_task(self._flush_extract())
         # Fire-and-forget conversation compaction — folds messages that have
         # aged out of the live tail into the rolling summary. No-ops until a
         # real batch has accumulated, so it's cheap to call every turn.
@@ -355,27 +363,32 @@ class Daemon:
             )
 
     async def _compact(self) -> None:
+        # Flush any buffered exchanges first so trailing turns aren't stranded
+        # when the conversation goes quiet (compaction fires on a natural cadence).
+        if self.memory.available and self._extract_buf:
+            await self._flush_extract()
         try:
             from sunday.compaction import maybe_compact
             await maybe_compact(self.chat, self.config)
         except Exception as exc:  # noqa: BLE001
             log.warning("compaction task failed", error=str(exc))
 
-    async def _extract_memories(self, user_text: str, sunday_reply: str) -> None:
+    async def _flush_extract(self) -> None:
+        """Extract durable facts from the buffered exchanges in one cheap call."""
+        if not self._extract_buf:
+            return
+        batch, self._extract_buf = self._extract_buf, []
         try:
-            facts = await extract_facts(user_text, sunday_reply, self.config)
+            facts = await extract_facts(batch, self.config)
             if facts:
                 await self.memory.store_many(facts, source="auto")
-                log.info("memory extracted", new_facts=len(facts))
-                # NB: the memory graph used to be rebuilt here on every turn.
-                # That paid for two LLM calls per turn and an O(n) rebuild over
-                # all facts. Graph refresh now piggybacks compaction (see
-                # sunday/compaction.py), which already fires an LLM call when
-                # the conversation has moved enough — natural cadence, no
-                # extra spend. The /v1/memory/graph endpoint still rebuilds
-                # on-demand if the UI explicitly asks for a fresh view.
+                log.info("memory extracted", new_facts=len(facts), from_turns=len(batch))
+                # Graph refresh piggybacks compaction (incremental ingest) — no
+                # extra LLM call here.
         except Exception as exc:  # noqa: BLE001
             log.warning("memory extraction task failed", error=str(exc))
+            # don't lose the batch on a transient failure — requeue it
+            self._extract_buf = batch + self._extract_buf
 
     async def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if method == "say":

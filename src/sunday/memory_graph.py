@@ -131,8 +131,8 @@ async def ingest(config: SundayConfig) -> dict[str, Any]:
         ctx = (f"Existing entities — reuse these exact names when a new fact refers to them: {', '.join(existing)}.\n\n"
                if existing else "")
         numbered = "\n".join(f"{fid}. {text}" for fid, text in new)
-        from sunday.runtime import build_runtime
-        rt = build_runtime(config)
+        from sunday.runtime import build_utility_runtime
+        rt = build_utility_runtime(config)
         result = await rt.complete(
             system_prompt=_EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": f"{ctx}New facts:\n{numbered}\n\nJSON map:"}],
@@ -166,8 +166,8 @@ async def rebuild(config: SundayConfig, force: bool = False) -> dict[str, Any]:
             return _read_graph(conn)
 
         numbered = "\n".join(f"{fid}. {text}" for fid, text in facts)
-        from sunday.runtime import build_runtime
-        rt = build_runtime(config)
+        from sunday.runtime import build_utility_runtime
+        rt = build_utility_runtime(config)
         result = await rt.complete(
             system_prompt=_EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": f"Facts:\n{numbered}\n\nJSON map:"}],
