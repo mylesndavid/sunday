@@ -1416,7 +1416,11 @@ class Daemon:
         await self._stop_codex_callback()
         app = web.Application()
         app.router.add_get("/auth/callback", _cb)
-        runner = web.AppRunner(app)
+        # The browser sends every localhost cookie back on the redirect — dev
+        # machines can carry tens of KB of analytics cookies, which blows past
+        # aiohttp's default 8190-byte header limit and rejects the callback
+        # before we can read the code. Raise the line/field limits generously.
+        runner = web.AppRunner(app, max_line_size=131072, max_field_size=131072)
         await runner.setup()
         site = web.TCPSite(runner, "127.0.0.1", codex_auth.REDIRECT_PORT)
         await site.start()
