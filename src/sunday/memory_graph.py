@@ -110,6 +110,50 @@ def needs_rebuild(conn: sqlite3.Connection | None = None) -> bool:
             conn.close()
 
 
+async def ingest(config: SundayConfig) -> dict[str, Any]:
+    """Incremental graph update — extract edges for ONLY the facts added since
+    the last pass and merge them in (creating nodes on demand). Cost scales with
+    *new* facts, not the whole store. This is the normal cadence; the full
+    rebuild() is reserved for the explicit 'rebuild from scratch' action."""
+    conn = _db()
+    try:
+        facts = _facts(conn)
+        if not facts:
+            return {"nodes": [], "links": [], "empty": True}
+        seen_max, seen_count = _state(conn)
+        new = [(fid, text) for fid, text in facts if fid > seen_max]
+        if not new:
+            # nothing added (count may differ if facts were deleted — a forced
+            # rebuild prunes those; incremental never invents work).
+            return _read_graph(conn)
+
+        existing = [r[0] for r in conn.execute("SELECT name FROM mem_nodes ORDER BY id LIMIT 150")]
+        ctx = (f"Existing entities — reuse these exact names when a new fact refers to them: {', '.join(existing)}.\n\n"
+               if existing else "")
+        numbered = "\n".join(f"{fid}. {text}" for fid, text in new)
+        from sunday.runtime import build_runtime
+        rt = build_runtime(config)
+        result = await rt.complete(
+            system_prompt=_EXTRACT_SYSTEM,
+            messages=[{"role": "user", "content": f"{ctx}New facts:\n{numbered}\n\nJSON map:"}],
+            tools_schema=None,
+            purpose="graph_ingest",
+        )
+        _merge(conn, facts, _parse(result.content or ""))
+        max_id = facts[-1][0]
+        conn.execute(
+            "INSERT INTO mem_graph_state (id, max_fact_id, fact_count, built_at) VALUES (1, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET max_fact_id=excluded.max_fact_id, "
+            "fact_count=excluded.fact_count, built_at=excluded.built_at",
+            (max_id, len(facts), time.time()),
+        )
+        conn.commit()
+        log.info("memory graph ingested", new_facts=len(new))
+        return _read_graph(conn)
+    finally:
+        conn.close()
+
+
 async def rebuild(config: SundayConfig, force: bool = False) -> dict[str, Any]:
     """(Re)extract the whole graph from the current facts. Cheap: one model
     call. Skips when nothing changed unless force=True."""
@@ -161,10 +205,10 @@ def _parse(raw: str) -> dict[str, Any]:
     return {"nodes": d.get("nodes") or [], "links": d.get("links") or []}
 
 
-def _write(conn: sqlite3.Connection, facts: list[tuple[int, str]], parsed: dict[str, Any]) -> None:
-    conn.execute("DELETE FROM mem_nodes")
-    conn.execute("DELETE FROM mem_links")
-    conn.execute("DELETE FROM mem_node_facts")
+def _merge(conn: sqlite3.Connection, facts: list[tuple[int, str]], parsed: dict[str, Any]) -> None:
+    """Upsert nodes + edges into the existing graph — create nodes on demand,
+    ignore duplicates (UNIQUE constraints). Does NOT wipe; safe to call
+    incrementally as new facts arrive."""
     name_to_id: dict[str, int] = {}
 
     def node_id(name: str, kind: str) -> int:
@@ -175,8 +219,11 @@ def _write(conn: sqlite3.Connection, facts: list[tuple[int, str]], parsed: dict[
         if low in name_to_id:
             return name_to_id[low]
         kind = kind if kind in KINDS else "thing"
-        cur = conn.execute("INSERT OR IGNORE INTO mem_nodes (name, kind) VALUES (?, ?)", (key, kind))
-        nid = cur.lastrowid or conn.execute("SELECT id FROM mem_nodes WHERE name = ?", (key,)).fetchone()[0]
+        conn.execute("INSERT OR IGNORE INTO mem_nodes (name, kind) VALUES (?, ?)", (key, kind))
+        # Always look up the id — lastrowid is unreliable after INSERT OR IGNORE
+        # when the row already exists (returns a stale rowid), which would map an
+        # existing node to the wrong id and collapse edges into self-loops.
+        nid = conn.execute("SELECT id FROM mem_nodes WHERE name = ?", (key,)).fetchone()[0]
         name_to_id[low] = nid
         return nid
 
@@ -200,6 +247,14 @@ def _write(conn: sqlite3.Connection, facts: list[tuple[int, str]], parsed: dict[
         if isinstance(fid, int) and fid in fact_text:
             conn.execute("INSERT OR IGNORE INTO mem_node_facts (node_id, fact_id) VALUES (?, ?)", (a, fid))
             conn.execute("INSERT OR IGNORE INTO mem_node_facts (node_id, fact_id) VALUES (?, ?)", (b, fid))
+
+
+def _write(conn: sqlite3.Connection, facts: list[tuple[int, str]], parsed: dict[str, Any]) -> None:
+    """Full rebuild — wipe the graph, then merge everything fresh."""
+    conn.execute("DELETE FROM mem_nodes")
+    conn.execute("DELETE FROM mem_links")
+    conn.execute("DELETE FROM mem_node_facts")
+    _merge(conn, facts, parsed)
 
 
 def _read_graph(conn: sqlite3.Connection) -> dict[str, Any]:
