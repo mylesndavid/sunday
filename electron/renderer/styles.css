@@ -322,6 +322,17 @@ textarea#composer::placeholder { color: var(--text-3); }
 .brain-codex:hover { background: var(--surface-2); }
 .brain-codex.disabled { opacity: 0.62; cursor: default; }
 .brain-codex.disabled:hover { background: transparent; }
+/* Provider chooser — pick ChatGPT / OpenRouter, options swap in below. */
+.prov-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.prov-card { -webkit-app-region: no-drag; appearance: none; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; color: var(--text); transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
+.prov-card:hover { background: var(--surface-2); }
+.prov-card.active { border-color: var(--accent); background: var(--accent-tint); }
+.prov-card.disabled { opacity: 0.55; cursor: default; }
+.prov-card.disabled:hover { background: var(--surface); }
+.prov-t { font: 650 14px/1.2 var(--font-sans); }
+.prov-d { font: 400 12px/1.4 var(--font-sans); color: var(--text-2); margin-top: 3px; }
+.prov-card.active .prov-d { color: var(--accent-press); }
+.prov-panel[hidden] { display: none; }
 .codex-models { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
 .codex-models[hidden] { display: none; }
 .codex-model { -webkit-app-region: no-drag; appearance: none; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 11px 14px; color: var(--text); transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
