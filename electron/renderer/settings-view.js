@@ -35,13 +35,7 @@ export async function loadAll() {
     const c = await res.json();
     $('#set-provider').value = c.model?.provider || '';
     $('#set-model').value = c.model?.name || '';
-    const psel = $('#set-provider-select');
-    // Advanced dropdown only holds the direct-key providers now (ChatGPT/OpenRouter
-    // are the cards above). Only reflect the active provider if it's one of them.
-    if (psel) { if (['openai', 'anthropic', 'deepseek-direct'].includes(c.model?.provider)) psel.value = c.model.provider; updateKeyField(); }
-    await refreshRunMode();
-    await loadModels();
-    showCurrentModel();
+    await refreshRunMode();   // sets the provider dropdown + loads its models via applyProvider
     defaultPrompt = c.identity_prompt?.default || '';
     const eff = c.identity_prompt?.effective || '';
     const custom = !!c.identity_prompt?.custom_present;
@@ -387,11 +381,21 @@ function pollProviderConnected(name, n) {
 
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
 
-// Codex needs no key (uses the local ChatGPT login); the others take one.
+// Providers that need an API key (codex/ollama don't).
 const _KEY_FOR = {
   openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY', 'deepseek-direct': 'DEEPSEEK_API_KEY',
 };
+// Curated model lists for providers without a live catalog. OpenRouter + Ollama
+// are fetched live; these are searchable + you can also type any custom id.
+const STATIC_MODELS = {
+  codex: [{ id: 'gpt-5.2', name: 'gpt-5.2' }, { id: 'gpt-5.5', name: 'gpt-5.5' }],
+  openai: [{ id: 'gpt-4o', name: 'GPT-4o' }, { id: 'gpt-4o-mini', name: 'GPT-4o mini' }, { id: 'o3', name: 'o3' }, { id: 'o4-mini', name: 'o4-mini' }],
+  anthropic: [{ id: 'claude-opus-4-1', name: 'Claude Opus 4.1' }, { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' }, { id: 'claude-3-5-haiku-latest', name: 'Claude Haiku 3.5' }],
+  'deepseek-direct': [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }, { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }],
+};
+function fmtSize(bytes) { if (!bytes) return ''; const gb = bytes / 1e9; return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`; }
+
 async function refreshRunMode() {
   try {
     const m = await window.sunday.runMode();
@@ -399,65 +403,66 @@ async function refreshRunMode() {
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
     const mig = $('#set-migrate-row');
     if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
-    // ChatGPT (Codex) only works on a local brain — the OAuth callback is
-    // localhost and the login lives in ~/.codex on this Mac. On cloud, disable
-    // the ChatGPT provider card with a "This Mac only" hint.
-    const codexCard = $('#set-prov-codex');
-    if (codexCard) { codexCard.classList.toggle('disabled', !m.local); codexCard.disabled = !m.local; }
-    const codexDesc = codexCard?.querySelector('.prov-d');
-    if (codexDesc) codexDesc.textContent = m.local ? 'Your subscription — no API key' : 'This Mac only';
+    // ChatGPT (Codex) only works on a local brain — disable the option on cloud.
+    const codexOpt = document.querySelector('#set-provider-dd option[value="codex"]');
+    if (codexOpt) { codexOpt.disabled = !m.local; codexOpt.textContent = m.local ? 'ChatGPT — your subscription' : 'ChatGPT — This Mac only'; }
     await refreshBrainProvider();
   } catch {}
 }
 
-// Reflect the daemon's current provider into the chooser + show its panel.
+// Pull the daemon's active provider + model and reflect them into the UI.
 async function refreshBrainProvider() {
   try {
     const c = await (await fetch(`${DAEMON_HTTP}/v1/config`)).json();
-    showProviderUI(c.model?.provider || 'openrouter', c.model?.name);
-    // "Connected as …" when a ChatGPT login exists (shown in the ChatGPT panel).
-    try {
-      const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json();
-      if (s.connected && s.email) setCodexStatus(`Connected as ${s.email}`, 'ok');
-      else setCodexStatus('', '');
-    } catch {}
+    await applyProvider(c.model?.provider || 'openrouter', c.model?.name);
   } catch {}
 }
-// Highlight the chosen provider and reveal only its options.
-function showProviderUI(provider, currentModel) {
-  document.querySelectorAll('#set-providers .prov-card').forEach((b) =>
-    b.classList.toggle('active', b.dataset.provider === provider));
-  const codexPanel = $('#set-panel-codex'); if (codexPanel) codexPanel.hidden = provider !== 'codex';
-  const orPanel = $('#set-panel-openrouter'); if (orPanel) orPanel.hidden = provider !== 'openrouter';
-  const olPanel = $('#set-panel-ollama'); if (olPanel) olPanel.hidden = provider !== 'ollama';
-  if (provider === 'codex') setCodexModelActive(currentModel || $('#set-model')?.value || 'gpt-5.2');
-  if (provider === 'ollama') loadOllamaModels(currentModel || $('#set-model')?.value || '');
+
+// The model list for a provider — live for OpenRouter/Ollama, curated otherwise.
+// Returns an array, or {error} for Ollama when it can't be reached.
+async function loadProviderModels(provider) {
+  if (provider === 'openrouter') {
+    try { const d = await (await fetch(`${DAEMON_HTTP}/v1/models`)).json(); return d.models || []; } catch { return []; }
+  }
+  if (provider === 'ollama') {
+    try {
+      const d = await (await fetch(`${DAEMON_HTTP}/v1/ollama/models`)).json();
+      if (!d.available) return { error: 'Ollama is not running here. Install it from ollama.com, then run: ollama pull llama3.2' };
+      if (!d.models.length) return { error: 'No models pulled yet — run: ollama pull llama3.2' };
+      return d.models.map((m) => ({ id: m.name, name: m.name, slug: fmtSize(m.size) }));
+    } catch { return { error: 'Could not reach Ollama.' }; }
+  }
+  return STATIC_MODELS[provider] || [];
 }
-function fmtSize(bytes) { if (!bytes) return ''; const gb = bytes / 1e9; return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`; }
-// List models installed in the local Ollama and let the user pick one. If Ollama
-// isn't running (or nothing pulled), show a plain-text hint instead of failing.
-async function loadOllamaModels(active) {
-  const wrap = $('#set-ollama-models'); const status = $('#set-ollama-status');
-  if (!wrap) return;
-  const hint = (t) => { wrap.innerHTML = ''; if (status) { status.hidden = false; status.dataset.state = 'wait'; status.textContent = t; } };
-  try {
-    const d = await (await fetch(`${DAEMON_HTTP}/v1/ollama/models`)).json();
-    if (!d.available) return hint('Ollama is not running here. Install it from ollama.com, then run: ollama pull llama3.2');
-    if (!d.models.length) return hint('No models pulled yet — run: ollama pull llama3.2');
-    if (status) status.hidden = true;
-    wrap.innerHTML = d.models.map((m) =>
-      `<button type="button" class="codex-model" data-model="${m.name}"><span class="cm-n">${m.name}</span><span class="cm-d">${fmtSize(m.size)}</span></button>`).join('');
-    wrap.querySelectorAll('.codex-model').forEach((b) => {
-      b.classList.toggle('active', b.dataset.model === active);
-      b.addEventListener('click', async () => {
-        wrap.querySelectorAll('.codex-model').forEach((x) => x.classList.toggle('active', x === b));
-        try {
-          const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_name: b.dataset.model }) });
-          if (res.ok) flashSaved(); else flashError(`HTTP ${res.status}`);
-        } catch (e) { flashError(e.message); }
-      });
-    });
-  } catch { hint('Could not reach Ollama.'); }
+
+// Single source of truth for the MODEL section: load the provider's models into
+// the one searchable picker, toggle the key field + ChatGPT connect, reflect the
+// current model. Same control for every provider.
+async function applyProvider(provider, currentModel) {
+  const dd = $('#set-provider-dd'); if (dd) dd.value = provider;
+  const note = $('#set-model-note'); if (note) { note.textContent = ''; note.removeAttribute('data-state'); }
+  // key field — only providers that need one
+  const keyEl = $('#set-key'), needKey = _KEY_FOR[provider];
+  if (keyEl) { keyEl.hidden = !needKey; if (needKey) keyEl.placeholder = `${needKey} — leave blank to keep current`; else keyEl.value = ''; }
+  // model list for the picker
+  const res = await loadProviderModels(provider);
+  if (res && res.error) { allModels = []; if (note) { note.dataset.state = 'wait'; note.textContent = res.error; } }
+  else allModels = res;
+  $('#set-model').value = currentModel || '';
+  $('#set-model-search').value = '';
+  $('#set-model-results').hidden = true;
+  showCurrentModel();
+  // ChatGPT connect / status
+  const connect = $('#set-connect');
+  if (provider === 'codex') {
+    let connected = false, email = '';
+    try { const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json(); connected = s.connected; email = s.email || ''; } catch {}
+    if (connect) connect.hidden = connected;
+    setCodexStatus(connected ? (email ? `Connected as ${email}` : 'Connected') : 'Sign in to use your ChatGPT subscription.', connected ? 'ok' : 'wait');
+  } else {
+    if (connect) connect.hidden = true;
+    setCodexStatus('', '');
+  }
 }
 function setCodexStatus(text, state) {
   const el = $('#set-codex-status'); if (!el) return;
@@ -483,35 +488,12 @@ async function connectCodex() {
   }
   throw new Error('timed out waiting for sign-in');
 }
-function setCodexModelActive(model) {
-  document.querySelectorAll('#set-codex-models .codex-model').forEach((b) =>
-    b.classList.toggle('active', b.dataset.model === model));
-}
-function updateKeyField() {
-  // Advanced is now only the direct-key providers (OpenAI/Anthropic/DeepSeek).
-  const prov = $('#set-provider-select')?.value;
-  const keyInput = $('#set-api-key');
-  if (keyInput) keyInput.placeholder = `${_KEY_FOR[prov] || 'API key'} (leave blank to keep current)`;
-}
-
-// ── model picker (searchable OpenRouter catalog) ──
+// ── the one searchable model picker (fed per-provider by applyProvider) ──
 let allModels = [];
-let modelsLoaded = false;
-
-async function loadModels() {
-  if (modelsLoaded) return;
-  try {
-    const res = await fetch(`${DAEMON_HTTP}/v1/models`);
-    const d = await res.json();
-    allModels = d.models || [];
-    modelsLoaded = allModels.length > 0;
-  } catch { allModels = []; }
-}
 
 function showCurrentModel() {
   const slug = $('#set-model').value.trim();
   const cur = $('#set-model-current');
-  $('#set-model-save').disabled = !slug;
   if (!slug) { cur.hidden = true; return; }
   const m = allModels.find((x) => x.id === slug);
   const vision = m?.vision;
@@ -748,27 +730,28 @@ function wire() {
     flashSaved();
   });
   const search = $('#set-model-search');
-  search.addEventListener('focus', async () => { await loadModels(); renderModelResults(search.value); });
+  search.addEventListener('focus', () => renderModelResults(search.value));
   search.addEventListener('input', () => renderModelResults(search.value));
   search.addEventListener('blur', () => setTimeout(() => { $('#set-model-results').hidden = true; }, 160));
   search.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { const v = search.value.trim(); if (v && allModels.some((m) => m.id === v)) pickModel(v); }
+    // Enter accepts a typed id even if it's not in the list (custom models).
+    if (e.key === 'Enter') { const v = search.value.trim(); if (v) pickModel(v); }
     if (e.key === 'Escape') { $('#set-model-results').hidden = true; }
   });
-  // Save the chosen OpenRouter model + (optionally) your OpenRouter key together.
-  const orKey = $('#set-or-key');
-  if (orKey) orKey.addEventListener('input', () => { $('#set-model-save').disabled = !$('#set-model').value.trim() && !orKey.value.trim(); });
+  // Save the selected model + (if shown) the provider's API key together.
   $('#set-model-save').addEventListener('click', async () => {
+    const provider = $('#set-provider-dd').value;
     const model = $('#set-model').value.trim();
-    const key = orKey?.value.trim();
+    const keyEl = $('#set-key'); const key = (keyEl && !keyEl.hidden) ? keyEl.value.trim() : '';
+    const KEY = _KEY_FOR[provider];
     if (!model && !key) { flashError('pick a model or enter a key'); return; }
-    const body = {};
+    const body = { provider };
     if (model) body.model_name = model;
-    if (key) body.credentials = { OPENROUTER_API_KEY: key };
+    if (key && KEY) body.credentials = { [KEY]: key };
     try {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (orKey) orKey.value = '';
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+      if (keyEl) keyEl.value = '';
       flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
@@ -784,48 +767,38 @@ function wire() {
     // half-switched state. Only refresh when the switch FAILED (no reload).
     if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
   }));
-  // Pick a provider. ChatGPT (Codex) is This-Mac-only and signs you in on first
-  // pick; OpenRouter just switches. Each reveals its own options below.
-  document.querySelectorAll('#set-providers .prov-card').forEach((card) => card.addEventListener('click', async () => {
-    const provider = card.dataset.provider;
+  // Provider dropdown — switch provider. ChatGPT (Codex) is This-Mac-only and
+  // needs sign-in. applyProvider repaints the model picker + key field below.
+  $('#set-provider-dd')?.addEventListener('change', async (e) => {
+    const provider = e.target.value;
     if (provider === 'codex') {
-      card.style.opacity = '0.6';
       try {
-        const cfg = await window.sunday.getConfig();
-        if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
+        const cfg = await window.sunday.getConfig(); if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
         const m = await window.sunday.runMode();
-        if (!m.local) throw new Error('ChatGPT runs on This Mac. Switch the brain to “This Mac” above first.');
-        showProviderUI('codex');        // reveal the panel immediately so status shows
-        await connectCodex();            // signs in (browser) if needed, activates Codex daemon-side
-        await refreshBrainProvider();
-      } catch (err) {
-        setCodexStatus(err.message || 'Sign-in failed', 'fail');
-        showProviderUI('codex');
-      } finally { card.style.opacity = ''; }
+        await applyProvider('codex');
+        if (!m.local) { setCodexStatus('ChatGPT runs on This Mac — switch the brain above first.', 'fail'); return; }
+        const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json().catch(() => ({}));
+        if (s.connected) await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'codex' }) });
+      } catch (err) { flashError(err.message); }
       return;
     }
-    // OpenRouter (or another non-Codex provider) — switch and show its options.
     try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider }),
-      });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); flashError(d.error || `HTTP ${res.status}`); return; }
-      await refreshBrainProvider();
+      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); flashError(d.error || `HTTP ${res.status}`); }
     } catch (err) { flashError(err.message); }
-  }));
-  // Pick which ChatGPT model Codex runs (gpt-5.2 / gpt-5.5) — only shown when Codex is on.
-  document.querySelectorAll('#set-codex-models .codex-model').forEach((b) => b.addEventListener('click', async () => {
-    const model = b.dataset.model;
-    setCodexModelActive(model);          // the highlight is the feedback — same as the provider cards
+    await applyProvider(provider);
+  });
+  // Connect ChatGPT — shown only for ChatGPT when not signed in.
+  $('#set-connect')?.addEventListener('click', async () => {
     try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_name: model }),
-      });
-      if (res.ok) flashSaved(); else flashError(`HTTP ${res.status}`);
-    } catch (e) { flashError(e.message); }
-  }));
+      const cfg = await window.sunday.getConfig(); if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
+      const m = await window.sunday.runMode();
+      if (!m.local) throw new Error('ChatGPT runs on This Mac — switch the brain above first.');
+      await connectCodex();
+      await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'codex' }) });
+      await applyProvider('codex');
+    } catch (err) { setCodexStatus(err.message || 'Sign-in failed', 'fail'); }
+  });
   $('#set-migrate')?.addEventListener('click', async () => {
     const note = $('#set-migrate-note'); const btn = $('#set-migrate');
     btn.disabled = true; const prev = note ? note.textContent : '';
@@ -838,32 +811,6 @@ function wire() {
       await refreshRunMode();
     } catch (e) { if (note) note.textContent = `Failed: ${e.message}`; }
     finally { btn.disabled = false; }
-  });
-
-  // ── provider + API key ──
-  $('#set-provider-select')?.addEventListener('change', updateKeyField);
-  $('#set-provider-save')?.addEventListener('click', async () => {
-    const prov = $('#set-provider-select').value;
-    const note = $('#set-provider-note');
-    const body = { provider: prov };
-    const key = $('#set-api-key').value.trim();
-    if (prov !== 'codex' && key) body.credentials = { [_KEY_FOR[prov]]: key };
-    try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // e.g. picking Codex on a daemon with no ~/.codex login — show the
-        // daemon's real reason instead of pretending it worked.
-        if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; }
-        return;
-      }
-      $('#set-api-key').value = '';
-      if (note) { note.dataset.state = 'ok'; note.textContent = prov === 'codex' ? 'on — using your ChatGPT login' : `saved${key ? ' (key updated)' : ''}`; }
-    } catch (err) {
-      if (note) { note.dataset.state = 'fail'; note.textContent = `save failed: ${err.message}`; }
-    }
   });
 
   $('#set-prompt').addEventListener('input', updateChars);
