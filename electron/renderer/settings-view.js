@@ -384,7 +384,7 @@ function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt'
 // Providers that need an API key (codex/ollama don't).
 const _KEY_FOR = {
   openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY',
-  anthropic: 'ANTHROPIC_API_KEY', 'deepseek-direct': 'DEEPSEEK_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
 };
 // Curated model lists for providers without a live catalog. OpenRouter + Ollama
 // are fetched live; these are searchable + you can also type any custom id.
@@ -392,7 +392,6 @@ const STATIC_MODELS = {
   codex: [{ id: 'gpt-5.2', name: 'gpt-5.2' }, { id: 'gpt-5.5', name: 'gpt-5.5' }],
   openai: [{ id: 'gpt-4o', name: 'GPT-4o' }, { id: 'gpt-4o-mini', name: 'GPT-4o mini' }, { id: 'o3', name: 'o3' }, { id: 'o4-mini', name: 'o4-mini' }],
   anthropic: [{ id: 'claude-opus-4-1', name: 'Claude Opus 4.1' }, { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' }, { id: 'claude-3-5-haiku-latest', name: 'Claude Haiku 3.5' }],
-  'deepseek-direct': [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }, { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }],
 };
 function fmtSize(bytes) { if (!bytes) return ''; const gb = bytes / 1e9; return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`; }
 
@@ -403,9 +402,13 @@ async function refreshRunMode() {
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
     const mig = $('#set-migrate-row');
     if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
-    // ChatGPT (Codex) only works on a local brain — disable the option on cloud.
-    const codexOpt = document.querySelector('#set-provider-dd option[value="codex"]');
-    if (codexOpt) { codexOpt.disabled = !m.local; codexOpt.textContent = m.local ? 'ChatGPT — your subscription' : 'ChatGPT — This Mac only'; }
+    // ChatGPT (Codex) only works on a local brain — disable the row on cloud.
+    const codexRow = document.querySelector('#set-prov-menu [data-provider="codex"]');
+    if (codexRow) {
+      codexRow.classList.toggle('dd-disabled', !m.local);
+      const slug = codexRow.querySelector('.mr-slug');
+      if (slug) slug.textContent = m.local ? 'your subscription · no key' : 'This Mac only';
+    }
     await refreshBrainProvider();
   } catch {}
 }
@@ -438,8 +441,13 @@ async function loadProviderModels(provider) {
 // Single source of truth for the MODEL section: load the provider's models into
 // the one searchable picker, toggle the key field + ChatGPT connect, reflect the
 // current model. Same control for every provider.
+const PROVIDER_LABEL = {
+  codex: 'ChatGPT', openrouter: 'OpenRouter', ollama: 'Ollama', openai: 'OpenAI', anthropic: 'Anthropic',
+};
+let selectedProvider = 'openrouter';
 async function applyProvider(provider, currentModel) {
-  const dd = $('#set-provider-dd'); if (dd) dd.value = provider;
+  selectedProvider = provider;
+  const label = $('#set-prov-label'); if (label) label.textContent = PROVIDER_LABEL[provider] || provider;
   const note = $('#set-model-note'); if (note) { note.textContent = ''; note.removeAttribute('data-state'); }
   // key field — only providers that need one
   const keyEl = $('#set-key'), needKey = _KEY_FOR[provider];
@@ -740,7 +748,7 @@ function wire() {
   });
   // Save the selected model + (if shown) the provider's API key together.
   $('#set-model-save').addEventListener('click', async () => {
-    const provider = $('#set-provider-dd').value;
+    const provider = selectedProvider;
     const model = $('#set-model').value.trim();
     const keyEl = $('#set-key'); const key = (keyEl && !keyEl.hidden) ? keyEl.value.trim() : '';
     const KEY = _KEY_FOR[provider];
@@ -767,10 +775,12 @@ function wire() {
     // half-switched state. Only refresh when the switch FAILED (no reload).
     if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
   }));
-  // Provider dropdown — switch provider. ChatGPT (Codex) is This-Mac-only and
-  // needs sign-in. applyProvider repaints the model picker + key field below.
-  $('#set-provider-dd')?.addEventListener('change', async (e) => {
-    const provider = e.target.value;
+  // Styled provider dropdown — button toggles the popover list.
+  const provBtn = $('#set-prov-btn'), provMenu = $('#set-prov-menu');
+  const closeProvMenu = () => { if (provMenu) provMenu.hidden = true; };
+  provBtn?.addEventListener('click', (e) => { e.stopPropagation(); if (provMenu) provMenu.hidden = !provMenu.hidden; });
+  document.addEventListener('click', (e) => { if (provMenu && !provMenu.hidden && !$('#set-prov-dd').contains(e.target)) closeProvMenu(); });
+  const switchProvider = async (provider) => {
     if (provider === 'codex') {
       try {
         const cfg = await window.sunday.getConfig(); if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
@@ -787,7 +797,12 @@ function wire() {
       if (!res.ok) { const d = await res.json().catch(() => ({})); flashError(d.error || `HTTP ${res.status}`); }
     } catch (err) { flashError(err.message); }
     await applyProvider(provider);
-  });
+  };
+  provMenu?.querySelectorAll('.model-row').forEach((row) => row.addEventListener('click', () => {
+    if (row.classList.contains('dd-disabled')) return;
+    closeProvMenu();
+    switchProvider(row.dataset.provider);
+  }));
   // Connect ChatGPT — shown only for ChatGPT when not signed in.
   $('#set-connect')?.addEventListener('click', async () => {
     try {

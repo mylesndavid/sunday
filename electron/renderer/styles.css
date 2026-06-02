@@ -329,7 +329,19 @@ textarea#composer::placeholder { color: var(--text-3); }
   outline: none; box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
-.set-prov-dd { margin-bottom: 14px; }
+/* .btn sets display:inline-flex, which beats the UA [hidden] rule — so a hidden
+   button stays visible. Restore hidden for buttons (Connect, Restart, etc.). */
+.btn[hidden] { display: none; }
+
+/* Sunday-styled dropdown (button + popover list) — not a native <select>. */
+.set-dd { position: relative; margin-bottom: 14px; }
+.set-dd-btn { width: 100%; text-align: left; cursor: pointer; padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23847c6e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 13px center; }
+.set-dd-menu { top: calc(100% + 6px); }
+.set-dd-menu .model-row { gap: 4px; }
+.set-dd-menu .model-row.dd-disabled { opacity: 0.45; pointer-events: none; }
+.set-dd-menu .mr-slug { flex: 1 0 100%; }
 /* Provider chooser — pick ChatGPT / OpenRouter, options swap in below. */
 .prov-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .prov-card { -webkit-app-region: no-drag; appearance: none; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; color: var(--text); transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
