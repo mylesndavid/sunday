@@ -1944,7 +1944,7 @@ class Daemon:
         body = await request.json()
         bid, enabled = body.get("id"), bool(body.get("enabled"))
         try:
-            mcp.set_builtin(bid, enabled)
+            mcp.set_builtin(bid, enabled, token=body.get("token"))
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
         try:
