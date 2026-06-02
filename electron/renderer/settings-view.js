@@ -52,12 +52,44 @@ export async function loadAll() {
 }
 
 async function loadMcp() {
+  loadBuiltinConnectors();
   try {
     const d = await (await fetch(`${DAEMON_HTTP}/v1/mcp`)).json();
     const cfg = d.config && Object.keys(d.config.mcpServers || {}).length ? d.config : null;
     if (cfg && !$('#mcp-config').value.trim()) $('#mcp-config').value = JSON.stringify(cfg, null, 2);
     renderMcpServers(d.servers || []);
   } catch {}
+}
+
+// One-click built-in connectors (e.g. Playwright browser). Toggle wires the
+// stdio MCP server into mcp.json + reconnects; setup steps show when enabled.
+async function loadBuiltinConnectors() {
+  const wrap = $('#mcp-builtin'); if (!wrap) return;
+  let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/mcp/builtin`)).json(); } catch { return; }
+  renderBuiltins(wrap, d.connectors || []);
+}
+function renderBuiltins(wrap, connectors) {
+  wrap.innerHTML = connectors.map((c) => `
+    <div class="mcp-bi ${c.enabled ? 'on' : ''}">
+      <div class="mcp-bi-head">
+        <div class="mcp-bi-txt"><div class="mcp-bi-title">${esc(c.title)}</div><div class="mcp-bi-desc">${esc(c.desc)}</div></div>
+        <button class="btn ${c.enabled ? '' : 'btn-primary'}" data-id="${esc(c.id)}" ${c.ready ? '' : 'disabled'}>${c.enabled ? 'Disable' : 'Enable'}</button>
+      </div>
+      ${!c.ready ? `<div class="mcp-bi-warn">Needs Node.js 18+ on this Mac — install it (nodejs.org) and reopen.</div>` : ''}
+      ${c.enabled && (c.setup || []).length ? `<ol class="mcp-bi-setup">${c.setup.map((s) => `<li>${esc(s)}</li>`).join('')}${c.setup_url ? `<li><a href="#" data-href="${esc(c.setup_url)}" class="mcp-bi-link">Get the extension →</a></li>` : ''}</ol>` : ''}
+    </div>`).join('');
+  wrap.querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', async () => {
+    const enable = b.textContent === 'Enable';
+    b.disabled = true; b.textContent = enable ? 'Enabling…' : 'Disabling…';
+    try {
+      const r = await fetch(`${DAEMON_HTTP}/v1/mcp/builtin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: b.dataset.id, enabled: enable }) });
+      const d = await r.json();
+      if (d.connectors) renderBuiltins(wrap, d.connectors);
+      loadMcp();
+    } catch { b.disabled = false; b.textContent = enable ? 'Enable' : 'Disable'; }
+  }));
+  wrap.querySelectorAll('.mcp-bi-link').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal(a.dataset.href); }));
 }
 
 function renderMcpServers(servers) {

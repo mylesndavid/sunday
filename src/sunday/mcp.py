@@ -65,6 +65,60 @@ def _safe(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", name).strip("_").lower()
 
 
+# ─── built-in one-click connectors ──────────────────────────────────────────
+# Curated local (stdio) MCP servers Sunday can wire with one toggle, so they
+# work out of the box instead of asking the user to paste JSON. Keyed by id.
+BUILTIN_SERVERS: dict[str, dict[str, Any]] = {
+    "playwright": {
+        "title": "Browser (Playwright)",
+        "desc": "Control your real, logged-in Chrome — navigate, click, type, read the page via the accessibility tree (not pixels). Uses the Playwright MCP extension so it drives your actual tab + sessions.",
+        "config": {"command": "npx", "args": ["-y", "@playwright/mcp@latest", "--extension"]},
+        "needs": "node",   # the daemon spawns `npx`; needs Node 18+ on PATH
+        "setup": [
+            "Install the Playwright MCP Chrome extension (one time).",
+            "Open the extension on the tab you want Sunday to drive and click 'share'.",
+            "Then ask Sunday to do something in the browser — browser_* tools are live.",
+        ],
+        "setup_url": "https://github.com/microsoft/playwright/tree/main/packages/extension#readme",
+    },
+}
+
+
+def node_available() -> bool:
+    import shutil
+    return bool(shutil.which("npx") or shutil.which("node"))
+
+
+def builtin_status() -> list[dict[str, Any]]:
+    """The built-in connectors + whether each is currently enabled in mcp.json
+    and whether its runtime requirement (Node) is satisfied."""
+    enabled = set((load_config().get("mcpServers") or {}).keys())
+    node = node_available()
+    out = []
+    for bid, b in BUILTIN_SERVERS.items():
+        out.append({
+            "id": bid, "title": b["title"], "desc": b["desc"],
+            "enabled": bid in enabled,
+            "ready": (b.get("needs") != "node") or node,
+            "needs": b.get("needs"), "setup": b.get("setup", []), "setup_url": b.get("setup_url"),
+        })
+    return out
+
+
+def set_builtin(bid: str, enabled: bool) -> dict[str, Any]:
+    """Add or remove a built-in connector from mcp.json. Returns the new config."""
+    b = BUILTIN_SERVERS.get(bid)
+    if not b:
+        raise ValueError(f"unknown built-in connector '{bid}'")
+    cfg = load_config()
+    servers = cfg.setdefault("mcpServers", {})
+    if enabled:
+        servers[bid] = dict(b["config"])
+    else:
+        servers.pop(bid, None)
+    return save_config(cfg)
+
+
 # ─── transports ───────────────────────────────────────────────────────────
 
 

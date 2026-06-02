@@ -1933,6 +1933,26 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response({"ok": True, "servers": list(status.values())})
 
+    async def _http_mcp_builtin_get(self, request: web.Request) -> web.Response:
+        from sunday import mcp
+        return web.json_response({"connectors": mcp.builtin_status(), "node": mcp.node_available()})
+
+    async def _http_mcp_builtin_post(self, request: web.Request) -> web.Response:
+        """One-click enable/disable a built-in connector (e.g. Playwright browser):
+        merge it into mcp.json + reconnect so its tools land immediately."""
+        from sunday import mcp
+        body = await request.json()
+        bid, enabled = body.get("id"), bool(body.get("enabled"))
+        try:
+            mcp.set_builtin(bid, enabled)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        try:
+            await mcp.connect_all(self.registry, self.config)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "connectors": mcp.builtin_status(), "node": mcp.node_available()})
+
     async def _http_models(self, request: web.Request) -> web.Response:
         """Proxy + trim OpenRouter's public model catalog (cached ~1h) so the
         app can offer a searchable picker with a 'sees images' flag."""
@@ -2178,6 +2198,8 @@ class Daemon:
         app.router.add_get("/v1/mcp/inspect/{name:.+}", self._http_mcp_inspect)
         app.router.add_post("/v1/mcp/install", self._http_mcp_install)
         app.router.add_post("/v1/mcp/uninstall", self._http_mcp_uninstall)
+        app.router.add_get("/v1/mcp/builtin", self._http_mcp_builtin_get)
+        app.router.add_post("/v1/mcp/builtin", self._http_mcp_builtin_post)
         app.router.add_get("/v1/mcp", self._http_mcp_get)
         app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)
