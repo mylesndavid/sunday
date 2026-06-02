@@ -209,14 +209,16 @@
 
           <!-- PROVIDER — one dropdown; the chosen provider's options appear below -->
           <div class="brain-label">Provider</div>
-          <select id="set-provider-dd" class="field set-prov-dd">
-            <option value="codex">ChatGPT — your subscription</option>
-            <option value="openrouter">OpenRouter — any model, your key</option>
-            <option value="ollama">Ollama — local models, free</option>
-            <option value="openai">OpenAI — your key</option>
-            <option value="anthropic">Anthropic — your key</option>
-            <option value="deepseek-direct">DeepSeek — your key</option>
-          </select>
+          <div class="set-dd" id="set-prov-dd">
+            <button type="button" class="field set-dd-btn" id="set-prov-btn"><span id="set-prov-label">OpenRouter</span></button>
+            <div class="model-results set-dd-menu" id="set-prov-menu" hidden>
+              <button type="button" class="model-row" data-provider="codex"><span class="mr-name">ChatGPT</span><span class="mr-slug">your subscription · no key</span></button>
+              <button type="button" class="model-row" data-provider="openrouter"><span class="mr-name">OpenRouter</span><span class="mr-slug">any model · your key</span></button>
+              <button type="button" class="model-row" data-provider="ollama"><span class="mr-name">Ollama</span><span class="mr-slug">local · free</span></button>
+              <button type="button" class="model-row" data-provider="openai"><span class="mr-name">OpenAI</span><span class="mr-slug">your key</span></button>
+              <button type="button" class="model-row" data-provider="anthropic"><span class="mr-name">Anthropic</span><span class="mr-slug">your key</span></button>
+            </div>
+          </div>
 
           <!-- MODEL — one searchable dropdown, same control for every provider -->
           <div class="brain-label">Model</div>
