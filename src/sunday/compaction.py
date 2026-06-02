@@ -220,20 +220,10 @@ async def maybe_compact(chat, config: SundayConfig) -> None:
                 tail_start_id=tail_start_id,
                 summary_chars=len(new_summary),
             )
-            # Piggyback the graph rebuild here: we just paid for one LLM call
-            # because the conversation moved meaningfully, so this is a sane
-            # cadence for refreshing the derived knowledge graph too. The
-            # `needs_rebuild()` short-circuit means we only do real work when
-            # new facts have actually landed since the last build — most
-            # compactions will skip the second call entirely.
-            try:
-                from sunday import memory_graph
-                if memory_graph.needs_rebuild():
-                    # Incremental: only the facts added since last pass get an
-                    # LLM call + merged in. No full re-extraction of the store.
-                    await memory_graph.ingest(config)
-                    log.info("memory graph refreshed via compaction")
-            except Exception as graph_exc:  # noqa: BLE001
-                log.warning("graph refresh during compaction failed", error=str(graph_exc))
+            # NB: the derived knowledge graph is NOT built here anymore. Nothing
+            # in the brain/recall path reads it — recall is FTS over flat facts.
+            # The graph only backs the Memory-tab visualization, so it's built
+            # lazily on-demand when that view is opened (GET /v1/memory/graph
+            # runs ingest itself). No background LLM spend for a picture.
     except Exception as exc:  # noqa: BLE001
         log.warning("compaction failed", error=str(exc))
