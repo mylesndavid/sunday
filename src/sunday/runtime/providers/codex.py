@@ -278,6 +278,8 @@ class CodexProvider:
             pass
 
         raw: dict[str, Any] = {"provider": "codex", "model": self.config.model.name, "streamed": True}
+        if usage_prompt is not None or usage_completion is not None:
+            raw["usage"] = {"prompt_tokens": usage_prompt or 0, "completion_tokens": usage_completion or 0}
         if reasoning_parts:
             raw["reasoning_content"] = "".join(reasoning_parts)
         return CompletionResult(

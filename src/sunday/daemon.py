@@ -314,6 +314,8 @@ class Daemon:
         background memory + compaction passes. Caller MUST hold _turn_lock."""
         control = TurnControl()
         self._active_control = control
+        from sunday import obs
+        _trace, _tok = obs.start_turn("chat_turn", session=getattr(self.chat, "key", None), user=getattr(self.config, "user_id", None))
         try:
             reply = await respond(
                 self.chat, text, modality, self.config, self.registry,
@@ -336,8 +338,12 @@ class Daemon:
                     "control":       control,
                 },
             )
+        except Exception as _turn_exc:
+            obs.end_turn(_trace, _tok, error=str(_turn_exc))
+            raise
         finally:
             self._active_control = None
+        obs.end_turn(_trace, _tok)
         await self._broadcast({"type": "reply", "modality": modality, "content": reply})
         # Buffer this exchange; extract facts in batches (every few turns) on the
         # cheap utility model instead of one full-model call per turn.

@@ -181,6 +181,9 @@ class RouterProvider:
         purpose: str | None = None,
     ) -> CompletionResult:
         last_exc: BaseException | None = None
+        from sunday import obs
+        _span = obs.llm_span("chat", model=self.config.model.name, purpose=purpose,
+                             inp=(messages[-1].get("content") if messages else None))
         for provider_name in self._chain:
             try:
                 provider = self._provider(provider_name)
@@ -212,6 +215,11 @@ class RouterProvider:
                         raise
                 if provider_name != self._chain[0]:
                     log.info("provider failover succeeded", used=provider_name, primary=self._chain[0])
+                if _span is not None:
+                    u = (result.raw or {}).get("usage") or {}
+                    _span.end(output=(result.content or "")[:600],
+                              input_tokens=u.get("prompt_tokens") or 0,
+                              output_tokens=u.get("completion_tokens") or 0)
                 return result
             except RuntimeError as exc:
                 # Config / credential errors — try the next provider quietly.
@@ -226,6 +234,8 @@ class RouterProvider:
                 # Permanent failure — surface it.
                 raise
 
+        if _span is not None:
+            _span.end(error=str(last_exc) if last_exc else "no providers configured")
         if last_exc is not None:
             raise last_exc
         raise RuntimeError("no providers configured")
