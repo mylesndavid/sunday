@@ -100,6 +100,11 @@ def _build_provider(config: SundayConfig, provider_name: str) -> Provider:
             model, base_url = defaults[provider_name]
             cloned.model = replace(cloned.model, name=model, base_url=base_url)
 
+    # Ollama always points at the local OpenAI-compatible endpoint (whether it's
+    # the primary or a fallback) — the model name is the user's pick.
+    if provider_name == "ollama" and not cloned.model.base_url:
+        cloned.model = replace(cloned.model, base_url="http://localhost:11434/v1")
+
     if provider_name == "codex":
         from sunday.runtime.providers.codex import CodexProvider
         return CodexProvider(cloned)

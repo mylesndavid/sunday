@@ -429,7 +429,35 @@ function showProviderUI(provider, currentModel) {
     b.classList.toggle('active', b.dataset.provider === provider));
   const codexPanel = $('#set-panel-codex'); if (codexPanel) codexPanel.hidden = provider !== 'codex';
   const orPanel = $('#set-panel-openrouter'); if (orPanel) orPanel.hidden = provider !== 'openrouter';
+  const olPanel = $('#set-panel-ollama'); if (olPanel) olPanel.hidden = provider !== 'ollama';
   if (provider === 'codex') setCodexModelActive(currentModel || $('#set-model')?.value || 'gpt-5.2');
+  if (provider === 'ollama') loadOllamaModels(currentModel || $('#set-model')?.value || '');
+}
+function fmtSize(bytes) { if (!bytes) return ''; const gb = bytes / 1e9; return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`; }
+// List models installed in the local Ollama and let the user pick one. If Ollama
+// isn't running (or nothing pulled), show a plain-text hint instead of failing.
+async function loadOllamaModels(active) {
+  const wrap = $('#set-ollama-models'); const status = $('#set-ollama-status');
+  if (!wrap) return;
+  const hint = (t) => { wrap.innerHTML = ''; if (status) { status.hidden = false; status.dataset.state = 'wait'; status.textContent = t; } };
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/ollama/models`)).json();
+    if (!d.available) return hint('Ollama is not running here. Install it from ollama.com, then run: ollama pull llama3.2');
+    if (!d.models.length) return hint('No models pulled yet — run: ollama pull llama3.2');
+    if (status) status.hidden = true;
+    wrap.innerHTML = d.models.map((m) =>
+      `<button type="button" class="codex-model" data-model="${m.name}"><span class="cm-n">${m.name}</span><span class="cm-d">${fmtSize(m.size)}</span></button>`).join('');
+    wrap.querySelectorAll('.codex-model').forEach((b) => {
+      b.classList.toggle('active', b.dataset.model === active);
+      b.addEventListener('click', async () => {
+        wrap.querySelectorAll('.codex-model').forEach((x) => x.classList.toggle('active', x === b));
+        try {
+          const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model_name: b.dataset.model }) });
+          if (res.ok) flashSaved(); else flashError(`HTTP ${res.status}`);
+        } catch (e) { flashError(e.message); }
+      });
+    });
+  } catch { hint('Could not reach Ollama.'); }
 }
 function setCodexStatus(text, state) {
   const el = $('#set-codex-status'); if (!el) return;

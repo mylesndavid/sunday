@@ -330,7 +330,7 @@ textarea#composer::placeholder { color: var(--text-3); }
 }
 
 /* Provider chooser — pick ChatGPT / OpenRouter, options swap in below. */
-.prov-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.prov-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .prov-card { -webkit-app-region: no-drag; appearance: none; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; color: var(--text); transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
 .prov-card:hover { background: var(--surface-2); }
 .prov-card.active { border-color: var(--accent); background: var(--accent-tint); }

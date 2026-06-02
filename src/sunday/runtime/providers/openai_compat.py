@@ -81,6 +81,13 @@ class OpenAICompatProvider:
             self._client_cache = AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
             return self._client_cache
 
+        if provider == "ollama":
+            # Local models via Ollama's OpenAI-compatible endpoint. No real key
+            # (Ollama ignores it); just needs a non-empty string for the client.
+            base = self.config.model.base_url or "http://localhost:11434/v1"
+            self._client_cache = AsyncOpenAI(api_key="ollama", base_url=base)
+            return self._client_cache
+
         raise RuntimeError(f"OpenAICompatProvider does not handle: {provider}")
 
     async def complete(

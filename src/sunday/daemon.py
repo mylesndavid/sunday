@@ -1296,9 +1296,13 @@ class Daemon:
         if "provider" in body:
             from dataclasses import replace
             prov = body["provider"]
-            valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex"}
+            valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex", "ollama"}
             if prov not in valid:
                 return web.json_response({"error": f"provider must be one of {sorted(valid)}"}, status=400)
+            if prov == "ollama":
+                # Local models via Ollama's OpenAI-compatible endpoint — point the
+                # config there so the next turn talks to localhost:11434.
+                self.config.model = replace(self.config.model, base_url="http://localhost:11434/v1")
             if prov == "codex":
                 # Codex reads ~/.codex on THIS daemon's host. Refuse the switch if
                 # there's no login here — otherwise the next turn crashes on a
@@ -1356,6 +1360,22 @@ class Daemon:
             self._codex_login = None
             return web.json_response({"error": f"could not open the sign-in listener on port 1455 ({exc})"}, status=500)
         return web.json_response({"auth_url": codex_auth.build_authorize(verifier, state)})
+
+    async def _http_ollama_models(self, request: web.Request) -> web.Response:
+        """List models installed in the local Ollama (for the provider picker).
+        Returns {available, models:[{name, size}]}. Never errors — if Ollama
+        isn't running, available:false so the UI can show a friendly hint."""
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=3) as c:
+                r = await c.get("http://localhost:11434/api/tags")
+                r.raise_for_status()
+                data = r.json()
+            models = [{"name": m.get("name", ""), "size": m.get("size", 0)}
+                      for m in (data.get("models") or []) if m.get("name")]
+            return web.json_response({"available": True, "models": models})
+        except Exception:  # noqa: BLE001
+            return web.json_response({"available": False, "models": []})
 
     async def _http_codex_status(self, request: web.Request) -> web.Response:
         from sunday.runtime.providers import codex_auth
@@ -2120,6 +2140,7 @@ class Daemon:
         app.router.add_post("/v1/config", self._http_post_config)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
+        app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
