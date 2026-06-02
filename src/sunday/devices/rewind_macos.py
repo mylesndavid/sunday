@@ -40,6 +40,7 @@ REWIND_FLAG    = Path("~/.sunday/rewind.enabled").expanduser()
 
 DEFAULT_INTERVAL_SECONDS = 300   # 5 minutes
 HASH_PREFIX_BYTES        = 16
+RETENTION_DAYS           = 3     # keep ~last few days of frames; older get pruned
 
 _watcher_task: asyncio.Task | None = None
 _last_hash: str | None = None
@@ -110,9 +111,11 @@ async def _capture() -> tuple[Path, bytes]:
     when  = time.strftime("%H%M%S")
     day   = REWIND_DIR / today
     day.mkdir(parents=True, exist_ok=True)
-    path  = day / f"{when}.png"
+    path  = day / f"{when}.jpg"
     proc = await asyncio.create_subprocess_exec(
-        "/usr/sbin/screencapture", "-x", "-t", "png", str(path),
+        # JPEG, not PNG — a full-screen PNG is ~2 MB; JPEG is ~10x smaller and
+        # fine for OCR + thumbnails. (Was the main reason rewind ballooned.)
+        "/usr/sbin/screencapture", "-x", "-t", "jpg", str(path),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -209,11 +212,36 @@ async def capture_text() -> dict[str, Any]:
 # ─── watcher loop ────────────────────────────────────────────────────────
 
 
+def _prune(conn: sqlite3.Connection) -> None:
+    """Drop frames older than RETENTION_DAYS — both the image files and their
+    index rows — so rewind stays bounded instead of growing forever."""
+    import shutil
+    cutoff = time.time() - RETENTION_DAYS * 86400
+    try:
+        rows = conn.execute("SELECT image_path FROM frames WHERE ts < ?", (cutoff,)).fetchall()
+        for (p,) in rows:
+            try: Path(p).unlink(missing_ok=True)
+            except Exception: pass  # noqa: BLE001
+        if rows:
+            conn.execute("DELETE FROM frames WHERE ts < ?", (cutoff,))
+            conn.commit()
+        # Sweep whole day-folders older than the window (catches orphan files
+        # that were captured but never indexed). YYYY-MM-DD sorts chronologically.
+        cutoff_day = time.strftime("%Y-%m-%d", time.localtime(cutoff))
+        for d in REWIND_DIR.iterdir():
+            if d.is_dir() and len(d.name) == 10 and d.name < cutoff_day:
+                shutil.rmtree(d, ignore_errors=True)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rewind prune failed", error=str(exc))
+
+
 async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
     """Capture → dedupe → OCR → index. Cancellable."""
     global _last_hash
     log.info("rewind watcher starting", interval_s=interval, db=str(REWIND_DB))
     conn = _connect()
+    _prune(conn)   # clear any backlog from before retention existed, on startup
+    _ticks = 0
     while True:
         try:
             await asyncio.sleep(interval)
@@ -242,6 +270,9 @@ async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
             )
             conn.commit()
             log.info("rewind frame indexed", hash=h, ocr_chars=len(ocr_text))
+            _ticks += 1
+            if _ticks % 12 == 0:   # ~hourly at the 5-min default
+                _prune(conn)
         except asyncio.CancelledError:
             log.info("rewind watcher cancelled")
             return
