@@ -236,6 +236,7 @@
               <div class="model-results" id="set-model-results" hidden></div>
             </div>
             <div class="model-current" id="set-model-current" hidden></div>
+            <input type="password" id="set-or-key" class="field" placeholder="OpenRouter API key — leave blank to keep current" autocomplete="off" spellcheck="false" style="margin-top:10px;">
             <div class="set-actions">
               <span class="set-verify" id="set-model-note"></span>
               <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
@@ -260,7 +261,6 @@
               <span class="set-verify" id="set-provider-note"></span>
               <button class="btn" id="set-provider-save">Save provider</button>
             </div>
-            <p class="set-help" id="set-model-provider-note" style="color:var(--accent-press);" hidden></p>
             <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
             <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
             <div class="set-actions">
