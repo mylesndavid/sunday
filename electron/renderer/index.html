@@ -205,41 +205,52 @@
             <button class="btn btn-primary" id="set-migrate">Bring my history over</button>
           </div>
 
-          <!-- MODEL -->
-          <div class="brain-label">Model</div>
-          <!-- This Mac only: use the ChatGPT subscription (Codex) with no key -->
-          <label class="brain-codex" id="set-codex-row" hidden>
-            <input type="checkbox" id="set-codex-toggle">
-            <span><strong>Use my ChatGPT subscription</strong><br><span class="brain-card-d">No API key. Sign in once with your ChatGPT account and pick which model it runs — off = choose any model below.</span><span class="brain-codex-status" id="set-codex-status" hidden></span></span>
-          </label>
-          <!-- When ChatGPT is on, choose among the models your plan runs (not the OpenRouter catalog). -->
-          <div class="codex-models" id="set-codex-models" hidden>
-            <button type="button" class="codex-model" data-model="gpt-5.2"><span class="cm-n">gpt-5.2</span><span class="cm-d">Fast, balanced</span></button>
-            <button type="button" class="codex-model" data-model="gpt-5.5"><span class="cm-n">gpt-5.5</span><span class="cm-d">Most capable</span></button>
-          </div>
-          <div class="model-pick" id="set-model-pick">
-            <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
-            <div class="model-results" id="set-model-results" hidden></div>
-          </div>
-          <div class="model-current" id="set-model-current" hidden></div>
-          <input type="text" id="set-model" hidden>
-          <input type="text" id="set-provider" hidden>
-          <div class="set-actions">
-            <span class="set-verify" id="set-model-note"></span>
-            <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
+          <!-- PROVIDER — pick where the model comes from; its options appear below -->
+          <div class="brain-label">Provider</div>
+          <div class="prov-cards" id="set-providers">
+            <button type="button" class="prov-card" data-provider="codex" id="set-prov-codex">
+              <div class="prov-t">ChatGPT</div>
+              <div class="prov-d">Your subscription — no API key</div>
+            </button>
+            <button type="button" class="prov-card" data-provider="openrouter" id="set-prov-openrouter">
+              <div class="prov-t">OpenRouter</div>
+              <div class="prov-d">Any model — your key</div>
+            </button>
           </div>
 
-          <!-- ADVANCED: direct providers, API keys, manual connection -->
+          <!-- ChatGPT (Codex) options -->
+          <div class="prov-panel" id="set-panel-codex" hidden>
+            <div class="brain-codex-status" id="set-codex-status" hidden></div>
+            <div class="codex-models" id="set-codex-models">
+              <button type="button" class="codex-model" data-model="gpt-5.2"><span class="cm-n">gpt-5.2</span><span class="cm-d">Fast, balanced</span></button>
+              <button type="button" class="codex-model" data-model="gpt-5.5"><span class="cm-n">gpt-5.5</span><span class="cm-d">Most capable</span></button>
+            </div>
+          </div>
+
+          <!-- OpenRouter options -->
+          <div class="prov-panel" id="set-panel-openrouter" hidden>
+            <div class="model-pick" id="set-model-pick">
+              <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
+              <div class="model-results" id="set-model-results" hidden></div>
+            </div>
+            <div class="model-current" id="set-model-current" hidden></div>
+            <div class="set-actions">
+              <span class="set-verify" id="set-model-note"></span>
+              <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
+            </div>
+          </div>
+          <input type="text" id="set-model" hidden>
+          <input type="text" id="set-provider" hidden>
+
+          <!-- ADVANCED: direct API providers + manual connection -->
           <details class="set-advanced">
-            <summary>Advanced — direct providers, API keys, manual connection</summary>
-            <p class="set-help">Use a provider directly with your own key (instead of OpenRouter), or point the app at a specific daemon.</p>
+            <summary>Advanced — direct API providers, manual connection</summary>
+            <p class="set-help">Use OpenAI, Anthropic, or DeepSeek directly with your own key, or point the app at a specific daemon.</p>
             <label class="brain-field"><span>Provider</span>
               <select id="set-provider-select" class="field">
-                <option value="openrouter">OpenRouter (any model)</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="deepseek-direct">DeepSeek</option>
-                <option value="codex">Codex — ChatGPT subscription</option>
               </select>
             </label>
             <input type="password" id="set-api-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" style="margin-top:8px;">

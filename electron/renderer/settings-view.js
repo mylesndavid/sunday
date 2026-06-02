@@ -36,7 +36,9 @@ export async function loadAll() {
     $('#set-provider').value = c.model?.provider || '';
     $('#set-model').value = c.model?.name || '';
     const psel = $('#set-provider-select');
-    if (psel) { psel.value = c.model?.provider || 'openrouter'; updateKeyField(); }
+    // Advanced dropdown only holds the direct-key providers now (ChatGPT/OpenRouter
+    // are the cards above). Only reflect the active provider if it's one of them.
+    if (psel) { if (['openai', 'anthropic', 'deepseek-direct'].includes(c.model?.provider)) psel.value = c.model.provider; updateKeyField(); }
     await refreshRunMode();
     await loadModels();
     showCurrentModel();
@@ -397,38 +399,37 @@ async function refreshRunMode() {
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
     const mig = $('#set-migrate-row');
     if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
-    // The Codex card is always visible (so the feature is discoverable), but it
-    // only works on a local brain — the OAuth callback is localhost and the token
-    // lives in ~/.codex on this Mac. On cloud, show it disabled with a hint.
-    const codexRow = $('#set-codex-row');
-    const codexToggle = $('#set-codex-toggle');
-    if (codexRow) codexRow.classList.toggle('disabled', !m.local);
-    if (codexToggle) codexToggle.disabled = !m.local;
-    if (m.local) {
-      await refreshBrainProvider();
-    } else {
-      if (codexToggle) codexToggle.checked = false;
-      applyCodexUI(false);
-      setCodexStatus('Available on This Mac — switch the brain above to use your ChatGPT subscription.', 'wait');
-    }
+    // ChatGPT (Codex) only works on a local brain — the OAuth callback is
+    // localhost and the login lives in ~/.codex on this Mac. On cloud, disable
+    // the ChatGPT provider card with a "This Mac only" hint.
+    const codexCard = $('#set-prov-codex');
+    if (codexCard) { codexCard.classList.toggle('disabled', !m.local); codexCard.disabled = !m.local; }
+    const codexDesc = codexCard?.querySelector('.prov-d');
+    if (codexDesc) codexDesc.textContent = m.local ? 'Your subscription — no API key' : 'This Mac only';
+    await refreshBrainProvider();
   } catch {}
 }
 
-// Reflect the daemon's current provider into the Codex toggle + model picker.
+// Reflect the daemon's current provider into the chooser + show its panel.
 async function refreshBrainProvider() {
   try {
     const c = await (await fetch(`${DAEMON_HTTP}/v1/config`)).json();
-    const isCodex = c.model?.provider === 'codex';
-    const t = $('#set-codex-toggle'); if (t) t.checked = isCodex;
-    applyCodexUI(isCodex, c.model?.name);
-    // Show "Connected as …" when a ChatGPT login exists (independent of whether
-    // Codex is the active provider — they may have it connected but toggled off).
+    showProviderUI(c.model?.provider || 'openrouter', c.model?.name);
+    // "Connected as …" when a ChatGPT login exists (shown in the ChatGPT panel).
     try {
       const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json();
       if (s.connected && s.email) setCodexStatus(`Connected as ${s.email}`, 'ok');
-      else if (!isCodex) setCodexStatus('', '');
+      else setCodexStatus('', '');
     } catch {}
   } catch {}
+}
+// Highlight the chosen provider and reveal only its options.
+function showProviderUI(provider, currentModel) {
+  document.querySelectorAll('#set-providers .prov-card').forEach((b) =>
+    b.classList.toggle('active', b.dataset.provider === provider));
+  const codexPanel = $('#set-panel-codex'); if (codexPanel) codexPanel.hidden = provider !== 'codex';
+  const orPanel = $('#set-panel-openrouter'); if (orPanel) orPanel.hidden = provider !== 'openrouter';
+  if (provider === 'codex') setCodexModelActive(currentModel || $('#set-model')?.value || 'gpt-5.2');
 }
 function setCodexStatus(text, state) {
   const el = $('#set-codex-status'); if (!el) return;
@@ -453,18 +454,6 @@ async function connectCodex() {
     if (s.error) throw new Error(s.error);
   }
   throw new Error('timed out waiting for sign-in');
-}
-// When Codex is on, the model is fixed (gpt-5.2) — hide the OpenRouter picker.
-function applyCodexUI(on, currentModel) {
-  // When ChatGPT is on, swap the OpenRouter catalog for the small set of models
-  // the subscription actually runs — the user picks, never forced.
-  const pick = $('#set-model-pick'); if (pick) pick.style.display = on ? 'none' : '';
-  const save = $('#set-model-save'); if (save) save.style.display = on ? 'none' : '';
-  const cur = $('#set-model-current'); if (cur) cur.style.display = on ? 'none' : '';
-  const chips = $('#set-codex-models'); if (chips) chips.hidden = !on;
-  if (on) setCodexModelActive(currentModel || $('#set-model')?.value || 'gpt-5.2');
-  const note = $('#set-model-note');
-  if (note && on) { note.dataset.state = ''; note.textContent = 'Pick the ChatGPT model Sunday thinks with.'; }
 }
 function setCodexModelActive(model) {
   document.querySelectorAll('#set-codex-models .codex-model').forEach((b) =>
@@ -771,42 +760,36 @@ function wire() {
     // half-switched state. Only refresh when the switch FAILED (no reload).
     if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
   }));
-  // "Use my ChatGPT subscription" (Codex) — This Mac only. Turning it on runs a
-  // one-click browser sign-in (no terminal, no daemon setup); turning it off
-  // just flips the provider back. The login is remembered between toggles.
-  $('#set-codex-toggle')?.addEventListener('change', async (e) => {
-    const on = e.target.checked; const toggle = e.target;
-    if (on) {
-      toggle.disabled = true;
+  // Pick a provider. ChatGPT (Codex) is This-Mac-only and signs you in on first
+  // pick; OpenRouter just switches. Each reveals its own options below.
+  document.querySelectorAll('#set-providers .prov-card').forEach((card) => card.addEventListener('click', async () => {
+    const provider = card.dataset.provider;
+    if (provider === 'codex') {
+      card.style.opacity = '0.6';
       try {
-        // Re-sync the daemon URL + verify we're local before touching it — the
-        // renderer's DAEMON_HTTP can lag a brain switch, and Codex is local-only.
         const cfg = await window.sunday.getConfig();
         if (cfg.daemonHttp) DAEMON_HTTP = cfg.daemonHttp;
         const m = await window.sunday.runMode();
-        if (!m.local) throw new Error('Using your ChatGPT subscription runs on this Mac. Switch the brain to “This Mac” above — use “Bring my history over” first to keep your chat + memory.');
-        await connectCodex();           // opens browser, waits for sign-in, activates Codex daemon-side
-        applyCodexUI(true);
+        if (!m.local) throw new Error('ChatGPT runs on This Mac. Switch the brain to “This Mac” above first.');
+        showProviderUI('codex');        // reveal the panel immediately so status shows
+        await connectCodex();            // signs in (browser) if needed, activates Codex daemon-side
+        await refreshBrainProvider();
       } catch (err) {
-        toggle.checked = false;
         setCodexStatus(err.message || 'Sign-in failed', 'fail');
-      } finally { toggle.disabled = false; }
+        showProviderUI('codex');
+      } finally { card.style.opacity = ''; }
       return;
     }
-    // Turning off — back to the OpenRouter catalog. Keep the ChatGPT login.
-    const note = $('#set-model-note');
+    // OpenRouter (or another non-Codex provider) — switch and show its options.
     try {
       const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'openrouter' }),
+        body: JSON.stringify({ provider }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { toggle.checked = true; if (note) { note.dataset.state = 'fail'; note.textContent = data.error || `HTTP ${res.status}`; } return; }
-      applyCodexUI(false);
-      await refreshBrainProvider();     // restores "Connected as …" subtext
-      if (note) { note.dataset.state = ''; note.textContent = 'Pick any model below.'; }
-    } catch (err) { toggle.checked = true; if (note) { note.dataset.state = 'fail'; note.textContent = err.message; } }
-  });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); flashError(d.error || `HTTP ${res.status}`); return; }
+      await refreshBrainProvider();
+    } catch (err) { flashError(err.message); }
+  }));
   // Pick which ChatGPT model Codex runs (gpt-5.2 / gpt-5.5) — only shown when Codex is on.
   document.querySelectorAll('#set-codex-models .codex-model').forEach((b) => b.addEventListener('click', async () => {
     const model = b.dataset.model;
