@@ -73,21 +73,38 @@ function renderBuiltins(wrap, connectors) {
     <div class="mcp-bi ${c.enabled ? 'on' : ''}">
       <div class="mcp-bi-head">
         <div class="mcp-bi-txt"><div class="mcp-bi-title">${esc(c.title)}</div><div class="mcp-bi-desc">${esc(c.desc)}</div></div>
-        <button class="btn ${c.enabled ? '' : 'btn-primary'}" data-id="${esc(c.id)}" ${c.ready ? '' : 'disabled'}>${c.enabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn ${c.enabled ? '' : 'btn-primary'}" data-act="${c.enabled ? 'disable' : (c.needs_token ? 'reveal' : 'enable')}" data-id="${esc(c.id)}" ${c.ready ? '' : 'disabled'}>${c.enabled ? 'Disconnect' : 'Connect'}</button>
       </div>
       ${!c.ready ? `<div class="mcp-bi-warn">Needs Node.js 18+ on this Mac — install it (nodejs.org) and reopen.</div>` : ''}
+      ${c.needs_token && !c.enabled ? `
+        <div class="mcp-bi-token" id="bi-token-${esc(c.id)}" hidden>
+          <div class="mcp-bi-tokhint">${esc(c.token_label || 'Paste the connection token.')}</div>
+          <div class="mcp-bi-tokrow">
+            <input type="text" class="field" id="bi-tokin-${esc(c.id)}" placeholder="paste token" autocomplete="off" spellcheck="false">
+            <button class="btn btn-primary" data-act="enable" data-id="${esc(c.id)}">Connect</button>
+          </div>
+          ${c.setup_url ? `<a href="#" data-href="${esc(c.setup_url)}" class="mcp-bi-link">Where do I get the extension + token? →</a>` : ''}
+        </div>` : ''}
       ${c.enabled && (c.setup || []).length ? `<ol class="mcp-bi-setup">${c.setup.map((s) => `<li>${esc(s)}</li>`).join('')}${c.setup_url ? `<li><a href="#" data-href="${esc(c.setup_url)}" class="mcp-bi-link">Get the extension →</a></li>` : ''}</ol>` : ''}
     </div>`).join('');
-  wrap.querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', async () => {
-    const enable = b.textContent === 'Enable';
-    b.disabled = true; b.textContent = enable ? 'Enabling…' : 'Disabling…';
-    try {
-      const r = await fetch(`${DAEMON_HTTP}/v1/mcp/builtin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: b.dataset.id, enabled: enable }) });
-      const d = await r.json();
-      if (d.connectors) renderBuiltins(wrap, d.connectors);
-      loadMcp();
-    } catch { b.disabled = false; b.textContent = enable ? 'Enable' : 'Disable'; }
+
+  const toggle = async (id, enabled, token) => {
+    const r = await fetch(`${DAEMON_HTTP}/v1/mcp/builtin`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, enabled, token }) });
+    const d = await r.json();
+    if (d.connectors) renderBuiltins(wrap, d.connectors);
+    loadMcp();
+  };
+  wrap.querySelectorAll('button[data-act]').forEach((b) => b.addEventListener('click', async () => {
+    const { act, id } = b.dataset;
+    if (act === 'reveal') {   // show the token input
+      const box = $(`#bi-token-${id}`); if (box) { box.hidden = false; $(`#bi-tokin-${id}`)?.focus(); }
+      return;
+    }
+    const token = act === 'enable' ? ($(`#bi-tokin-${id}`)?.value.trim() || undefined) : undefined;
+    b.disabled = true; b.textContent = act === 'disable' ? 'Disconnecting…' : 'Connecting…';
+    try { await toggle(id, act !== 'disable', token); }
+    catch { b.disabled = false; b.textContent = act === 'disable' ? 'Disconnect' : 'Connect'; }
   }));
   wrap.querySelectorAll('.mcp-bi-link').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal(a.dataset.href); }));
 }

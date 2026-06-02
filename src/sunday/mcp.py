@@ -74,10 +74,12 @@ BUILTIN_SERVERS: dict[str, dict[str, Any]] = {
         "desc": "Control your real, logged-in Chrome — navigate, click, type, read the page via the accessibility tree (not pixels). Uses the Playwright MCP extension so it drives your actual tab + sessions.",
         "config": {"command": "npx", "args": ["-y", "@playwright/mcp@latest", "--extension"]},
         "needs": "node",   # the daemon spawns `npx`; needs Node 18+ on PATH
+        "token_env": "PLAYWRIGHT_MCP_EXTENSION_TOKEN",   # paste from the extension; pairs the server to your browser
+        "token_label": "Click the Playwright extension in Chrome, copy the token it shows, and paste it here.",
         "setup": [
             "Install the Playwright MCP Chrome extension (one time).",
-            "Open the extension on the tab you want Sunday to drive and click 'share'.",
-            "Then ask Sunday to do something in the browser — browser_* tools are live.",
+            "Click the extension on the tab you want Sunday to drive — it shows a token.",
+            "Paste that token above and Connect — browser_* tools go live.",
         ],
         "setup_url": "https://github.com/microsoft/playwright/tree/main/packages/extension#readme",
     },
@@ -90,30 +92,43 @@ def node_available() -> bool:
 
 
 def builtin_status() -> list[dict[str, Any]]:
-    """The built-in connectors + whether each is currently enabled in mcp.json
-    and whether its runtime requirement (Node) is satisfied."""
-    enabled = set((load_config().get("mcpServers") or {}).keys())
+    """The built-in connectors + whether each is currently enabled in mcp.json,
+    whether its runtime req (Node) is met, and (for token connectors) whether a
+    token is already stored."""
+    saved = (load_config().get("mcpServers") or {})
     node = node_available()
     out = []
     for bid, b in BUILTIN_SERVERS.items():
+        tenv = b.get("token_env")
+        has_token = bool(((saved.get(bid) or {}).get("env") or {}).get(tenv)) if tenv else False
         out.append({
             "id": bid, "title": b["title"], "desc": b["desc"],
-            "enabled": bid in enabled,
+            "enabled": bid in saved,
             "ready": (b.get("needs") != "node") or node,
             "needs": b.get("needs"), "setup": b.get("setup", []), "setup_url": b.get("setup_url"),
+            "needs_token": bool(tenv), "token_label": b.get("token_label"), "has_token": has_token,
         })
     return out
 
 
-def set_builtin(bid: str, enabled: bool) -> dict[str, Any]:
-    """Add or remove a built-in connector from mcp.json. Returns the new config."""
+def set_builtin(bid: str, enabled: bool, token: str | None = None) -> dict[str, Any]:
+    """Add or remove a built-in connector from mcp.json. For token connectors,
+    store the pasted token in the server's env. Returns the new config."""
     b = BUILTIN_SERVERS.get(bid)
     if not b:
         raise ValueError(f"unknown built-in connector '{bid}'")
     cfg = load_config()
     servers = cfg.setdefault("mcpServers", {})
     if enabled:
-        servers[bid] = dict(b["config"])
+        entry: dict[str, Any] = {k: (list(v) if isinstance(v, list) else v) for k, v in b["config"].items()}
+        tenv = b.get("token_env")
+        if tenv:
+            tok = (token or "").strip()
+            if not tok:  # re-enable without a fresh token: keep the one already saved
+                tok = ((servers.get(bid) or {}).get("env") or {}).get(tenv, "")
+            if tok:
+                entry.setdefault("env", {})[tenv] = tok
+        servers[bid] = entry
     else:
         servers.pop(bid, None)
     return save_config(cfg)
