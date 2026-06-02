@@ -251,17 +251,24 @@ EXTRACT_SYSTEM = (
 )
 
 
-async def extract_facts(user_text: str, sunday_reply: str, config: SundayConfig) -> list[str]:
-    """Call an LLM to distill durable facts from a single user+sunday exchange.
+async def extract_facts(exchanges: list[tuple[str, str]], config: SundayConfig) -> list[str]:
+    """Distill durable facts from a batch of user+sunday exchanges in one call.
 
-    Uses OpenRouter (default runtime) so it's cheap and routed through the
-    same gateway as the main brain.
+    Runs on the cheap utility model (small, reasoning off) — this is a
+    distillation task, not the chat brain. Batched so it fires less often than
+    once per turn.
     """
-    from sunday.runtime import build_runtime
+    from sunday.runtime import build_utility_runtime
 
-    prompt = f"User said:\n{user_text.strip()}\n\nSunday replied:\n{sunday_reply.strip()}\n\nJSON array of durable facts about the user:"
+    convo = "\n\n".join(
+        f"User said:\n{(u or '').strip()}\n\nSunday replied:\n{(r or '').strip()}"
+        for u, r in exchanges if (u or r)
+    )
+    if not convo.strip():
+        return []
+    prompt = f"{convo}\n\nJSON array of durable facts about the user:"
     try:
-        rt = build_runtime(config)
+        rt = build_utility_runtime(config)
         result = await rt.complete(
             system_prompt=EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
