@@ -207,69 +207,42 @@
             <button class="btn btn-primary" id="set-migrate">Bring my history over</button>
           </div>
 
-          <!-- PROVIDER — pick where the model comes from; its options appear below -->
+          <!-- PROVIDER — one dropdown; the chosen provider's options appear below -->
           <div class="brain-label">Provider</div>
-          <div class="prov-cards" id="set-providers">
-            <button type="button" class="prov-card" data-provider="codex" id="set-prov-codex">
-              <div class="prov-t">ChatGPT</div>
-              <div class="prov-d">Your subscription — no API key</div>
-            </button>
-            <button type="button" class="prov-card" data-provider="openrouter" id="set-prov-openrouter">
-              <div class="prov-t">OpenRouter</div>
-              <div class="prov-d">Any model — your key</div>
-            </button>
-            <button type="button" class="prov-card" data-provider="ollama" id="set-prov-ollama">
-              <div class="prov-t">Ollama</div>
-              <div class="prov-d">Local models — free, private</div>
-            </button>
-          </div>
+          <select id="set-provider-dd" class="field set-prov-dd">
+            <option value="codex">ChatGPT — your subscription</option>
+            <option value="openrouter">OpenRouter — any model, your key</option>
+            <option value="ollama">Ollama — local models, free</option>
+            <option value="openai">OpenAI — your key</option>
+            <option value="anthropic">Anthropic — your key</option>
+            <option value="deepseek-direct">DeepSeek — your key</option>
+          </select>
 
-          <!-- ChatGPT (Codex) options -->
-          <div class="prov-panel" id="set-panel-codex" hidden>
-            <div class="brain-codex-status" id="set-codex-status" hidden></div>
-            <div class="codex-models" id="set-codex-models">
-              <button type="button" class="codex-model" data-model="gpt-5.2"><span class="cm-n">gpt-5.2</span><span class="cm-d">Fast, balanced</span></button>
-              <button type="button" class="codex-model" data-model="gpt-5.5"><span class="cm-n">gpt-5.5</span><span class="cm-d">Most capable</span></button>
-            </div>
+          <!-- MODEL — one searchable dropdown, same control for every provider -->
+          <div class="brain-label">Model</div>
+          <div class="model-pick" id="set-model-pick">
+            <input type="text" id="set-model-search" class="field" placeholder="Search models…" autocomplete="off" spellcheck="false">
+            <div class="model-results" id="set-model-results" hidden></div>
           </div>
+          <div class="model-current" id="set-model-current" hidden></div>
 
-          <!-- OpenRouter options -->
-          <div class="prov-panel" id="set-panel-openrouter" hidden>
-            <div class="model-pick" id="set-model-pick">
-              <input type="text" id="set-model-search" class="field" placeholder="Search models — name or provider…" autocomplete="off" spellcheck="false">
-              <div class="model-results" id="set-model-results" hidden></div>
-            </div>
-            <div class="model-current" id="set-model-current" hidden></div>
-            <input type="password" id="set-or-key" class="field" placeholder="OpenRouter API key — leave blank to keep current" autocomplete="off" spellcheck="false" style="margin-top:10px;">
-            <div class="set-actions">
-              <span class="set-verify" id="set-model-note"></span>
-              <button class="btn btn-primary" id="set-model-save" disabled>Save model</button>
-            </div>
-          </div>
-          <!-- Ollama options -->
-          <div class="prov-panel" id="set-panel-ollama" hidden>
-            <div class="brain-codex-status" id="set-ollama-status" hidden></div>
-            <div class="codex-models" id="set-ollama-models"></div>
+          <!-- API key — shown only for providers that need one -->
+          <input type="password" id="set-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" hidden style="margin-top:10px;">
+          <!-- ChatGPT sign-in status -->
+          <div class="brain-codex-status" id="set-codex-status" hidden></div>
+
+          <div class="set-actions">
+            <span class="set-verify" id="set-model-note"></span>
+            <button class="btn" id="set-connect" hidden>Connect ChatGPT</button>
+            <button class="btn btn-primary" id="set-model-save">Save</button>
           </div>
           <input type="text" id="set-model" hidden>
           <input type="text" id="set-provider" hidden>
 
-          <!-- ADVANCED: direct API providers + manual connection -->
+          <!-- ADVANCED: manual connection only -->
           <details class="set-advanced">
-            <summary>Advanced — direct API providers, manual connection</summary>
-            <p class="set-help">Use OpenAI, Anthropic, or DeepSeek directly with your own key, or point the app at a specific daemon.</p>
-            <label class="brain-field"><span>Provider</span>
-              <select id="set-provider-select" class="field">
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="deepseek-direct">DeepSeek</option>
-              </select>
-            </label>
-            <input type="password" id="set-api-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" style="margin-top:8px;">
-            <div class="set-actions">
-              <span class="set-verify" id="set-provider-note"></span>
-              <button class="btn" id="set-provider-save">Save provider</button>
-            </div>
+            <summary>Advanced — manual connection</summary>
+            <p class="set-help">Point the app at a specific daemon (HTTP + WebSocket URL).</p>
             <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
             <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
             <div class="set-actions">
