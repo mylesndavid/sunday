@@ -229,7 +229,9 @@ async def maybe_compact(chat, config: SundayConfig) -> None:
             try:
                 from sunday import memory_graph
                 if memory_graph.needs_rebuild():
-                    await memory_graph.rebuild(config)
+                    # Incremental: only the facts added since last pass get an
+                    # LLM call + merged in. No full re-extraction of the store.
+                    await memory_graph.ingest(config)
                     log.info("memory graph refreshed via compaction")
             except Exception as graph_exc:  # noqa: BLE001
                 log.warning("graph refresh during compaction failed", error=str(graph_exc))

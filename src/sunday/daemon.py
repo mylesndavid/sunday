@@ -1480,9 +1480,9 @@ class Daemon:
     async def _http_memory_graph(self, request: web.Request) -> web.Response:
         from sunday import memory_graph
         try:
-            # Build lazily if facts exist but the graph hasn't been built yet.
+            # Build lazily (incrementally) if new facts have landed since last.
             if memory_graph.needs_rebuild():
-                await memory_graph.rebuild(self.config)
+                await memory_graph.ingest(self.config)
             return web.json_response(memory_graph.graph())
         except Exception as exc:  # noqa: BLE001
             log.warning("memory graph read failed", error=str(exc))
