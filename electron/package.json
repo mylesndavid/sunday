@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.4.26",
+  "version": "0.4.27",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
