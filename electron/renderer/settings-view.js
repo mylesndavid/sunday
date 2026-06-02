@@ -490,13 +490,13 @@ async function loadProviderModels(provider) {
 // Single source of truth for the MODEL section: load the provider's models into
 // the one searchable picker, toggle the key field + ChatGPT connect, reflect the
 // current model. Same control for every provider.
-const PROVIDER_LABEL = {
+const PROV_DD_LABEL = {
   codex: 'ChatGPT', openrouter: 'OpenRouter', ollama: 'Ollama', openai: 'OpenAI', anthropic: 'Anthropic',
 };
 let selectedProvider = 'openrouter';
 async function applyProvider(provider, currentModel) {
   selectedProvider = provider;
-  const label = $('#set-prov-label'); if (label) label.textContent = PROVIDER_LABEL[provider] || provider;
+  const label = $('#set-prov-label'); if (label) label.textContent = PROV_DD_LABEL[provider] || provider;
   const note = $('#set-model-note'); if (note) { note.textContent = ''; note.removeAttribute('data-state'); }
   // key field — only providers that need one
   const keyEl = $('#set-key'), needKey = _KEY_FOR[provider];
