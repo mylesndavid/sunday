@@ -333,6 +333,17 @@ textarea#composer::placeholder { color: var(--text-3); }
    button stays visible. Restore hidden for buttons (Connect, Restart, etc.). */
 .btn[hidden] { display: none; }
 
+/* One-click MCP connectors (e.g. Playwright browser) */
+.mcp-bi { border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; margin-bottom: 10px; background: var(--surface); }
+.mcp-bi.on { border-color: var(--accent); background: var(--accent-tint); }
+.mcp-bi-head { display: flex; align-items: center; gap: 12px; }
+.mcp-bi-txt { flex: 1; }
+.mcp-bi-title { font: 650 14px/1.2 var(--font-sans); }
+.mcp-bi-desc { font: 400 12.5px/1.45 var(--font-sans); color: var(--text-2); margin-top: 3px; }
+.mcp-bi-warn { font: 500 12px/1.4 var(--font-sans); color: var(--error); margin-top: 8px; }
+.mcp-bi-setup { margin: 10px 0 0; padding-left: 20px; font: 400 12.5px/1.6 var(--font-sans); color: var(--text-2); }
+.mcp-bi-link { color: var(--accent-press); cursor: pointer; }
+
 /* Sunday-styled dropdown (button + popover list) — not a native <select>. */
 .set-dd { position: relative; margin-bottom: 14px; }
 .set-dd-btn { width: 100%; text-align: left; cursor: pointer; padding-right: 34px;
