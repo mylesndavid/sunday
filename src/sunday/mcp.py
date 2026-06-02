@@ -86,9 +86,34 @@ BUILTIN_SERVERS: dict[str, dict[str, Any]] = {
 }
 
 
+def _node_path_dirs() -> list[str]:
+    """Common Node install locations. The daemon is often spawned by the app /
+    launchd with a minimal PATH that lacks /opt/homebrew/bin, so `npx` can't be
+    found even when Node is installed — we prepend these explicitly."""
+    import os, glob
+    home = os.path.expanduser("~")
+    dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+            f"{home}/.npm-global/bin", f"{home}/.volta/bin", f"{home}/.bun/bin"]
+    for pat in (f"{home}/.nvm/versions/node/*/bin",
+                f"{home}/Library/Application Support/fnm/node-versions/*/installation/bin",
+                f"{home}/.local/state/fnm_multishells/*/bin"):
+        dirs += sorted(glob.glob(pat), reverse=True)  # newest version first
+    return dirs
+
+
+def augmented_env(extra: dict | None = None) -> dict:
+    """os.environ + any per-server env, with the Node dirs prepended to PATH."""
+    import os
+    env = {**os.environ, **(extra or {})}
+    found = [d for d in _node_path_dirs() if os.path.isdir(d)]
+    env["PATH"] = os.pathsep.join(found + [env.get("PATH", "")])
+    return env
+
+
 def node_available() -> bool:
     import shutil
-    return bool(shutil.which("npx") or shutil.which("node"))
+    return bool(shutil.which("npx", path=augmented_env()["PATH"])
+                or shutil.which("node", path=augmented_env()["PATH"]))
 
 
 def builtin_status() -> list[dict[str, Any]]:
@@ -224,11 +249,17 @@ class _StdioMCP:
         self._id = 0
 
     async def _start(self):
-        import os
+        import shutil
+        env = augmented_env(self.env)
+        # create_subprocess_exec resolves the executable against the PARENT's
+        # PATH (not env=), so under the daemon's minimal PATH `npx` won't be
+        # found. Resolve it to an absolute path using the augmented PATH; the
+        # augmented env still flows to the child so npx finds node + subprocs.
+        cmd = shutil.which(self.command, path=env["PATH"]) or self.command
         self.proc = await asyncio.create_subprocess_exec(
-            self.command, *self.args,
+            cmd, *self.args,
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            env={**os.environ, **self.env},
+            env=env,
         )
 
     async def _rpc(self, method: str, params: dict | None = None, notify: bool = False) -> Any:
