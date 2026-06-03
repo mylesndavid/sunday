@@ -686,53 +686,7 @@ function wire() {
     window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
   });
 
-  // ── "Hey Sunday" wake-word toggle ── mirrors the observer toggle (same
-  // honest status, same mic-gate). Off by default; VAD-gated when on.
-  let wakePoll = null;
-  function setWakeUI(s) {
-    const statusEl = $('#set-wake-status');
-    const btn = $('#set-wake-toggle');
-    if (!statusEl || !btn) return;
-    btn.textContent = s.enabled ? 'Turn off' : 'Turn on';
-    if (s.error && s.error.startsWith('mic-denied')) {
-      statusEl.dataset.state = 'fail';
-      statusEl.textContent = 'mic permission denied — enable Sunday in System Settings → Privacy → Microphone';
-    } else if (s.error && s.error.startsWith('mic-')) {
-      statusEl.dataset.state = 'fail'; statusEl.textContent = `mic not available (${s.mic || 'unknown'})`;
-    } else if (s.error) {
-      statusEl.dataset.state = 'fail'; statusEl.textContent = `couldn't start: ${s.error}`;
-    } else if (s.enabled && s.running) {
-      statusEl.dataset.state = 'ok'; statusEl.textContent = 'on — listening for "Hey Sunday"';
-    } else if (s.enabled) {
-      statusEl.dataset.state = ''; statusEl.textContent = 'on — starting…';
-    } else {
-      statusEl.dataset.state = ''; statusEl.textContent = 'off';
-    }
-  }
-  async function refreshWakeUI() {
-    try { setWakeUI(await window.sunday.wakeStatus()); } catch {}
-  }
-  function startWakePolling() { if (!wakePoll) wakePoll = setInterval(refreshWakeUI, 4000); }
-  $('#set-wake-toggle')?.addEventListener('click', async () => {
-    const btn = $('#set-wake-toggle'); btn.disabled = true;
-    try {
-      const perms = await window.sunday.permissionsStatus();
-      if (perms.microphone !== 'granted') {
-        const status = $('#set-wake-status');
-        status.dataset.state = 'fail';
-        status.textContent = 'needs microphone — grant it in Permissions above';
-        document.getElementById('sec-permissions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        await window.sunday.requestMicrophone();
-        return;
-      }
-      const s = await window.sunday.wakeStatus();
-      setWakeUI(await window.sunday.wakeSet(!s.enabled));   // toggle the intent, not live-state
-      startWakePolling();
-    } finally { btn.disabled = false; }
-  });
-  refreshWakeUI().then(() => {
-    window.sunday.wakeStatus().then((s) => { if (s.running) startWakePolling(); }).catch(() => {});
-  });
+  // ("Hey Sunday" wake-word toggle removed — superseded by realtime voice mode.)
 
   // Transcription mode — read-only status. Sunday auto-installs local
   // whisper.cpp on first launch; the OpenAI Whisper fallback runs silently
