@@ -148,6 +148,37 @@ kbd {
 /* Browser step: token hint above the paste field */
 .onb-pw-hint { color: var(--text-faint); font-size: 13px; margin-top: 16px; }
 
+/* Brain step: hardware verdict + model pull progress */
+.onb-verdict {
+  font-size: 13px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 14px 0;
+  background: rgba(255, 255, 255, 0.03);
+}
+.onb-tag-rec {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  border: 1px solid var(--ok); color: var(--ok); border-radius: 4px;
+  padding: 1px 5px; margin-left: 8px; vertical-align: 2px;
+}
+.onb-pullbar {
+  position: relative; height: 26px; margin-top: 14px;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  background: var(--bg);
+}
+.onb-pullbar-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0%;
+  background: rgba(132, 209, 139, 0.25);
+  transition: width 300ms ease;
+}
+.onb-pullbar-label {
+  position: relative; display: block; line-height: 26px; padding: 0 10px;
+  font-size: 12px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Verify result */
 .onb-verify {
   margin: 14px 0 10px;
