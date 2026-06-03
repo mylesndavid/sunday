@@ -236,6 +236,12 @@
           <input type="password" id="set-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" hidden style="margin-top:10px;">
           <!-- ChatGPT sign-in status -->
           <div class="brain-codex-status" id="set-codex-status" hidden></div>
+          <!-- Fully-local status — appears when the Ollama provider is selected -->
+          <div class="brain-inline" id="set-ollama-row" hidden>
+            <span class="set-verify" id="set-ollama-status">checking Ollama…</span>
+            <button class="btn" id="set-ollama-install" hidden>Install Ollama</button>
+            <button class="btn btn-primary" id="set-ollama-start" hidden>Start Ollama</button>
+          </div>
 
           <div class="set-actions">
             <span class="set-verify" id="set-model-note"></span>

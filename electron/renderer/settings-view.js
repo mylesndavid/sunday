@@ -520,7 +520,42 @@ async function applyProvider(provider, currentModel) {
     if (connect) connect.hidden = true;
     setCodexStatus('', '');
   }
+  // Fully-local (Ollama) status — install/start affordances + Gemma hint
+  refreshOllamaRow(provider === 'ollama');
 }
+
+async function refreshOllamaRow(show) {
+  const row = $('#set-ollama-row'); if (!row) return;
+  row.hidden = !show;
+  if (!show) return;
+  const status = $('#set-ollama-status');
+  const install = $('#set-ollama-install');
+  const start = $('#set-ollama-start');
+  let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/local/recommend`)).json(); } catch { return; }
+  const o = d.ollama || {};
+  const rec = (d.models || []).find((m) => m.recommended);
+  if (o.running) {
+    status.dataset.state = 'ok';
+    status.textContent = `Ollama running — fully local, nothing leaves this Mac.` +
+      (rec && !(o.models || []).some((n) => n.startsWith(rec.name)) ? ` Recommended for this Mac: ${rec.label} (search "${rec.name}" above).` : '');
+    install.hidden = true; start.hidden = true;
+  } else if (o.installed) {
+    status.dataset.state = 'wait';
+    status.textContent = 'Ollama is installed but not running.';
+    install.hidden = true; start.hidden = false;
+  } else {
+    status.dataset.state = 'fail';
+    status.textContent = `Fully-local needs Ollama (free). This Mac: ${d.chip || ''} · ${d.ram_gb || '?'}GB${rec ? ` — runs ${rec.label}` : ''}.`;
+    install.hidden = false; start.hidden = true;
+  }
+}
+$('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));
+$('#set-ollama-start')?.addEventListener('click', async () => {
+  const status = $('#set-ollama-status');
+  if (status) { status.dataset.state = 'wait'; status.textContent = 'Starting Ollama…'; }
+  try { await fetch(`${DAEMON_HTTP}/v1/ollama/start`, { method: 'POST' }); } catch {}
+  setTimeout(() => refreshOllamaRow(true), 2500);
+});
 function setCodexStatus(text, state) {
   const el = $('#set-codex-status'); if (!el) return;
   el.textContent = text; el.hidden = !text;

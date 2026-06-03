@@ -1377,6 +1377,112 @@ class Daemon:
         except Exception:  # noqa: BLE001
             return web.json_response({"available": False, "models": []})
 
+    async def _http_local_recommend(self, request: web.Request) -> web.Response:
+        """Hardware verdict for fully-local mode + the Gemma-line model menu.
+        Drives onboarding's "Fully local vs I have keys" choice and the Brain
+        settings affordance. Never errors."""
+        import platform
+        import shutil
+        import subprocess
+
+        def _sysctl(key: str) -> str:
+            # absolute path — launchd/app-spawned daemons have a minimal PATH
+            try:
+                return subprocess.run(["/usr/sbin/sysctl", "-n", key],
+                                      capture_output=True, text=True, timeout=3).stdout.strip()
+            except Exception:  # noqa: BLE001
+                return ""
+
+        ram_gb = 0
+        try:
+            ram_gb = round(int(_sysctl("hw.memsize") or 0) / 1073741824)
+        except ValueError:
+            pass
+        chip = _sysctl("machdep.cpu.brand_string") or platform.processor() or "unknown"
+        apple = platform.machine() == "arm64"
+        installed = bool(shutil.which("ollama")) or Path("/Applications/Ollama.app").exists() \
+            or Path("/opt/homebrew/bin/ollama").exists() or Path("/usr/local/bin/ollama").exists()
+        running, have = False, []
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=1.5) as c:
+                r = await c.get("http://localhost:11434/api/tags")
+                running = r.status_code == 200
+                have = [m.get("name", "") for m in (r.json().get("models") or [])]
+        except Exception:  # noqa: BLE001
+            pass
+
+        # The Gemma-line ladder. Recommendation gates on hardware; the OPTION
+        # is always there — we just don't push local on machines it'd hurt.
+        if apple and ram_gb >= 16:
+            rec = "local"
+            menu = [{"name": "gemma4:12b", "label": "Gemma 4 12B",
+                     "note": "multimodal, 256K context — the one to get", "recommended": True}]
+            if ram_gb >= 32:
+                menu.append({"name": "gemma4:26b", "label": "Gemma 4 26B (MoE)",
+                             "note": f"bigger brain — comfortable with {ram_gb}GB", "recommended": False})
+            menu.append({"name": "gemma3:4b", "label": "Gemma 3 4B",
+                         "note": "small + fast", "recommended": False})
+        elif apple and ram_gb >= 8:
+            rec = "local-light"
+            menu = [{"name": "gemma3:4b", "label": "Gemma 3 4B",
+                     "note": f"right-sized for {ram_gb}GB", "recommended": True},
+                    {"name": "gemma3:1b", "label": "Gemma 3 1B", "note": "tiny + instant", "recommended": False}]
+        else:
+            rec = "keys"
+            menu = []
+        from sunday.embeddings import EMBED_MODEL
+        return web.json_response({
+            "apple_silicon": apple, "chip": chip, "ram_gb": ram_gb,
+            "ollama": {"installed": installed, "running": running, "models": have},
+            "recommendation": rec, "models": menu, "embed_model": EMBED_MODEL,
+        })
+
+    async def _http_ollama_start(self, request: web.Request) -> web.Response:
+        """Best-effort start of an installed Ollama (the app autostarts its
+        server). Caller polls /v1/local/recommend until running."""
+        import shutil
+        import subprocess
+        if Path("/Applications/Ollama.app").exists():
+            try:
+                subprocess.Popen(["/usr/bin/open", "-a", "Ollama"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return web.json_response({"ok": True, "via": "app"})
+            except Exception as exc:  # noqa: BLE001
+                return web.json_response({"ok": False, "error": str(exc)}, status=500)
+        binp = shutil.which("ollama") or next((p for p in
+                ("/opt/homebrew/bin/ollama", "/usr/local/bin/ollama") if Path(p).exists()), None)
+        if not binp:
+            return web.json_response({"ok": False, "error": "ollama not installed"}, status=404)
+        try:
+            subprocess.Popen([binp, "serve"], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            return web.json_response({"ok": True, "via": "serve"})
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def _http_ollama_pull(self, request: web.Request) -> web.Response:
+        """Streaming proxy for `ollama pull` — NDJSON progress lines
+        ({status, total, completed}) so onboarding can render a real bar."""
+        import httpx
+        body = await request.json()
+        model = (body.get("model") or "").strip()
+        if not model:
+            return web.json_response({"error": "'model' is required"}, status=400)
+        resp = web.StreamResponse(headers={"Content-Type": "application/x-ndjson"})
+        await resp.prepare(request)
+        try:
+            async with httpx.AsyncClient(timeout=None) as c:
+                async with c.stream("POST", "http://localhost:11434/api/pull",
+                                    json={"model": model}) as r:
+                    async for line in r.aiter_lines():
+                        if line:
+                            await resp.write((line + "\n").encode())
+        except Exception as exc:  # noqa: BLE001
+            await resp.write((json.dumps({"error": str(exc)}) + "\n").encode())
+        await resp.write_eof()
+        return resp
+
     async def _http_codex_status(self, request: web.Request) -> web.Response:
         from sunday.runtime.providers import codex_auth
         from sunday.runtime.providers.codex import codex_available
@@ -2205,6 +2311,9 @@ class Daemon:
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
+        app.router.add_get("/v1/local/recommend", self._http_local_recommend)
+        app.router.add_post("/v1/ollama/start", self._http_ollama_start)
+        app.router.add_post("/v1/ollama/pull", self._http_ollama_pull)
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)

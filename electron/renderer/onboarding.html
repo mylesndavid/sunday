@@ -65,19 +65,43 @@
       </div>
     </section>
 
-    <!-- Step: the one key Sunday needs to think -->
+    <!-- Step: give her a brain — fully local (Gemma via Ollama) or keys -->
     <section class="onb-step" data-step="key" hidden>
-      <h1>One key to give her a brain.</h1>
+      <h1>Give her a brain.</h1>
       <p class="lede">
-        Sunday talks to an LLM through <strong>OpenRouter</strong> — one key, any model. It's stored
-        only on this Mac. Grab a key at <a href="#" id="onb-or-link">openrouter.ai/keys</a>, paste it
-        below, and you're done.
+        Two ways to run Sunday's thinking. <strong>Fully local</strong> keeps everything — every
+        word, every thought — on this Mac, powered by Google's Gemma models. No keys, no accounts,
+        nothing leaves the machine. Or bring an <strong>OpenRouter key</strong> for cloud models.
       </p>
-      <input type="password" id="onb-or-key" placeholder="sk-or-..." class="onb-input" autocomplete="off" spellcheck="false">
+      <div class="onb-verdict" id="onb-hw-verdict">checking what this Mac can run…</div>
+
+      <fieldset class="onb-choices">
+        <label class="onb-choice" id="onb-brain-local-choice">
+          <input type="radio" name="brain" value="local">
+          <div>
+            <div class="t">Fully local <span class="onb-tag-rec" id="onb-local-tag" hidden>recommended</span></div>
+            <select id="onb-local-model" class="onb-input" style="display:none"></select>
+            <div class="m" id="onb-local-note">Runs on this Mac via Ollama.</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="brain" value="keys">
+          <div>
+            <div class="t">I have keys</div>
+            <input type="password" id="onb-or-key" placeholder="sk-or-... (openrouter.ai/keys)" class="onb-input" autocomplete="off" spellcheck="false">
+            <div class="m">One <a href="#" id="onb-or-link">OpenRouter</a> key, any cloud model. Stored only on this Mac.</div>
+          </div>
+        </label>
+      </fieldset>
+
+      <div class="onb-pullbar" id="onb-pullbar" hidden>
+        <div class="onb-pullbar-fill" id="onb-pullbar-fill"></div>
+        <span class="onb-pullbar-label" id="onb-pullbar-label"></span>
+      </div>
       <div class="onb-verify" id="onb-key-verify" hidden></div>
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="node">Back</button>
-        <button class="onb-btn primary" id="onb-save-key">Save &amp; continue</button>
+        <button class="onb-btn primary" id="onb-save-key">Continue</button>
       </div>
     </section>
 
