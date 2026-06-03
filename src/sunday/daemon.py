@@ -539,26 +539,6 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response(result)
 
-    async def _http_wake(self, request: web.Request) -> web.Response:
-        """'Hey Sunday' voice command. The Mac app detects the wake phrase
-        locally and POSTs here. We pop the notch immediately (so there's
-        instant feedback even before the answer), run the turn, then push the
-        reply back to the notch. An empty text means the wake word was heard
-        but no command followed yet — just arm the listening state."""
-        body = await request.json() if request.body_exists else {}
-        text = (body.get("text") or "").strip()
-        await self._broadcast({"type": "wake_listening"})
-        if not text:
-            return web.json_response({"ok": True, "listening": True})
-        try:
-            result = await self._say(text, body.get("modality") or "voice")
-        except Exception as exc:  # noqa: BLE001
-            log.exception("http wake failed")
-            await self._broadcast({"type": "wake_reply", "text": "Sorry — that one failed."})
-            return web.json_response({"error": str(exc)}, status=500)
-        await self._broadcast({"type": "wake_reply", "text": result.get("reply") or ""})
-        return web.json_response(result)
-
     async def _http_task_stop(self, request: web.Request) -> web.Response:
         """Stop the task running right now (cleanly, at the next step boundary).
         No-op if nothing is running."""
@@ -2145,7 +2125,6 @@ class Daemon:
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
-        app.router.add_post("/v1/wake", self._http_wake)
         app.router.add_post("/v1/task/stop", self._http_task_stop)
         app.router.add_post("/v1/task/steer", self._http_task_steer)
         app.router.add_post("/v1/chat/clear", self._http_chat_clear)
