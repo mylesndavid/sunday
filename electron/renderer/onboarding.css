@@ -145,6 +145,9 @@ kbd {
 }
 .onb-input:focus { border-color: var(--user); }
 
+/* Browser step: token hint above the paste field */
+.onb-pw-hint { color: var(--text-faint); font-size: 13px; margin-top: 16px; }
+
 /* Verify result */
 .onb-verify {
   margin: 14px 0 10px;

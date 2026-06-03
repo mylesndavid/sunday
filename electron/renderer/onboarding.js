@@ -7,7 +7,7 @@
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-const STEP_ORDER = ['welcome', 'node', 'mic', 'done'];
+const STEP_ORDER = ['welcome', 'node', 'mic', 'browser', 'done'];
 
 let chosenDaemonHttp = '';
 let chosenDaemonWs   = '';
@@ -101,6 +101,57 @@ $('#onb-save-key')?.addEventListener('click', async () => {
 });
 $('#onb-or-key')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#onb-save-key').click(); });
 
+// ─── step: give Sunday a browser (Playwright extension) ────────────────
+// The headline capability — Sunday drives the user's real logged-in browser.
+// Connects via the same builtin-connector endpoint Settings uses; the daemon
+// is the source of truth for the token hint + extension link.
+
+async function daemonAuthHeaders() {
+  let token = chosenToken;
+  if (!token && chosenDaemonHttp.includes('127.0.0.1')) {
+    try { token = (await window.sunday.localToken()).token || ''; } catch {}
+  }
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+let pwSetupUrl = 'https://github.com/microsoft/playwright/tree/main/packages/extension#readme';
+
+async function loadBrowserStep() {
+  const hint = $('#onb-pw-hint');
+  const v = $('#onb-pw-verify');
+  try {
+    const d = await (await fetch(`${chosenDaemonHttp}/v1/mcp/builtin`, { headers: await daemonAuthHeaders() })).json();
+    const pw = (d.connectors || []).find((c) => c.id === 'playwright');
+    if (pw) {
+      if (pw.token_label && hint) hint.textContent = pw.token_label;
+      if (pw.setup_url) pwSetupUrl = pw.setup_url;
+      if (pw.enabled && v) { v.hidden = false; v.dataset.state = 'ok'; v.textContent = '✓ Already connected — Sunday can use your browser.'; }
+    }
+  } catch { /* daemon not reachable yet — the step still works, just skippable */ }
+}
+
+$('#onb-pw-install')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal(pwSetupUrl); });
+$('#onb-pw-skip')?.addEventListener('click', () => showStep('done'));
+$('#onb-pw-connect')?.addEventListener('click', async () => {
+  const v = $('#onb-pw-verify');
+  const token = $('#onb-pw-token').value.trim();
+  if (!token) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Paste the token from the extension first.'; return; }
+  v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Connecting to your browser…';
+  try {
+    const headers = { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) };
+    const r = await fetch(`${chosenDaemonHttp}/v1/mcp/builtin`, {
+      method: 'POST', headers, body: JSON.stringify({ id: 'playwright', enabled: true, token }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+    v.dataset.state = 'ok'; v.textContent = '✓ Sunday can use your browser.';
+    setTimeout(() => showStep('done'), 900);
+  } catch (err) {
+    v.dataset.state = 'fail'; v.textContent = `✗ ${err.message}`;
+  }
+});
+$('#onb-pw-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#onb-pw-connect').click(); });
+
 // ─── step 3: microphone permission ─────────────────────────────────────
 
 // ── Microphone permission ──────────────────────────────────────────────
@@ -165,6 +216,9 @@ showStep = (name) => {
   if (name === 'mic') {
     checkMicPermission().then(paintMicStatus);
     checkFda().then(paintFdaStatus);
+  }
+  if (name === 'browser') {
+    loadBrowserStep();
   }
   if (name === 'done') {
     $('#onb-summary').textContent = [

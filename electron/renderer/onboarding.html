@@ -18,11 +18,11 @@
       <h1>Welcome.</h1>
       <p class="lede">
         Sunday is a personal AI you self-host. There's one chat between you and her — across the
-        desktop app, iMessage, voice calls, and any computer you give her as a satellite.
+        desktop app, iMessage, voice calls, your browser, and any computer you give her as a satellite.
       </p>
       <p class="lede">
-        This setup takes ninety seconds. We'll pick which Sunday daemon you're connecting to,
-        grant microphone access for "Hey Sunday," then drop you into the chat.
+        This setup takes a couple of minutes. We'll pick which Sunday daemon you're connecting to,
+        grant microphone access for voice, hand her your browser, then drop you into the chat.
       </p>
       <div class="onb-actions">
         <button class="onb-btn primary" data-go="node">Let's go</button>
@@ -85,16 +85,16 @@
     <section class="onb-step" data-step="mic" hidden>
       <h1>Permissions</h1>
       <p class="lede">
-        Two permissions for Sunday to use her full surface. Mic is required for voice +
-        "Hey Sunday." Full Disk Access is only needed if you run a satellite on this Mac
-        and want her to read + reply to your real iMessages.
+        Two permissions for Sunday to use her full surface. Mic is required for voice mode.
+        Full Disk Access is only needed if you run a satellite on this Mac and want her to
+        read + reply to your real iMessages.
       </p>
 
       <!-- Microphone card -->
       <div class="onb-permission-card">
         <div class="onb-perm-meta">
           <div class="onb-perm-title">Microphone</div>
-          <div class="onb-perm-sub">Voice input + "Hey Sunday" wake word. Required for voice features.</div>
+          <div class="onb-perm-sub">Voice input for talking with Sunday. Required for voice mode.</div>
         </div>
         <div class="onb-perm-side">
           <div class="onb-perm-status" id="onb-mic-status" data-state="unknown">checking…</div>
@@ -120,7 +120,31 @@
 
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="node">Back</button>
-        <button class="onb-btn primary" data-go="done">Continue</button>
+        <button class="onb-btn primary" data-go="browser">Continue</button>
+      </div>
+    </section>
+
+    <!-- Step: give Sunday a browser (Playwright extension) -->
+    <section class="onb-step" data-step="browser" hidden>
+      <h1>Give Sunday a browser.</h1>
+      <p class="lede">
+        This is the big one. Sunday can drive <strong>your real browser</strong> — already logged in
+        as you — to click, fill forms, pull something off a page, book the thing, find the link. Not a
+        sandbox, not a scraper. Your actual Chrome, doing what you'd do.
+      </p>
+      <p class="lede">
+        Two steps: install the small browser extension, then paste the token it shows you.
+      </p>
+      <div class="onb-actions" style="justify-content:flex-start">
+        <button class="onb-btn" id="onb-pw-install">Install the extension</button>
+      </div>
+      <div class="onb-pw-hint" id="onb-pw-hint">Click the extension in Chrome, copy the token it shows, and paste it here.</div>
+      <input type="text" id="onb-pw-token" placeholder="paste token from the extension" class="onb-input" autocomplete="off" spellcheck="false">
+      <div class="onb-verify" id="onb-pw-verify" hidden></div>
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="mic">Back</button>
+        <button class="onb-btn ghost" id="onb-pw-skip">I'll do this later</button>
+        <button class="onb-btn primary" id="onb-pw-connect">Connect</button>
       </div>
     </section>
 
