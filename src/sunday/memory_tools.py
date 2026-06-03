@@ -44,7 +44,9 @@ async def _t_recall(args: dict[str, Any], ctx: ToolContext) -> Any:
     if mem is None or not getattr(mem, "available", False):
         return _NOT_AVAILABLE
     top_k = int(args.get("top_k") or 8)
-    hits = mem.search(query, limit=top_k)   # local FTS, no network
+    # Hybrid FTS+vector recall — all local; degrades to plain FTS when no
+    # local embedder is running. Zero network either way.
+    hits = await mem.search_hybrid(query, limit=top_k)
     return {
         "results": [
             {"id": h.id, "content": h.content, "source": h.source}
