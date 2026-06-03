@@ -180,6 +180,7 @@
       <a data-target="sec-permissions">Permissions</a>
       <a data-target="sec-voice">Voice</a>
       <a data-target="sec-observer">Observer</a>
+      <a data-target="sec-argus">Analytics</a>
       <a data-target="sec-updates">Updates</a>
       <a data-target="sec-system">System</a>
     </nav>
@@ -363,6 +364,16 @@
             <button class="btn btn-primary" id="set-observer-toggle">Turn on</button>
           </div>
           <div class="set-trans" id="set-trans"></div>
+        </section>
+
+        <section class="set-block" id="sec-argus">
+          <h2>Analytics <span class="set-tag">for nerds</span></h2>
+          <p class="set-help">Run <strong>Argus</strong> alongside Sunday — a local, zero-dependency observability dashboard for the agent itself: traces, tool calls, token usage, loops, and silent failures. It runs as its own process on <code>127.0.0.1:4317</code>, stores everything in local SQLite, and sends nothing anywhere. Off by default. Each Sunday build bundles the latest Argus. Needs Node 22+ on your machine.</p>
+          <div class="set-actions">
+            <span class="set-verify" id="set-argus-status">checking…</span>
+            <button class="btn btn-primary" id="set-argus-toggle">Turn on</button>
+            <button class="btn" id="set-argus-open" hidden>Open dashboard</button>
+          </div>
         </section>
 
         <section class="set-block" id="sec-updates">

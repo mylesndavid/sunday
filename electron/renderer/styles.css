@@ -418,6 +418,7 @@ textarea#composer::placeholder { color: var(--text-3); }
 .set-block { padding: 6px 0 28px; margin-bottom: 26px; border-bottom: 1px solid var(--line); scroll-margin-top: 12px; }
 .set-block:last-child { border-bottom: 0; }
 .set-block h2 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 6px; }
+.set-tag { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: lowercase; color: var(--text-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; margin-left: 8px; vertical-align: 2px; }
 .set-help { color: var(--text-2); margin: 0 0 18px; font-size: 13.5px; line-height: 1.6; max-width: 56ch; }
 .set-help strong { color: var(--text); font-weight: 600; }
 label { display: block; margin-bottom: 14px; }

@@ -686,6 +686,35 @@ function wire() {
     window.sunday.observerStatus().then((s) => { if (s.running) startObserverPolling(); }).catch(() => {});
   });
 
+  // ── Argus analytics toggle (opt-in, "for nerds") ──
+  async function refreshArgusUI() {
+    const statusEl = $('#set-argus-status');
+    const btn = $('#set-argus-toggle');
+    const openBtn = $('#set-argus-open');
+    if (!statusEl || !btn) return;
+    let s; try { s = await window.sunday.argusStatus(); } catch { return; }
+    btn.textContent = s.enabled ? 'Turn off' : 'Turn on';
+    btn.disabled = !s.available;
+    if (openBtn) openBtn.hidden = !s.enabled;
+    if (!s.available) { statusEl.dataset.state = 'fail'; statusEl.textContent = 'not bundled in this build'; }
+    else if (!s.nodeOk && !s.enabled) { statusEl.dataset.state = 'fail'; statusEl.textContent = 'needs Node 22+ on your PATH'; }
+    else if (s.enabled && s.running) { statusEl.dataset.state = 'ok'; statusEl.textContent = `on — ${s.url}`; }
+    else if (s.enabled) { statusEl.dataset.state = ''; statusEl.textContent = 'on — starting…'; }
+    else { statusEl.dataset.state = ''; statusEl.textContent = 'off'; }
+  }
+  $('#set-argus-toggle')?.addEventListener('click', async () => {
+    const btn = $('#set-argus-toggle'); btn.disabled = true;
+    const statusEl = $('#set-argus-status');
+    try {
+      const s = await window.sunday.argusStatus();
+      if (statusEl) statusEl.textContent = s.enabled ? 'stopping…' : 'starting Argus + reconnecting the brain…';
+      const r = await window.sunday.setArgus(!s.enabled);
+      if (!r.ok && statusEl) { statusEl.dataset.state = 'fail'; statusEl.textContent = r.error || 'failed'; }
+    } finally { btn.disabled = false; await refreshArgusUI(); }
+  });
+  $('#set-argus-open')?.addEventListener('click', () => window.sunday.openArgus());
+  refreshArgusUI();
+
   // ("Hey Sunday" wake-word toggle removed — superseded by realtime voice mode.)
 
   // Transcription mode — read-only status. Sunday auto-installs local

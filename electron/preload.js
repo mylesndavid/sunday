@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('sunday', {
   notchMode: (mode) => ipcRenderer.send('sunday:notch-mode', mode),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),
   openFDASettings: () => ipcRenderer.invoke('sunday:open-fda-settings'),
+  argusStatus: () => ipcRenderer.invoke('sunday:argus-status'),
+  setArgus: (enabled) => ipcRenderer.invoke('sunday:argus-set', enabled),
+  openArgus: () => ipcRenderer.invoke('sunday:argus-open'),
   setOverlayState: (state) => ipcRenderer.send('sunday:overlay-state', state),
   onOverlayState: (handler) => {
     ipcRenderer.on('sunday:overlay-state', (_evt, state) => handler(state));
