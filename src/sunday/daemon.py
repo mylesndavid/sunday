@@ -1933,6 +1933,41 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response({"ok": True, "connectors": mcp.builtin_status(), "node": mcp.node_available()})
 
+    async def _http_voice_session(self, request: web.Request) -> web.Response:
+        """Realtime voice mode (foundation): mint an ephemeral session wired to
+        Sunday's system prompt + tools, for the renderer to connect directly to
+        the realtime provider. The real API key stays on the daemon."""
+        from sunday import realtime
+        from sunday.prompt import stable_prefix
+        try:
+            data = await realtime.create_openai_session(self.config, self.registry, stable_prefix())
+            return web.json_response(data)
+        except RuntimeError as exc:   # missing key / config — clear 400
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("voice session mint failed")
+            return web.json_response({"error": str(exc)}, status=500)
+
+    async def _http_voice_tool(self, request: web.Request) -> web.Response:
+        """Execute a Sunday tool the realtime voice model asked for — same
+        registry + context the chat loop uses, so voice mode is full Sunday."""
+        from sunday.tools import ToolContext
+        body = await request.json()
+        name, args = body.get("name"), body.get("arguments") or {}
+        tool = self.registry.get(name)
+        if tool is None:
+            return web.json_response({"error": f"unknown tool '{name}'"}, status=404)
+        ctx = ToolContext(chat=self.chat, config=self.config, modality="voice", extras={
+            "broadcast": self._broadcast, "devices": self.devices, "memory": self.memory,
+            "runtime": self.runtime, "registry": self.registry, "active_tools": self._active_tools,
+            "inject_and_wake": self._inject_and_wake,
+        })
+        try:
+            return web.json_response({"result": await tool.run(args, ctx)})
+        except Exception as exc:  # noqa: BLE001
+            log.exception("voice tool failed", tool=name)
+            return web.json_response({"error": str(exc)}, status=500)
+
     async def _http_models(self, request: web.Request) -> web.Response:
         """Proxy + trim OpenRouter's public model catalog (cached ~1h) so the
         app can offer a searchable picker with a 'sees images' flag."""
@@ -2179,6 +2214,8 @@ class Daemon:
         app.router.add_post("/v1/mcp/uninstall", self._http_mcp_uninstall)
         app.router.add_get("/v1/mcp/builtin", self._http_mcp_builtin_get)
         app.router.add_post("/v1/mcp/builtin", self._http_mcp_builtin_post)
+        app.router.add_post("/v1/voice/session", self._http_voice_session)
+        app.router.add_post("/v1/voice/tool", self._http_voice_tool)
         app.router.add_get("/v1/mcp", self._http_mcp_get)
         app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)
