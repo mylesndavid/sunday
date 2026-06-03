@@ -333,6 +333,34 @@ textarea#composer::placeholder { color: var(--text-3); }
    button stays visible. Restore hidden for buttons (Connect, Restart, etc.). */
 .btn[hidden] { display: none; }
 
+/* ── Voice mode ─────────────────────────────────────────────────────────── */
+.voice-pill svg { color: var(--accent-press); }
+.voice-pill:hover { background: var(--accent-tint); }
+
+.voice-overlay { position: fixed; inset: 0; z-index: 200; display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  background: radial-gradient(120% 90% at 50% 30%, #14110c 0%, #0a0907 70%);
+  -webkit-app-region: drag; }
+.voice-overlay.open { display: flex; }
+.voice-overlay[hidden] { display: none; }
+.voice-close { position: absolute; top: 18px; right: 20px; -webkit-app-region: no-drag;
+  width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06); color: #efe9df; font-size: 20px; line-height: 1; cursor: pointer; }
+.voice-close:hover { background: rgba(255,255,255,0.12); }
+/* the 3D avatar mounts here */
+.voice-avatar { width: min(420px, 70vw); height: min(460px, 60vh); -webkit-app-region: no-drag; }
+.voice-avatar canvas { width: 100% !important; height: 100% !important; }
+/* audio-reactive orb behind the avatar — scales with --talk (0..1) set per frame */
+.voice-orb { position: absolute; width: 300px; height: 300px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, rgba(220,150,70,0.55), rgba(220,150,70,0.05) 70%);
+  filter: blur(14px); transform: scale(calc(1 + var(--talk, 0) * 0.45));
+  transition: transform 70ms linear; z-index: -1; }
+.voice-status { margin-top: 18px; font: 500 14px/1.4 var(--font-sans); color: #efe9df; -webkit-app-region: no-drag; }
+.voice-status[data-state="wait"] { color: #c9bfae; }
+.voice-status[data-state="fail"] { color: #e8a07a; }
+.voice-status[data-state="ok"] { color: #8fd0a6; }
+.voice-hint { margin-top: 8px; font: 400 12px/1.4 var(--font-sans); color: #7d7567; -webkit-app-region: no-drag; }
+
 /* One-click MCP connectors (e.g. Playwright browser) */
 .mcp-bi { border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; margin-bottom: 10px; background: var(--surface); }
 .mcp-bi.on { border-color: var(--accent); background: var(--accent-tint); }

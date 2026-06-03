@@ -594,6 +594,26 @@ fileInput.addEventListener('change', (e) => addFiles(e.target.files));
 composerEl.addEventListener('paste', async (e) => { const items = e.clipboardData?.items || []; const fs = []; for (const it of items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) fs.push(f); } if (fs.length) { e.preventDefault(); await addFiles(fs); } });
 micBtn.addEventListener('click', () => (listening ? recog?.stop() : startVoice()));
 
+// ─── voice mode (live, full-duplex) — lazy + isolated so its heavy deps
+// (Three.js / TalkingHead / WebRTC) can't touch the main app's load path ──
+$('#voice-mode-btn')?.addEventListener('click', async () => {
+  try {
+    const vm = await import('./voice-mode.js');
+    if (vm.isOpen()) return;
+    await vm.open({
+      daemonHttp: DAEMON_HTTP, daemonToken: DAEMON_TOKEN,
+      overlay: $('#voice-overlay'), avatarMount: $('#voice-avatar'), status: $('#voice-status'),
+    });
+    $('#voice-close')?.addEventListener('click', () => vm.close(), { once: true });
+  } catch (e) {
+    const s = $('#voice-status'); if (s) { s.dataset.state = 'fail'; s.textContent = `Voice mode failed to load: ${e.message}`; }
+    $('#voice-overlay')?.removeAttribute('hidden');
+    console.error('voice mode import failed', e);
+  }
+});
+// Settings → Voice "Open voice mode" forwards to the same pill.
+$('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.click());
+
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
   if (!['chat', 'memory', 'rewind', 'settings'].includes(name)) return;
