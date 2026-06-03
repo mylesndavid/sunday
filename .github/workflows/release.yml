@@ -70,6 +70,15 @@ jobs:
           mkdir -p electron/build/NotchHUD.app/Contents/MacOS
           swiftc -O -o electron/build/NotchHUD.app/Contents/MacOS/notch-hud electron/build/notch-hud.swift
 
+      - name: Fetch latest Argus (opt-in observability, bundled fresh each build)
+        if: steps.gate.outputs.exists == 'false'
+        run: |
+          rm -rf electron/build/argus
+          git clone --depth 1 https://github.com/mylesndavid/argus electron/build/argus
+          rm -rf electron/build/argus/.git   # don't ship the repo history
+          # zero-dep Node app — nothing to install or build; just needs to be present
+          test -f electron/build/argus/bin/argus.js
+
       - name: Build, sign, notarize, publish
         if: steps.gate.outputs.exists == 'false'
         working-directory: electron

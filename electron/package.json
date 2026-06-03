@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.4.40",
+  "version": "0.4.41",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -107,6 +107,10 @@
       {
         "from": "build/daemon-dist/sunday-daemon",
         "to": "sunday-daemon"
+      },
+      {
+        "from": "build/argus",
+        "to": "argus"
       }
     ]
   },

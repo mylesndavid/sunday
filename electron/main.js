@@ -170,8 +170,10 @@ async function startEmbeddedDaemon() {
   console.log('spawning embedded daemon:', bin);
   daemonChild = require('node:child_process').spawn(bin, [], {
     stdio: 'ignore',
-    // app-owned token wins; app version lets us detect a stale daemon next launch
-    env: { ...process.env, SUNDAY_AUTH_TOKEN: token, SUNDAY_APP_VERSION: app.getVersion() },
+    // app-owned token wins; app version lets us detect a stale daemon next launch;
+    // SUNDAY_ARGUS_URL (only when the Argus toggle is on) makes the brain ship traces.
+    env: { ...process.env, SUNDAY_AUTH_TOKEN: token, SUNDAY_APP_VERSION: app.getVersion(),
+           ...(loadPrefs().argus ? { SUNDAY_ARGUS_URL: ARGUS_URL } : {}) },
     detached: false,
   });
   daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });
@@ -730,6 +732,8 @@ app.whenReady().then(() => {
     // display and shows nothing when there's no notch. On by default; toggle
     // from the tray. Opt out with prefs.hud=false.
     if (loadPrefs().hud !== false) startNotchHud();
+    // Argus is opt-in (off by default); bring it up if the nerd left it on.
+    if (loadPrefs().argus) startArgus();
   }
   createTray();
   startTrayStatus();   // live sub-agent count in the menu bar
@@ -865,6 +869,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   satellite.stop();
   stopNotchHud();
+  stopArgus();
   stopObserver();
   stopEmbeddedDaemon();
   meetingRecording = false;
@@ -1419,6 +1424,82 @@ function stopNotchHud() {
   try { notchHudChild?.kill(); } catch { /* already gone */ }
   notchHudChild = null;
 }
+
+// ── Argus: opt-in agent observability ("for nerds") ──────────────────────
+// Argus is a zero-dependency Node app (dashboard + OTLP ingest on :4317, SQLite
+// via node:sqlite). It's fetched fresh from mylesndavid/argus at BUILD time and
+// bundled as a resource, so each release ships the latest. When the user turns
+// it on we spawn it as its own process and the daemon ships traces to it via
+// SUNDAY_ARGUS_URL. Off by default — 99% of users never run it.
+const ARGUS_URL = 'http://127.0.0.1:4317';
+let argusChild = null;
+
+function argusEntry() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'argus', 'bin', 'argus.js')
+    : path.join(__dirname, 'build', 'argus', 'bin', 'argus.js');
+}
+function argusAvailable() {
+  try { return fs.existsSync(argusEntry()); } catch { return false; }
+}
+
+// Argus needs Node >= 22 (node:sqlite). Electron's own Node may be older, so
+// find a real system node. Returns a path, or null if none qualifies.
+function findNode() {
+  const { execFileSync } = require('node:child_process');
+  const candidates = [process.env.SUNDAY_NODE_BIN,
+    '/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node',
+    path.join(os.homedir(), '.volta/bin/node')].filter(Boolean);
+  try { const p = execFileSync('/bin/sh', ['-lc', 'command -v node'], { encoding: 'utf8' }).trim(); if (p) candidates.push(p); } catch {}
+  for (const bin of candidates) {
+    try {
+      const major = parseInt(execFileSync(bin, ['--version'], { encoding: 'utf8' }).trim().replace(/^v/, '').split('.')[0], 10);
+      if (major >= 22) return bin;
+    } catch { /* not this one */ }
+  }
+  return null;
+}
+
+function startArgus() {
+  if (argusChild) return true;
+  if (!argusAvailable()) { console.warn('argus: not bundled in this build'); return false; }
+  const node = findNode();
+  if (!node) { console.warn('argus: needs Node >= 22, none found'); return false; }
+  try {
+    argusChild = require('node:child_process').spawn(node, [argusEntry()], {
+      cwd: path.dirname(path.dirname(argusEntry())),   // the argus/ root
+      env: { ...process.env, PORT: '4317' },
+      stdio: 'ignore', detached: false,
+    });
+    argusChild.on('exit', () => { argusChild = null; });
+    argusChild.on('error', (e) => { console.warn('argus spawn error', e?.message); argusChild = null; });
+    console.log('argus started on', ARGUS_URL);
+    return true;
+  } catch (e) { console.warn('argus spawn failed', e?.message); argusChild = null; return false; }
+}
+function stopArgus() {
+  try { argusChild?.kill(); } catch { /* already gone */ }
+  argusChild = null;
+}
+
+ipcMain.handle('sunday:argus-status', () => ({
+  enabled: !!loadPrefs().argus, running: !!argusChild,
+  available: argusAvailable(), nodeOk: !!findNode(), url: ARGUS_URL,
+}));
+ipcMain.handle('sunday:argus-set', async (_evt, enabled) => {
+  enabled = !!enabled;
+  if (enabled) {
+    if (!argusAvailable()) return { ok: false, error: "Argus isn't bundled in this build." };
+    if (!findNode()) return { ok: false, error: 'Argus needs Node 22+ on your PATH.' };
+  }
+  savePrefs({ argus: enabled });
+  if (enabled) startArgus(); else stopArgus();
+  // Restart the local daemon so it picks up (or drops) SUNDAY_ARGUS_URL. Kill by
+  // port so a reused daemon is replaced too, not just one we spawned ourselves.
+  if (isLocalDaemon()) { killStaleDaemon(); daemonChild = null; await new Promise((r) => setTimeout(r, 800)); await startEmbeddedDaemon(); }
+  return { ok: true, running: !!argusChild };
+});
+ipcMain.handle('sunday:argus-open', () => { try { shell.openExternal(ARGUS_URL); return { ok: true }; } catch (e) { return { ok: false, error: String(e) }; } });
 
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();
