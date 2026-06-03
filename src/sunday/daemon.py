@@ -2301,6 +2301,16 @@ class Daemon:
                 log.warning("mcp connect failed", error=str(exc))
         self._bg_tasks.append(asyncio.create_task(_connect_mcp()))
 
+        # Backfill memory vectors (hybrid recall) — embeds any facts without
+        # vectors via whatever LOCAL embedder is up; no-op when none is.
+        async def _index_memory():
+            try:
+                await asyncio.sleep(10)        # let the boot settle first
+                await self.memory.index_pending()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("memory vector backfill failed", error=str(exc))
+        self._bg_tasks.append(asyncio.create_task(_index_memory()))
+
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self._stop.set)

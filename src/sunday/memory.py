@@ -5,22 +5,28 @@ USER.md, Letta's core+archival, ChatGPT's saved-memories): a small
 **always-in-context core** plus an **on-demand search**, NOT a per-turn
 embedding round-trip.
 
-  - core_block()  → all (or the most recent) durable facts, injected into
-                    every turn's context. Local SQLite read, zero network,
-                    sub-millisecond. The agent sees everything and picks what
-                    fits — no semantic guessing, no API call in the hot path.
-  - search()      → FTS5 keyword search over the facts, exposed as the
-                    `recall` tool, for deliberate lookups once memory grows
-                    past what's sensible to always inject.
+  - core_block()     → all (or the most recent) durable facts, injected into
+                       every turn's context. Local SQLite read, zero network,
+                       sub-millisecond. The agent sees everything and picks what
+                       fits — no semantic guessing, no API call in the hot path.
+  - search()         → FTS5 keyword search over the facts (always available).
+  - search_hybrid()  → what the `recall` tool actually calls: FTS fused with a
+                       LOCAL-embedding vector search (sqlite-vec + weighted RRF,
+                       vec 0.7 / fts 0.3). Benchmarked on the real user corpus:
+                       100% R@5 vs 76.7% for FTS alone — vectors catch paraphrase
+                       ("laptop"→MacBook, "mom"→mother), FTS catches exact rare
+                       names. Degrades to plain FTS when no local embedder is up.
 
-Backing: SQLite at ~/.sunday/memories.db (+ an FTS5 index). No embeddings,
-no OpenAI key required, no external calls. Facts are stored verbatim as
-self-contained sentences and grown automatically by extract_facts() after
-each turn.
+Backing: SQLite at ~/.sunday/memories.db (+ FTS5 index + a sqlite-vec table fed
+by embeddings.py — Ollama or Sunday's llama-server, strictly on-device). Facts
+are stored verbatim as self-contained sentences and grown automatically by
+extract_facts() after each turn. Vector indexing is background + best-effort.
 
 (History: this used to embed every message with text-embedding-3-small and
-do a vector KNN in the hot path — a network round-trip on every turn to
-fetch 6 of ~90 short facts. That was slow and low-value; removed.)
+do a vector KNN in the hot path — a NETWORK round-trip on every turn to fetch
+6 of ~90 short facts. That was slow and low-value; removed. The hybrid recall
+above is different on every axis: local-only, recall-path-only, background
+indexing — measured, not vibes: see findings_agentmemory_spike.)
 """
 
 from __future__ import annotations
@@ -73,15 +79,19 @@ def _fts_query(query: str) -> str:
 
 
 class Memory:
-    """Local, embedding-free fact store. Always available wherever SQLite is
-    (no API key, no extensions required). FTS5 powers search; if the SQLite
-    build lacks FTS5 we fall back to LIKE."""
+    """Local fact store. Always available wherever SQLite is (no API key, no
+    network). FTS5 powers keyword search; when a LOCAL embedding endpoint is
+    up (embeddings.py), recall upgrades to hybrid FTS+vector via sqlite-vec.
+    No embedder → plain FTS, exactly the old behavior."""
 
     def __init__(self, path: Path | None = None) -> None:
         sunday_home().mkdir(parents=True, exist_ok=True)
         self.path = path or (sunday_home() / "memories.db")
         self.available = False
         self._fts = False
+        self._vec = False          # sqlite-vec extension loaded
+        self._vec_dim = 0          # discovered from the first embedding batch
+        self._indexing = False     # debounce flag for background vector indexing
         try:
             self._conn: sqlite3.Connection | None = sqlite3.connect(self.path, check_same_thread=False)
         except sqlite3.Error as exc:
@@ -103,6 +113,16 @@ class Memory:
             self._backfill_fts()
         except sqlite3.OperationalError as exc:
             log.info("FTS5 unavailable — memory search will use LIKE", error=str(exc))
+        # sqlite-vec powers the hybrid recall path. Best-effort: without the
+        # extension (or without a local embedder) everything runs on FTS alone.
+        try:
+            import sqlite_vec
+            self._conn.enable_load_extension(True)
+            sqlite_vec.load(self._conn)
+            self._conn.enable_load_extension(False)
+            self._vec = True
+        except Exception as exc:  # noqa: BLE001
+            log.info("sqlite-vec unavailable — recall is FTS-only", error=str(exc)[:80])
         self._conn.commit()
         self.available = True
 
@@ -139,6 +159,7 @@ class Memory:
             )
         self._conn.commit()
         log.info("memory stored", id=mem_id, source=source, preview=content[:60])
+        self._schedule_indexing()
         return mem_id
 
     async def store_many(self, contents: list[str], source: str = "auto") -> list[int]:
@@ -147,6 +168,136 @@ class Memory:
             mid = await self.store(c, source=source)
             if mid:
                 out.append(mid)
+        return out
+
+    # ─── vectors (hybrid recall) ─────────────────────────────────────────
+
+    def _schedule_indexing(self) -> None:
+        """Fire-and-forget background vector indexing. Never blocks a store,
+        never raises; without a running loop (sync scripts) it just skips —
+        index_pending() catches up later."""
+        if not self._vec:
+            return
+        try:
+            import asyncio
+            asyncio.get_running_loop().create_task(self.index_pending())
+        except RuntimeError:
+            pass
+
+    def _vec_table(self, dim: int) -> bool:
+        """Ensure the vec0 table exists for `dim` (and matches the current
+        embed model — model change invalidates old vectors: drop + re-embed)."""
+        if not self._conn or not self._vec:
+            return False
+        from sunday.embeddings import EMBED_MODEL
+        try:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS memory_vec_meta (key TEXT PRIMARY KEY, value TEXT)")
+            row = self._conn.execute(
+                "SELECT value FROM memory_vec_meta WHERE key='model'").fetchone()
+            current = f"{EMBED_MODEL}:{dim}"
+            if row and row[0] != current:
+                log.info("embed model changed — re-indexing vectors", was=row[0], now=current)
+                self._conn.execute("DROP TABLE IF EXISTS memory_vecs_local")
+            self._conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS memory_vecs_local "
+                f"USING vec0(memory_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])")
+            self._conn.execute(
+                "INSERT OR REPLACE INTO memory_vec_meta(key, value) VALUES ('model', ?)",
+                (current,))
+            self._conn.commit()
+            self._vec_dim = dim
+            return True
+        except sqlite3.Error as exc:
+            log.warning("vec table setup failed", error=str(exc)[:120])
+            return False
+
+    async def index_pending(self, batch: int = 64) -> int:
+        """Embed any facts that don't have vectors yet (new stores, migration,
+        or an embedder that just came online). Background + best-effort."""
+        if not self.available or not self._conn or not self._vec or self._indexing:
+            return 0
+        self._indexing = True
+        total = 0
+        try:
+            from sunday.embeddings import get_embedder
+            emb = get_embedder()
+            while True:
+                try:
+                    rows = self._conn.execute(
+                        "SELECT m.id, m.content FROM memories m "
+                        "WHERE NOT EXISTS (SELECT 1 FROM memory_vecs_local v WHERE v.memory_id = m.id) "
+                        "LIMIT ?", (batch,)).fetchall()
+                except sqlite3.OperationalError:
+                    rows = self._conn.execute(  # vec table doesn't exist yet — everything is pending
+                        "SELECT id, content FROM memories LIMIT ?", (batch,)).fetchall()
+                if not rows:
+                    break
+                vecs = await emb.embed([r[1] for r in rows], kind="document")
+                if not vecs:
+                    break               # no local embedder right now; try again later
+                if not self._vec_dim and not self._vec_table(len(vecs[0])):
+                    break
+                import sqlite_vec
+                for (mid, _), v in zip(rows, vecs):
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO memory_vecs_local(memory_id, embedding) VALUES (?, ?)",
+                        (mid, sqlite_vec.serialize_float32(v)))
+                self._conn.commit()
+                total += len(rows)
+                if len(rows) < batch:
+                    break
+            if total:
+                log.info("memory vectors indexed", count=total)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vector indexing failed", error=str(exc)[:120])
+        finally:
+            self._indexing = False
+        return total
+
+    async def search_hybrid(self, query: str, limit: int = 8) -> list[MemoryRow]:
+        """Recall: FTS + local-vector search fused with weighted RRF
+        (vec 0.7 / fts 0.3, k=10 — the benchmarked recipe). Falls back to
+        plain FTS when sqlite-vec or a local embedder isn't available."""
+        fts_rows = self.search(query, limit=20)
+        if not self.available or not self._conn or not self._vec:
+            return fts_rows[:limit]
+        try:
+            from sunday.embeddings import get_embedder
+            qv = await get_embedder().embed([query], kind="query")
+            if not qv:
+                return fts_rows[:limit]
+            if not self._vec_dim and not self._vec_table(len(qv[0])):
+                return fts_rows[:limit]
+            import sqlite_vec
+            vec_ids = [r[0] for r in self._conn.execute(
+                "SELECT memory_id, distance FROM memory_vecs_local "
+                "WHERE embedding MATCH ? AND k = 20 ORDER BY distance",
+                (sqlite_vec.serialize_float32(qv[0]),)).fetchall()]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("hybrid recall fell back to FTS", error=str(exc)[:120])
+            return fts_rows[:limit]
+        # Weighted reciprocal-rank fusion. Vectors carry paraphrase; FTS
+        # carries exact tokens (rare names). 0.7/0.3 @ k=10 measured best.
+        rrf: dict[int, float] = {}
+        for rank, mid in enumerate(vec_ids):
+            rrf[mid] = rrf.get(mid, 0.0) + 0.7 / (10 + rank + 1)
+        for rank, row in enumerate(fts_rows):
+            rrf[row.id] = rrf.get(row.id, 0.0) + 0.3 / (10 + rank + 1)
+        if not rrf:
+            return []
+        top = sorted(rrf, key=lambda d: -rrf[d])[:limit]
+        by_id = {r.id: r for r in fts_rows}
+        out: list[MemoryRow] = []
+        for mid in top:
+            if mid in by_id:
+                out.append(by_id[mid])
+            else:
+                r = self._conn.execute(
+                    "SELECT id, content, source, created_at FROM memories WHERE id = ?",
+                    (mid,)).fetchone()
+                if r:
+                    out.append(MemoryRow(id=r[0], content=r[1], source=r[2] or "", created_at=r[3]))
         return out
 
     # ─── reads ───────────────────────────────────────────────────────────
