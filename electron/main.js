@@ -128,6 +128,20 @@ async function daemonAcceptsToken(token) {
   } catch { return false; }
 }
 
+// Is the running daemon OUR version? After an auto-update the old daemon keeps
+// running (token still valid) with stale code — e.g. missing newly-added routes.
+// /v1/health reports the app version that spawned it (SUNDAY_APP_VERSION); a
+// mismatch means it predates this app and must be restarted.
+async function daemonMatchesVersion() {
+  try {
+    const { daemonHttp } = resolveDaemon();
+    const res = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
+    if (!res.ok) return false;
+    const j = await res.json().catch(() => ({}));
+    return j.version === app.getVersion();
+  } catch { return false; }
+}
+
 // Kill whatever is squatting the local daemon port (a stale daemon from a prior
 // run that won't accept our token). Best-effort; macOS/Linux.
 function killStaleDaemon() {
@@ -142,11 +156,12 @@ async function startEmbeddedDaemon() {
   if (daemonChild) return true;
   if (!isLocalDaemon()) return false;          // remote daemon — not ours to run
   const token = localAuthToken();
-  // Reuse an already-running local daemon ONLY if it accepts our token; otherwise
-  // it's stale — kill it and spawn a fresh one that uses the token we pass.
+  // Reuse an already-running local daemon ONLY if it accepts our token AND runs
+  // our version; otherwise it's stale (bad token, or old code left over from a
+  // prior version across an auto-update) — kill it and spawn a fresh one.
   if (await daemonHealthy()) {
-    if (await daemonAcceptsToken(token)) return true;
-    console.warn('local daemon on 8765 rejects our token — killing stale instance');
+    if (await daemonAcceptsToken(token) && await daemonMatchesVersion()) return true;
+    console.warn('local daemon on 8765 is stale (token or version mismatch) — killing it');
     killStaleDaemon();
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -155,7 +170,8 @@ async function startEmbeddedDaemon() {
   console.log('spawning embedded daemon:', bin);
   daemonChild = require('node:child_process').spawn(bin, [], {
     stdio: 'ignore',
-    env: { ...process.env, SUNDAY_AUTH_TOKEN: token },   // app-owned token wins
+    // app-owned token wins; app version lets us detect a stale daemon next launch
+    env: { ...process.env, SUNDAY_AUTH_TOKEN: token, SUNDAY_APP_VERSION: app.getVersion() },
     detached: false,
   });
   daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });

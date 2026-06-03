@@ -51,8 +51,12 @@ class MemoryConfig:
 
 @dataclass
 class VoiceConfig:
-    """Voice I/O. Realtime model used for full-duplex conversation."""
-    realtime_model: str = "gpt-realtime"
+    """Voice I/O. Realtime model used for full-duplex conversation.
+    `provider` picks the realtime backend: "openai" (gpt-realtime, WebRTC) or
+    "gemini" (Gemini Live, WebSocket). Both speak Sunday's tools."""
+    provider: str = "openai"
+    realtime_model: str = "gpt-realtime-2"
+    realtime_gemini_model: str = "gemini-2.5-flash-native-audio-preview"
     tts_model: str = "gpt-4o-mini-tts"
     tts_voice: str = "alloy"
     stt_model: str = "whisper-1"

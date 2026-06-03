@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import signal
 import time
 from pathlib import Path
@@ -1939,8 +1940,14 @@ class Daemon:
         the realtime provider. The real API key stays on the daemon."""
         from sunday import realtime
         from sunday.prompt import stable_prefix
+        # provider: explicit ?provider= wins, else the configured default
+        provider = (request.query.get("provider") or getattr(self.config.voice, "provider", "openai")).lower()
         try:
-            data = await realtime.create_openai_session(self.config, self.registry, stable_prefix())
+            if provider == "gemini":
+                data = await realtime.create_gemini_session(self.config, self.registry, stable_prefix())
+            else:
+                data = await realtime.create_openai_session(self.config, self.registry, stable_prefix())
+                data = dict(data); data.setdefault("provider", "openai")
             return web.json_response(data)
         except RuntimeError as exc:   # missing key / config — clear 400
             return web.json_response({"error": str(exc)}, status=400)
@@ -2143,7 +2150,11 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
 
     async def _http_health(self, request: web.Request) -> web.Response:
-        return web.json_response({"ok": True, "version": __version__})
+        # Report the version of the APP that spawned us (SUNDAY_APP_VERSION),
+        # not the static package version — that's how the app detects a stale
+        # daemon left running across an update and restarts it.
+        version = os.environ.get("SUNDAY_APP_VERSION") or __version__
+        return web.json_response({"ok": True, "version": version})
 
     async def _http_auth_check(self, request: web.Request) -> web.Response:
         """Verify a presented token without leaking the real one. Returns
