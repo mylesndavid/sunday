@@ -39,9 +39,9 @@ export async function loadAll() {
     defaultPrompt = c.identity_prompt?.default || '';
     const eff = c.identity_prompt?.effective || '';
     const custom = !!c.identity_prompt?.custom_present;
-    $('#set-prompt').value = custom ? eff : '';
-    $('#set-prompt').placeholder = custom ? 'custom personality saved' : `using the built-in default. Type here to make Sunday your own.`;
-    $('#set-prompt-status').textContent = custom ? 'custom — active' : 'using default';
+    // What you see is what's active — no empty box, no guessing what blank means.
+    $('#set-prompt').value = custom ? eff : defaultPrompt;
+    $('#set-prompt-status').textContent = custom ? 'custom — active' : 'default — active (edit to make it yours)';
     updateChars();
   } catch (err) {
     flashError(`couldn't load: ${err.message}`);
@@ -239,7 +239,14 @@ async function refreshConnList() {
     const res = await fetch(`${DAEMON_HTTP}/v1/integrations/catalog?${params}`);
     const d = await res.json();
     const items = (d.providers || []).slice(0, CONN_LIST_MAX);
-    if (!items.length) { ul.innerHTML = '<li class="conn-loading">no matches.</li>'; return; }
+    if (!items.length) {
+      // Honest empty state: on This Mac there's usually no catalog server, so
+      // searching forever-empty looks broken. Say why + what to do instead.
+      ul.innerHTML = connState.q
+        ? '<li class="conn-loading">no matches — the sign-in catalog may not be available on this brain. Built-in connectors above and custom servers below always work.</li>'
+        : '<li class="conn-loading">No sign-in catalog on this brain — it runs on the cloud. The built-in connectors above and custom servers below work everywhere.</li>';
+      return;
+    }
     ul.innerHTML = items.map((p) => {
       const connected = connState.connected.has(p.name);
       return `
@@ -450,7 +457,7 @@ async function refreshRunMode() {
     document.querySelectorAll('#set-runmode .brain-card').forEach((b) =>
       b.classList.toggle('active', (b.dataset.mode === 'local') === !!m.local));
     const mig = $('#set-migrate-row');
-    if (mig) mig.hidden = !!m.local;          // offer "bring history over" only while on cloud
+    if (mig) mig.hidden = true;   // only revealed inline when the user clicks "This Mac"
     // ChatGPT (Codex) only works on a local brain — disable the row on cloud.
     const codexRow = document.querySelector('#set-prov-menu [data-provider="codex"]');
     if (codexRow) {
@@ -479,9 +486,12 @@ async function loadProviderModels(provider) {
   if (provider === 'ollama') {
     try {
       const d = await (await fetch(`${DAEMON_HTTP}/v1/ollama/models`)).json();
-      if (!d.available) return { error: 'Ollama is not running here. Install it from ollama.com, then run: ollama pull llama3.2' };
-      if (!d.models.length) return { error: 'No models pulled yet — run: ollama pull llama3.2' };
-      return d.models.map((m) => ({ id: m.name, name: m.name, slug: fmtSize(m.size) }));
+      if (!d.available) return { error: 'Ollama is not running here — use the buttons below to set it up.' };
+      // Embedding models power memory recall, not chat — offering them as a
+      // brain is nonsense, so keep them out of the picker.
+      const chat = d.models.filter((m) => !/embed|minilm|bge|e5-/i.test(m.name));
+      if (!chat.length) return { error: 'No chat models pulled yet — use the Download button below.' };
+      return chat.map((m) => ({ id: m.name, name: m.name, slug: fmtSize(m.size) }));
     } catch { return { error: 'Could not reach Ollama.' }; }
   }
   return STATIC_MODELS[provider] || [];
@@ -500,7 +510,7 @@ async function applyProvider(provider, currentModel) {
   const note = $('#set-model-note'); if (note) { note.textContent = ''; note.removeAttribute('data-state'); }
   // key field — only providers that need one
   const keyEl = $('#set-key'), needKey = _KEY_FOR[provider];
-  if (keyEl) { keyEl.hidden = !needKey; if (needKey) keyEl.placeholder = `${needKey} — leave blank to keep current`; else keyEl.value = ''; }
+  if (keyEl) { keyEl.hidden = !needKey; if (needKey) keyEl.placeholder = `paste your ${needKey} (saves on Enter)`; else keyEl.value = ''; }
   // model list for the picker
   const res = await loadProviderModels(provider);
   if (res && res.error) { allModels = []; if (note) { note.dataset.state = 'wait'; note.textContent = res.error; } }
@@ -528,14 +538,17 @@ let _ollamaRec = null;   // the recommended model from /v1/local/recommend
 
 async function refreshOllamaRow(show) {
   const row = $('#set-ollama-row'); if (!row) return;
+  const pb = $('#set-pullbar'); if (pb) pb.hidden = true;
   row.hidden = !show;
-  $('#set-pullbar').hidden = true;
   if (!show) return;
   const status = $('#set-ollama-status');
   const install = $('#set-ollama-install');
   const start = $('#set-ollama-start');
   const pull = $('#set-ollama-pull');
-  let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/local/recommend`)).json(); } catch { return; }
+  // If the daemon can't answer (older build, cloud daemon), hide the row
+  // entirely — never leave a perpetual "checking…" on screen.
+  let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/local/recommend`)).json(); } catch { row.hidden = true; return; }
+  if (!d || !d.ollama) { row.hidden = true; return; }
   const o = d.ollama || {};
   const rec = (d.models || []).find((m) => m.recommended);
   _ollamaRec = rec || null;
@@ -682,17 +695,31 @@ function renderModelResults(q) {
   }));
 }
 
+// Instant-save a partial brain config ({provider, model_name, credentials}).
+async function saveBrain(body) {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+    flashSaved();
+  } catch (err) { flashError(`save failed: ${err.message}`); }
+}
+
 function pickModel(id) {
   $('#set-model').value = id;
   $('#set-model-search').value = '';
   $('#set-model-results').hidden = true;
-  $('#set-model-save').disabled = false;
   showCurrentModel();
+  // Picking IS saving — consistent with every other control on the page.
+  saveBrain({ provider: selectedProvider, model_name: id });
 }
 
 async function refreshSystem() {
   try {
-    const res = await fetch(`${DAEMON_HTTP}/v1/health`);
+    // The rich snapshot lives on its own auth-gated route — /v1/health is the
+    // bare {ok, version} probe and used to leave this panel empty.
+    const res = await fetch(`${DAEMON_HTTP}/v1/admin/health`);
     if (!res.ok) return;
     const h = await res.json();
     const d = h.daemon || {};
@@ -816,6 +843,35 @@ function wire() {
   $('#set-argus-open')?.addEventListener('click', () => window.sunday.openArgus());
   refreshArgusUI();
 
+  // ── voice provider (OpenAI gpt-realtime / Gemini Live) ──
+  // The daemon's /v1/voice/session takes ?provider= — the choice lives here
+  // and voice-mode.js sends it. Key field adapts to the chosen provider.
+  const vpWrap = $('#set-voice-provider');
+  function paintVoiceProvider() {
+    const cur = localStorage.getItem('voiceProvider') || 'openai';
+    vpWrap?.querySelectorAll('[data-vp]').forEach((b) => b.classList.toggle('btn-primary', b.dataset.vp === cur));
+    const k = $('#set-voice-key');
+    if (k) {
+      k.hidden = false;
+      k.placeholder = cur === 'gemini'
+        ? 'Gemini API key — saves on Enter'
+        : 'OpenAI platform key (sk-…) — saves on Enter; the ChatGPT login does not cover realtime';
+    }
+  }
+  vpWrap?.querySelectorAll('[data-vp]').forEach((b) => b.addEventListener('click', () => {
+    localStorage.setItem('voiceProvider', b.dataset.vp);
+    paintVoiceProvider();
+    flashSaved();
+  }));
+  $('#set-voice-key')?.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    const v = e.target.value.trim(); if (!v) return;
+    const cur = localStorage.getItem('voiceProvider') || 'openai';
+    await saveBrain({ credentials: { [cur === 'gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY']: v } });
+    e.target.value = ''; e.target.placeholder = 'key saved — paste a new one to replace it';
+  });
+  paintVoiceProvider();
+
   // ("Hey Sunday" wake-word toggle removed — superseded by realtime voice mode.)
 
   // Transcription mode — read-only status. Sunday auto-installs local
@@ -879,27 +935,42 @@ function wire() {
     if (e.key === 'Enter') { const v = search.value.trim(); if (v) pickModel(v); }
     if (e.key === 'Escape') { $('#set-model-results').hidden = true; }
   });
-  // Save the selected model + (if shown) the provider's API key together.
-  $('#set-model-save').addEventListener('click', async () => {
-    const provider = selectedProvider;
-    const model = $('#set-model').value.trim();
-    const keyEl = $('#set-key'); const key = (keyEl && !keyEl.hidden) ? keyEl.value.trim() : '';
-    const KEY = _KEY_FOR[provider];
-    if (!model && !key) { flashError('pick a model or enter a key'); return; }
-    const body = { provider };
-    if (model) body.model_name = model;
-    if (key && KEY) body.credentials = { [KEY]: key };
-    try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
-      if (keyEl) keyEl.value = '';
-      flashSaved();
-    } catch (err) { flashError(`save failed: ${err.message}`); }
+  // The current-model chip is a control, not a label: click to change.
+  $('#set-model-current')?.addEventListener('click', () => {
+    search.focus();
+    renderModelResults(search.value);
   });
+  // The API key saves itself on Enter or when you leave the field — same
+  // instant-save behavior as every other control on this page.
+  const keyEl = $('#set-key');
+  const saveKey = async () => {
+    const key = keyEl.value.trim();
+    const KEY = _KEY_FOR[selectedProvider];
+    if (!key || !KEY) return;
+    await saveBrain({ provider: selectedProvider, credentials: { [KEY]: key } });
+    keyEl.value = '';
+    keyEl.placeholder = 'key saved — paste a new one to replace it';
+  };
+  keyEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); });
+  keyEl?.addEventListener('blur', saveKey);
   // ── run mode (cloud / local) + migrate ──
+  // Switching cloud → This Mac is a decision with one real question: does your
+  // history come along? So the choice appears inline AT THAT MOMENT — it is
+  // not a permanent button on the page.
   document.querySelectorAll('#set-runmode .brain-card').forEach((b) => b.addEventListener('click', async () => {
     const mode = b.dataset.mode;
-    if (mode === 'local' && !confirm('Run Sunday on this Mac? If you want your cloud chat + memory to come along, use "Bring my history over" first.')) return;
+    const m = await window.sunday.runMode().catch(() => ({}));
+    if (mode === 'local' && !m.local) {
+      // Reveal the inline choice instead of a blocking confirm().
+      const row = $('#set-migrate-row');
+      if (row) {
+        row.hidden = false;
+        $('#set-migrate-note').textContent =
+          'Moving to This Mac — bring your cloud chat + memory along, or start fresh?';
+      }
+      return;
+    }
+    if (mode === 'cloud') { const row = $('#set-migrate-row'); if (row) row.hidden = true; }
     b.style.opacity = '0.6';
     const r = await window.sunday.setRunMode(mode);
     b.style.opacity = '';
@@ -908,6 +979,12 @@ function wire() {
     // half-switched state. Only refresh when the switch FAILED (no reload).
     if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
   }));
+  // "Start fresh" — switch to This Mac without migrating anything.
+  $('#set-migrate-fresh')?.addEventListener('click', async () => {
+    const row = $('#set-migrate-row'); if (row) row.hidden = true;
+    const r = await window.sunday.setRunMode('local');
+    if (r && r.error) { alert(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
+  });
   // Styled provider dropdown — button toggles the popover list.
   const provBtn = $('#set-prov-btn'), provMenu = $('#set-prov-menu');
   const closeProvMenu = () => { if (provMenu) provMenu.hidden = true; };
@@ -962,7 +1039,6 @@ function wire() {
   });
 
   $('#set-prompt').addEventListener('input', updateChars);
-  $('#set-prompt-show-default').addEventListener('click', () => { $('#set-prompt').value = defaultPrompt; $('#set-prompt-status').textContent = 'showing default — edit and save to override'; updateChars(); });
   $('#set-prompt-reset').addEventListener('click', async () => {
     if (!confirm("Reset Sunday's personality to the default?")) return;
     try {
@@ -972,7 +1048,11 @@ function wire() {
   });
   $('#set-prompt-save').addEventListener('click', async () => {
     try {
-      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity_prompt: $('#set-prompt').value }) });
+      // Saving text identical to the default (or empty) = "use the default":
+      // store nothing so future default improvements keep flowing.
+      const text = $('#set-prompt').value;
+      const same = !text.trim() || text.trim() === defaultPrompt.trim();
+      const res = await fetch(`${DAEMON_HTTP}/v1/config`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ identity_prompt: same ? null : text }) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`); await loadAll(); flashSaved();
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });

@@ -2155,9 +2155,12 @@ class Daemon:
             return web.json_response(await self._rewind_call("rewind_start", params))
         return web.json_response(await self._rewind_call("rewind_stop", {}))
 
-    async def _http_health(self, request: web.Request) -> web.Response:
+    async def _http_admin_health(self, request: web.Request) -> web.Response:
         """Rich health snapshot for admin UIs — daemon stats, satellites,
-        memory growth, skills, recent tool activity."""
+        memory growth, skills, recent tool activity. AUTH-GATED (it includes
+        memory content) and on its own route: a later trivial _http_health
+        used to shadow this method entirely, which is why the Settings System
+        panel rendered empty."""
         from sunday.skills import list_skills
         recent_memories = []
         if self.memory.available:
@@ -2290,6 +2293,7 @@ class Daemon:
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/health", self._http_health)
+        app.router.add_get("/v1/admin/health", self._http_admin_health)   # rich, auth-gated
         app.router.add_post("/v1/auth/check", self._http_auth_check)
         app.router.add_post("/v1/observer/now", self._http_observer_now)
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
