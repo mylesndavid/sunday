@@ -35,8 +35,10 @@ export async function open(ctx) {
 
   try {
     setStatus('Starting voice mode…', 'wait');
-    // 1) ephemeral realtime session from the daemon (prompt + tools live there)
-    const sres = await fetch(`${ctx.daemonHttp}/v1/voice/session`, {
+    // 1) ephemeral realtime session from the daemon (prompt + tools live there).
+    // Provider comes from Settings → Voice (the daemon defaults if unset).
+    const vprov = (() => { try { return localStorage.getItem('voiceProvider') || ''; } catch { return ''; } })();
+    const sres = await fetch(`${ctx.daemonHttp}/v1/voice/session${vprov ? `?provider=${encodeURIComponent(vprov)}` : ''}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...(ctx.daemonToken ? { Authorization: `Bearer ${ctx.daemonToken}` } : {}) },
     });
     const sdata = await sres.json().catch(() => ({}));

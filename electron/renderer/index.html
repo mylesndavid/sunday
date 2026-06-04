@@ -175,7 +175,7 @@
     <nav class="set-nav" id="set-nav">
       <a data-target="sec-brain" class="active">Brain</a>
       <a data-target="sec-connections">Connections</a>
-      <a data-target="sec-mcp">MCP</a>
+      <a data-target="sec-mcp">Servers</a>
       <a data-target="sec-personality">Personality</a>
       <a data-target="sec-permissions">Permissions</a>
       <a data-target="sec-voice">Voice</a>
@@ -207,7 +207,8 @@
             </button>
           </div>
           <div class="brain-inline" id="set-migrate-row" hidden>
-            <span class="set-verify" id="set-migrate-note">Bring your cloud history and memory to this Mac so you don't start fresh.</span>
+            <span class="set-verify" id="set-migrate-note">Moving to This Mac — bring your cloud chat + memory along, or start fresh?</span>
+            <button class="btn" id="set-migrate-fresh">Start fresh</button>
             <button class="btn btn-primary" id="set-migrate">Bring my history over</button>
           </div>
 
@@ -251,14 +252,13 @@
           <div class="set-actions">
             <span class="set-verify" id="set-model-note"></span>
             <button class="btn" id="set-connect" hidden>Connect ChatGPT</button>
-            <button class="btn btn-primary" id="set-model-save">Save</button>
           </div>
           <input type="text" id="set-model" hidden>
           <input type="text" id="set-provider" hidden>
 
-          <!-- ADVANCED: manual connection only -->
+          <!-- Self-hosted: point the app at a daemon you run elsewhere -->
           <details class="set-advanced">
-            <summary>Advanced — manual connection</summary>
+            <summary>Self-hosted connection</summary>
             <p class="set-help">Point the app at a specific daemon (HTTP + WebSocket URL).</p>
             <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
             <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
@@ -272,7 +272,13 @@
 
         <section class="set-block" id="sec-connections">
           <h2>Connections</h2>
-          <p class="set-help">Toggle a connector <strong>on</strong> to pin its tools to every chat. Toggle <strong>off</strong> and they're still findable on demand — Sunday will discover them when relevant. <span id="conn-unconfigured" hidden>Integrations server (Nango) isn't reachable yet.</span></p>
+          <p class="set-help">Everything Sunday plugs into, in one place: the connectors that come with her, services you sign into, and any MCP server you add yourself.</p>
+
+          <div class="brain-label">Comes with Sunday</div>
+          <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
+
+          <div class="brain-label" style="margin-top:20px">Your services</div>
+          <p class="set-help conn-subhelp">Toggle a connected service <strong>on</strong> to pin its tools to every chat; off means Sunday still finds them on demand. <span id="conn-unconfigured" hidden>Service sign-ins run on the cloud brain — connect them there, or add anything as a custom server below.</span></p>
 
           <ul class="conn-pinned" id="conn-pinned"><li class="conn-loading">loading…</li></ul>
 
@@ -290,31 +296,31 @@
         </section>
 
         <section class="set-block" id="sec-mcp">
-          <h2>MCP servers</h2>
-          <div class="brain-label">One-click connectors</div>
-          <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
-          <div class="brain-label" style="margin-top:20px">Custom server</div>
-          <p class="set-help">Connect Sunday to any <strong>Model Context Protocol</strong> server — paste a standard config and its tools become Sunday's. Remote servers use <code>"url"</code>; local ones use <code>"command"</code>.</p>
-          <textarea id="mcp-config" class="set-textarea" spellcheck="false" placeholder='{
+          <h2>Custom servers</h2>
+          <p class="set-help">Connect Sunday to any <strong>Model Context Protocol</strong> server and its tools become hers. Your connected servers are listed below; the raw config is there when you want it, out of the way when you don't.</p>
+          <ul class="conn-list" id="mcp-servers"></ul>
+          <details class="set-advanced" style="margin-top:14px">
+            <summary>Add or edit servers (mcp.json)</summary>
+            <p class="set-help" style="margin-top:10px">Standard MCP config — remote servers use <code>"url"</code>, local ones use <code>"command"</code>.</p>
+            <textarea id="mcp-config" class="set-textarea" spellcheck="false" placeholder='{
   "mcpServers": {
     "agentos": { "url": "https://…", "headers": { "Authorization": "Bearer …" } }
   }
 }'></textarea>
-          <div class="set-actions">
-            <span class="set-verify" id="mcp-status"></span>
-            <button class="btn btn-primary" id="mcp-save">Connect</button>
-          </div>
-          <ul class="conn-list" id="mcp-servers"></ul>
+            <div class="set-actions">
+              <span class="set-verify" id="mcp-status"></span>
+              <button class="btn btn-primary" id="mcp-save">Connect</button>
+            </div>
+          </details>
         </section>
 
         <section class="set-block" id="sec-personality">
           <h2>Personality</h2>
-          <p class="set-help">How Sunday should be — read on every message. Write it in your own words; clear it to use the default.</p>
-          <textarea id="set-prompt" class="set-textarea" spellcheck="false" placeholder="Sunday's personality, in your words…"></textarea>
+          <p class="set-help">How Sunday should be — read on every message. What you see below is exactly what's active: Sunday's built-in personality until you edit it, your own version once you save. Reset brings the built-in back.</p>
+          <textarea id="set-prompt" class="set-textarea" spellcheck="false"></textarea>
           <div class="set-prompt-meta mono"><span id="set-prompt-status">—</span><span id="set-prompt-chars">0 chars</span></div>
           <div class="set-actions">
             <button class="btn" id="set-prompt-reset">Reset to default</button>
-            <button class="btn" id="set-prompt-show-default">Show default</button>
             <button class="btn btn-primary" id="set-prompt-save">Save personality</button>
           </div>
         </section>
@@ -360,7 +366,13 @@
 
         <section class="set-block" id="sec-voice">
           <h2>Voice mode</h2>
-          <p class="set-help">Talk to Sunday out loud — full-duplex, with a live animated face. Tap the <strong>voice pill</strong> in the message bar to start (or the button below). It runs realtime, direct to the provider: <strong>OpenAI gpt-realtime</strong> today, Gemini Live next. Because it's the realtime API, it needs an <strong>OpenAI platform key</strong> — your ChatGPT/codex login doesn't cover it; add one under <em>Brain → Advanced</em>. Your mic streams to the provider only while voice mode is open; closing the overlay ends the session. Sunday's full brain + tools come along.</p>
+          <p class="set-help">Talk to Sunday out loud — full-duplex, with a live animated face, her full brain and tools along for the ride. Tap the <strong>voice pill</strong> in the message bar (or the button below). Realtime voice connects straight to the provider, so it needs that provider's own key. Your mic streams only while voice mode is open.</p>
+          <div class="brain-label">Voice provider</div>
+          <div class="set-actions" id="set-voice-provider">
+            <button class="btn" data-vp="openai">OpenAI gpt-realtime</button>
+            <button class="btn" data-vp="gemini">Gemini Live</button>
+          </div>
+          <input type="password" id="set-voice-key" class="field" autocomplete="off" spellcheck="false" style="margin-top:10px" hidden>
           <div class="set-actions">
             <span class="set-verify" id="set-voice-note"></span>
             <button class="btn btn-primary" id="set-voice-open">Open voice mode</button>
