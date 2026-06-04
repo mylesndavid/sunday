@@ -32,6 +32,13 @@ const satellite = require('./satellite');
 
 const PREFS_FILE = () => path.join(app.getPath('userData'), 'prefs.json');
 
+// Per-macOS-user daemon port. The first/primary account (uid 501) keeps the
+// historical 8765 so existing installs don't move; each additional profile
+// gets its own (502 → 8766, …). Two logged-in profiles can never fight over
+// one port — you can't even kill a foreign user's daemon (cross-user signals
+// are denied), so sharing the port was never going to work.
+const LOCAL_PORT = 8765 + Math.max(0, ((os.userInfo().uid ?? 501) - 501));
+
 function loadPrefs() {
   try { return JSON.parse(fs.readFileSync(PREFS_FILE(), 'utf-8')); }
   catch { return {}; }
@@ -45,12 +52,21 @@ function savePrefs(patch) {
 
 function resolveDaemon() {
   const prefs = loadPrefs();
+  // Migrate fixed-port prefs saved before per-user ports existed: a secondary
+  // profile whose prefs still say :8765 would collide with another profile's
+  // daemon forever. Local URLs only — cloud URLs pass through untouched.
+  if (LOCAL_PORT !== 8765 && /^http:\/\/(127\.0\.0\.1|localhost):8765$/.test(prefs.daemonHttp || '')) {
+    prefs.daemonHttp = `http://127.0.0.1:${LOCAL_PORT}`;
+    prefs.daemonWs   = `ws://127.0.0.1:${LOCAL_PORT}/v1/ws`;
+    savePrefs({ daemonHttp: prefs.daemonHttp, daemonWs: prefs.daemonWs });
+    console.log(`migrated local daemon prefs to per-user port ${LOCAL_PORT}`);
+  }
   // Auth token: prefer the saved pref; if missing AND the daemon is local
   // (127.0.0.1), read the daemon's own token file. Lets the same code path
   // work for both "local daemon on this Mac" and "remote daemon I pasted in
   // during onboarding".
   let daemonToken = prefs.daemonToken || process.env.SUNDAY_DAEMON_TOKEN || '';
-  const httpUrl = process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || 'http://127.0.0.1:8765';
+  const httpUrl = process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || `http://127.0.0.1:${LOCAL_PORT}`;
   if (!daemonToken && /^http:\/\/(127\.0\.0\.1|localhost)/.test(httpUrl)) {
     try {
       const p = path.join(os.homedir(), '.sunday', 'auth.token');
@@ -59,7 +75,7 @@ function resolveDaemon() {
   }
   return {
     daemonHttp: httpUrl,
-    daemonWs:   process.env.SUNDAY_DAEMON_WS   || prefs.daemonWs   || 'ws://127.0.0.1:8765/v1/ws',
+    daemonWs:   process.env.SUNDAY_DAEMON_WS   || prefs.daemonWs   || `ws://127.0.0.1:${LOCAL_PORT}/v1/ws`,
     daemonToken,
     // Onboarded once we have BOTH a usable token (from prefs, or the local
     // daemon's own file) AND the onboarding flag. The file-read covers a
@@ -147,7 +163,7 @@ async function daemonMatchesVersion() {
 function killStaleDaemon() {
   try {
     require('node:child_process').execSync(
-      "lsof -ti tcp:8765 -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; pkill -9 -f sunday-daemon/sunday-daemon 2>/dev/null",
+      `lsof -ti tcp:${LOCAL_PORT} -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null; pkill -9 -f sunday-daemon/sunday-daemon 2>/dev/null`,
       { stdio: 'ignore', shell: '/bin/bash' });
   } catch {}
 }
@@ -171,8 +187,10 @@ async function startEmbeddedDaemon() {
   daemonChild = require('node:child_process').spawn(bin, [], {
     stdio: 'ignore',
     // app-owned token wins; app version lets us detect a stale daemon next launch;
+    // SUNDAY_PORT binds this profile's own port (per-user, no cross-profile fights);
     // SUNDAY_ARGUS_URL (only when the Argus toggle is on) makes the brain ship traces.
     env: { ...process.env, SUNDAY_AUTH_TOKEN: token, SUNDAY_APP_VERSION: app.getVersion(),
+           SUNDAY_PORT: String(LOCAL_PORT),
            ...(loadPrefs().argus ? { SUNDAY_ARGUS_URL: ARGUS_URL } : {}) },
     detached: false,
   });
@@ -318,7 +336,10 @@ ipcMain.on('sunday:notch-mode', (_evt, mode) => positionNotch(['idle', 'active',
 
 ipcMain.handle('sunday:config', () => {
   const { daemonHttp, daemonWs, daemonToken } = resolveDaemon();
-  return { daemonHttp, daemonWs, daemonToken };
+  // localHttp/localWs: this profile's own daemon address (per-user port) —
+  // what onboarding should use for the "On this Mac" choice.
+  return { daemonHttp, daemonWs, daemonToken,
+           localHttp: LOCAL_HTTP, localWs: LOCAL_WS };
 });
 
 // Save the OpenRouter key to ~/.sunday/credentials.env (the daemon's
@@ -371,8 +392,8 @@ ipcMain.handle('sunday:save-connection', (_evt, { daemonHttp, daemonWs, daemonTo
 // A toggle so you never type an IP. Local mode runs the bundled daemon and can
 // use Codex (it reads your ~/.codex login). The cloud URL is remembered so you
 // can flip back.
-const LOCAL_HTTP = 'http://127.0.0.1:8765';
-const LOCAL_WS = 'ws://127.0.0.1:8765/v1/ws';
+const LOCAL_HTTP = `http://127.0.0.1:${LOCAL_PORT}`;
+const LOCAL_WS = `ws://127.0.0.1:${LOCAL_PORT}/v1/ws`;
 function localDaemonToken() {
   try { return fs.readFileSync(path.join(os.homedir(), '.sunday', 'auth.token'), 'utf8').trim(); } catch { return ''; }
 }

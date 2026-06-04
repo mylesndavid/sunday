@@ -37,12 +37,19 @@ $$('[data-back]').forEach((btn) => {
 
 let chosenToken = '';
 
+// This profile's own daemon address (per-macOS-user port) — fetched from the
+// main process at boot; falls back to the classic port if the IPC is slow.
+let localURLs = { http: 'http://127.0.0.1:8765', ws: 'ws://127.0.0.1:8765/v1/ws' };
+window.sunday.getConfig().then((c) => {
+  if (c && c.localHttp) localURLs = { http: c.localHttp, ws: c.localWs };
+}).catch(() => {});
+
 function resolveDaemonURLs() {
   const choice = document.querySelector('input[name="node"]:checked').value;
   if (choice === 'local') {
     chosenLabel = 'on this Mac';
-    chosenDaemonHttp = 'http://127.0.0.1:8765';
-    chosenDaemonWs   = 'ws://127.0.0.1:8765/v1/ws';
+    chosenDaemonHttp = localURLs.http;
+    chosenDaemonWs   = localURLs.ws;
     chosenToken = '';   // filled from the local daemon's file at finish
   } else {
     const custom = $('#onb-custom-url').value.trim().replace(/\/+$/, '');
