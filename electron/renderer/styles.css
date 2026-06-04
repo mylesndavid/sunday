@@ -176,6 +176,12 @@ body { display: flex; flex-direction: column; }
 .empty-suggest button { -webkit-app-region: no-drag; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-pill); color: var(--text-2); font: 400 13px/1 var(--font-sans); padding: 8px 14px; cursor: pointer; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
 .empty-suggest button:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent-line); }
 
+/* First-load failure — the boot log fetch didn't answer. Replaces the skeleton
+ * so the chat never shimmers forever; a Retry button re-runs the fetch. */
+.log-error { margin: auto; max-width: 420px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 13px; padding: 36px 20px; animation: rise var(--t-slow) var(--ease-out) both; }
+.log-error h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.log-error p { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.6; }
+
 /* skeleton */
 .skeleton { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
 .skeleton.left { align-items: flex-start; } .skeleton.right { align-items: flex-end; }
@@ -235,42 +241,21 @@ textarea#composer::placeholder { color: var(--text-3); }
   color: var(--accent-press); opacity: 0.8;
 }
 
-/* ── MEMORY ───────────────────────────────────────────────────────────── */
-.view-memory { flex-direction: row; }
-.mem-stage { position: relative; flex: 1 1 auto; overflow: hidden; background: radial-gradient(circle at 50% 40%, var(--surface) 0%, var(--bg-2) 100%); }
-#mem-canvas { display: block; width: 100%; height: 100%; cursor: grab; }
-#mem-canvas:active { cursor: grabbing; }
-.mem-legend { position: absolute; left: 16px; bottom: 16px; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: 60%; background: rgba(255,255,255,0.7); backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 13px; }
-.mem-legend .lg { display: inline-flex; align-items: center; gap: 6px; font: 500 11.5px/1 var(--font-sans); color: var(--text-2); }
-.mem-legend .lg .sw { width: 9px; height: 9px; border-radius: 50%; }
-.mem-refresh { position: absolute; right: 16px; top: 16px; -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-pill); padding: 8px 14px; font: 500 13px/1 var(--font-sans); color: var(--text); cursor: pointer; box-shadow: var(--shadow-1); transition: background var(--t-fast) var(--ease); }
-.mem-refresh:hover { background: var(--surface-2); }
-.mem-refresh.spin svg { animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.mem-empty { position: absolute; inset: 0; margin: auto; height: max-content; max-width: 380px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 30px; }
-.mem-empty[hidden] { display: none; }
-.mem-empty-sun { width: 48px; height: 48px; border-radius: 50%; background: radial-gradient(circle at 50% 36%, var(--accent-hi), var(--accent-press)); box-shadow: 0 0 0 7px var(--accent-tint); }
-.mem-empty h2 { margin: 0; font-size: 18px; font-weight: 650; }
-.mem-empty p { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.6; }
+/* Failed send — the bubble didn't reach the daemon. Dim it, mark the edge in
+ * the error tone, and offer a tap-to-retry affordance under it. */
+.msg.user.failed .bubble { opacity: 0.7; box-shadow: inset 3px 0 0 var(--error); }
+.msg.user .send-fail {
+  -webkit-app-region: no-drag; appearance: none; border: 0; background: transparent;
+  align-self: flex-end; margin-top: 4px; padding: 0; cursor: pointer;
+  font: 600 10.5px/1 var(--font-sans); letter-spacing: 0.03em;
+  color: var(--error);
+}
+.msg.user .send-fail:hover { text-decoration: underline; text-underline-offset: 2px; }
 
-/* overlay, not a flex sibling — so opening it never resizes the canvas
- * (which used to reflow / "squish" the nodes). */
-.mem-detail { position: absolute; top: 0; right: 0; bottom: 0; width: 340px; border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 22px 20px; box-shadow: var(--shadow-3); z-index: 5; animation: slide-in var(--t-mid) var(--ease-out); }
-.mem-detail[hidden] { display: none; }
-@keyframes slide-in { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
-.mem-detail-close { position: absolute; top: 12px; right: 12px; }
-.mem-detail-head { margin-bottom: 20px; }
-.mem-chip { display: inline-block; font: 600 10.5px/1 var(--font-sans); letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 9px; border-radius: var(--r-pill); margin-bottom: 10px; }
-.mem-detail-head h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
-.mem-detail-section { margin-bottom: 22px; }
-.mem-detail-section h3 { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 0 0 10px; }
-.mem-facts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.mem-facts li { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; line-height: 1.5; color: var(--text); }
-.mem-conns { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.mem-conns li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-2); padding: 6px 0; cursor: pointer; border-radius: 8px; }
-.mem-conns li:hover { color: var(--text); }
-.mem-conns .sw { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-.mem-conns .rel { color: var(--text-3); font-size: 12px; }
+/* ── MEMORY ───────────────────────────────────────────────────────────── */
+/* (The old force-directed memory map — .mem-stage / #mem-canvas / .mem-legend
+ *  / .mem-detail and friends — was removed when memory moved to flat facts +
+ *  hybrid recall. The "What Sunday Knows" facts UI styles live further down.) */
 
 /* ── REWIND ───────────────────────────────────────────────────────────── */
 .view-rewind { flex-direction: row; }
@@ -1061,6 +1046,54 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .atoms-empty { text-align: center; padding: 60px 20px; color: var(--text-3); }
 .atoms-empty h2 { font-size: 18px; color: var(--text-2); margin: 0 0 8px; }
 .atoms-empty p { font-size: 13px; max-width: 360px; margin: 0 auto; line-height: 1.5; }
+
+/* ── FACTS — "What Sunday knows" ──────────────────────────────────────── */
+.facts-pane { display: block; }
+.facts-head { max-width: 820px; margin: 0 auto 16px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.facts-head-l { display: flex; align-items: baseline; gap: 10px; }
+.facts-title { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); }
+.facts-count { font: 500 12px/1 var(--font-mono); color: var(--text-3); }
+.facts-head-r { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; justify-content: flex-end; min-width: 260px; }
+.facts-search { width: 100%; max-width: 320px; }
+.facts-add { max-width: 820px; margin: 0 auto 16px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.facts-add[hidden] { display: none; }
+.facts-add-text { min-height: 90px; }
+.facts-add-status { display: block; margin-top: 8px; }
+
+.facts-list { list-style: none; padding: 0; margin: 0 auto; max-width: 820px; display: flex; flex-direction: column; gap: 8px; }
+.fact-row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); cursor: pointer; transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease); }
+.fact-row:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.fact-row-none { cursor: default; }
+.fact-row-none:hover { border-color: var(--line); background: var(--surface); }
+.fact-row-text { flex: 1; min-width: 0; color: var(--text); font-size: 14px; line-height: 1.45; }
+.fact-row-meta { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.fact-src { font: 600 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 8px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-3); }
+.fact-src[data-src="chat"]    { background: var(--accent-tint); color: var(--accent-press); }
+.fact-src[data-src="meeting"] { background: rgba(79,157,140,0.14); color: var(--g-place); }
+.fact-src[data-src="tool"]    { background: rgba(120,120,120,0.12); color: var(--text-2); }
+.fact-src[data-src="auto"]    { background: var(--surface-2); color: var(--text-3); }
+.fact-age { font: 500 11px/1 var(--font-mono); color: var(--text-3); white-space: nowrap; }
+
+/* Fact detail — full text, edit, forget; pops over the facts pane */
+.fact-detail { position: absolute; inset: 0; z-index: 30; background: var(--bg); overflow-y: auto; display: flex; flex-direction: column; }
+.fact-detail[hidden] { display: none; }
+.fact-detail-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.fact-detail-exit { padding: 6px 14px; font-size: 13px; flex: 0 0 auto; }
+.fact-detail-meta { flex: 1; font: 12px/1 var(--font-mono); color: var(--text-3); }
+.fact-detail-body { padding: 20px 24px 40px; max-width: 760px; width: 100%; }
+.fact-text { white-space: pre-wrap; font: 15px/1.6 var(--font-sans); color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 18px; min-height: 0; }
+.fact-edit-text { min-height: 120px; }
+.fact-edit-status { display: block; margin-top: 8px; }
+.fact-confirm { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--error-tint); border: 1px solid var(--error); border-radius: var(--r-md); }
+.fact-confirm[hidden] { display: none; }
+.fact-confirm .set-verify { flex: 1; color: var(--text); }
+
+/* Sources subtab — Conversations | Meetings toggle */
+.src-toggle { max-width: 820px; margin: 0 auto 16px; display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); width: max-content; }
+.src-toggle-btn { -webkit-app-region: no-drag; appearance: none; border: 0; background: transparent; color: var(--text-3); font: 500 13px/1 var(--font-sans); padding: 7px 16px; border-radius: var(--r-pill); cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease); }
+.src-toggle-btn:hover { color: var(--text); }
+.src-toggle-btn.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
+.src-list-wrap[hidden] { display: none; }
 
 /* ── Conversations list ── */
 .conv-list { list-style: none; padding: 0; margin: 0 auto; max-width: 820px; display: flex; flex-direction: column; gap: 10px; }

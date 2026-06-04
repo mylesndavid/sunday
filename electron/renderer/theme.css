@@ -43,15 +43,9 @@
   --error:  #c4503a;
   --error-tint: #f7e7e2;
 
-  /* graph category colors (warm-leaning, distinct) */
-  --g-person: #e8932e;
-  --g-pet:    #d9694a;
+  /* teal accent — used by the "sees images" model chips (.mr-vision/.mc-vision).
+   * (The rest of the old graph category palette was removed with the memory map.) */
   --g-place:  #4f9d8c;
-  --g-org:    #5b7fc4;
-  --g-project:#8a6fc0;
-  --g-thing:  #b08a4e;
-  --g-event:  #c95e8e;
-  --g-topic:  #7a8a52;
 
   --r-sm: 8px;
   --r-md: 12px;
@@ -115,10 +109,8 @@
     --warn:   #d59a3e;
     --error:  #e0705a;  --error-tint:#3a221d;
 
-    /* graph categories: lifted to read on dark */
-    --g-person: #f0a23e;  --g-pet:    #e88468;  --g-place:  #66b3a1;
-    --g-org:    #7d9ad8;  --g-project:#a78fd6;  --g-thing:  #c6a368;
-    --g-event:  #df7ba6;  --g-topic:  #9aab6a;
+    /* teal accent, lifted to read on dark (model "sees images" chips) */
+    --g-place:  #66b3a1;
 
     /* shadows go to true-black on dark (the surface already carries the warmth) */
     --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.32);

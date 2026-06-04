@@ -50,60 +50,137 @@
     </div>
   </section>
 
-  <!-- ─── MEMORY ───────────────────────────────────────────────────── -->
+  <!-- ─── MEMORY — "What Sunday Knows" ─────────────────────────────── -->
   <section class="view view-memory" id="view-memory">
     <nav class="mem-subtabs" id="mem-subtabs">
-      <button class="mem-subtab active" data-mempane="conversations">
-        Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
+      <button class="mem-subtab active" data-mempane="facts">
+        Facts <span class="mem-subtab-count" id="mem-facts-count" hidden></span>
+      </button>
+      <button class="mem-subtab" data-mempane="sources">
+        Sources
       </button>
       <button class="mem-subtab" data-mempane="atoms">
-        Atoms <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
-      </button>
-      <button class="mem-subtab" data-mempane="meetings">
-        Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
+        Open loops <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
       </button>
     </nav>
-        <div class="atoms-pane" id="mem-pane-atoms" hidden>
+
+    <!-- FACTS — the primary pane: everything Sunday knows about you -->
+    <div class="atoms-pane facts-pane" id="mem-pane-facts">
+      <div class="facts-head">
+        <div class="facts-head-l">
+          <h2 class="facts-title">What Sunday knows</h2>
+          <span class="facts-count" id="facts-count">—</span>
+        </div>
+        <div class="facts-head-r">
+          <input type="text" id="facts-search" class="field facts-search" placeholder="Search facts" autocomplete="off" spellcheck="false" aria-label="Search facts">
+          <button type="button" class="btn btn-primary" id="facts-add-btn">Add fact</button>
+        </div>
+      </div>
+
+      <!-- Add a fact (inline form, hidden until "Add fact") -->
+      <div class="facts-add" id="facts-add" hidden>
+        <textarea id="facts-add-text" class="set-textarea facts-add-text" spellcheck="false" placeholder="A durable fact about you — e.g. “I prefer morning meetings.”"></textarea>
+        <div class="facts-add-status set-verify" id="facts-add-status" aria-live="polite"></div>
+        <div class="set-actions">
+          <button type="button" class="btn" id="facts-add-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="facts-add-save">Save fact</button>
+        </div>
+      </div>
+
+      <div class="atoms-empty" id="facts-empty" hidden>
+        <h2>Nothing yet</h2>
+        <p>Nothing yet — Sunday remembers as you talk.</p>
+      </div>
+
+      <ul class="facts-list" id="facts-list"></ul>
+
+      <!-- Fact detail — full text, edit, forget; pops over the pane -->
+      <div class="fact-detail" id="fact-detail" hidden>
+        <div class="fact-detail-bar">
+          <button class="btn fact-detail-exit" id="fact-detail-exit">← Back</button>
+          <span class="fact-detail-meta mono" id="fact-detail-meta"></span>
+        </div>
+        <div class="fact-detail-body">
+          <div class="fact-view" id="fact-view">
+            <pre class="instr-text fact-text" id="fact-detail-text"></pre>
+            <div class="fact-confirm" id="fact-del-confirm" role="alertdialog" aria-label="Forget fact" hidden>
+              <span class="set-verify">Forget this fact? Sunday won't remember it anymore.</span>
+              <button type="button" class="btn" id="fact-del-cancel">Keep it</button>
+              <button type="button" class="btn btn-primary" id="fact-del-go">Forget</button>
+            </div>
+            <div class="set-actions">
+              <button type="button" class="btn" id="fact-forget">Forget</button>
+              <button type="button" class="btn btn-primary" id="fact-edit">Edit</button>
+            </div>
+          </div>
+          <div class="fact-edit-pane" id="fact-edit-pane" hidden>
+            <textarea id="fact-edit-text" class="set-textarea fact-edit-text" spellcheck="false"></textarea>
+            <div class="fact-edit-status set-verify" id="fact-edit-status" aria-live="polite"></div>
+            <div class="set-actions">
+              <button type="button" class="btn" id="fact-edit-cancel">Cancel</button>
+              <button type="button" class="btn btn-primary" id="fact-save">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SOURCES — Conversations + Meetings merged under one subtab -->
+    <div class="atoms-pane" id="mem-pane-sources" hidden>
+      <nav class="src-toggle" id="src-toggle" role="group" aria-label="Source kind">
+        <button type="button" class="src-toggle-btn active" data-src="conversations">
+          Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
+        </button>
+        <button type="button" class="src-toggle-btn" data-src="meetings">
+          Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
+        </button>
+      </nav>
+
+      <div class="src-list-wrap" id="src-conversations">
+        <div class="atoms-empty" id="conv-empty" hidden>
+          <h2>No conversations yet</h2>
+          <p>Turn on Background listening in Settings → Voice &amp; capture and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
+        </div>
+        <ul class="conv-list" id="conv-list"></ul>
+      </div>
+
+      <div class="src-list-wrap" id="src-meetings" hidden>
+        <div class="mtg-record">
+          <div class="mtg-record-info">
+            <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
+            <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
+          </div>
+          <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
+        </div>
+        <ul class="conv-list" id="mtg-list"></ul>
+        <!-- Full meeting view, pops over the tab; Exit to close. -->
+        <div class="mtg-view" id="mtg-view" hidden>
+          <div class="mtg-view-bar">
+            <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
+            <div class="mtg-view-title" id="mtg-view-title"></div>
+            <div class="mtg-view-time" id="mtg-view-time"></div>
+          </div>
+          <div class="mtg-view-body">
+            <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
+            <div class="mtg-view-notes" id="mtg-view-notes"></div>
+            <h3 class="mtg-view-h">Transcript</h3>
+            <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
+          </div>
+        </div>
+        <div class="atoms-empty" id="mtg-empty" hidden>
+          <h2>No meetings yet</h2>
+          <p>Hit Start recording before your next call. Sunday captures both sides, writes you Granola-style notes, and turns the action items into things she tracks.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- OPEN LOOPS — the things Sunday is tracking (atoms, renamed for users) -->
+    <div class="atoms-pane" id="mem-pane-atoms" hidden>
       <div class="atoms-empty" id="atoms-empty" hidden>
-        <h2>No atoms yet</h2>
+        <h2>No open loops yet</h2>
         <p>As Sunday observes what you're doing, open threads, commitments, and decisions show up here.</p>
       </div>
       <ul class="atoms-list" id="atoms-list"></ul>
-    </div>
-    <div class="atoms-pane" id="mem-pane-conversations">
-      <div class="atoms-empty" id="conv-empty" hidden>
-        <h2>No conversations yet</h2>
-        <p>Turn on Background listening in Settings → Voice &amp; capture and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
-      </div>
-      <ul class="conv-list" id="conv-list"></ul>
-    </div>
-    <div class="atoms-pane" id="mem-pane-meetings" hidden>
-      <div class="mtg-record">
-        <div class="mtg-record-info">
-          <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
-          <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
-        </div>
-        <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
-      </div>
-      <ul class="conv-list" id="mtg-list"></ul>
-      <!-- Full meeting view, pops over the tab; Exit to close. -->
-      <div class="mtg-view" id="mtg-view" hidden>
-        <div class="mtg-view-bar">
-          <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
-          <div class="mtg-view-title" id="mtg-view-title"></div>
-          <div class="mtg-view-time" id="mtg-view-time"></div>
-        </div>
-        <div class="mtg-view-body">
-          <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
-          <div class="mtg-view-notes" id="mtg-view-notes"></div>
-          <h3 class="mtg-view-h">Transcript</h3>
-          <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
-        </div>
-      </div>
-      <div class="atoms-empty" id="mtg-empty" hidden>
-        <h2>No meetings yet</h2>
-        <p>Hit Start recording before your next call. Sunday captures both sides, writes you Granola-style notes, and turns the action items into things she tracks.</p>
-      </div>
     </div>
   </section>
 
