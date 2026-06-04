@@ -1609,6 +1609,126 @@ class Daemon:
             log.exception("memory graph rebuild failed")
             return web.json_response({"error": str(exc)}, status=500)
 
+    # --- skills ---------------------------------------------------------
+    # Reusable procedures under ~/.sunday/skills/. The agent reaches these
+    # through the skill tools + the per-turn shelf (sunday.skills); these
+    # routes are the Settings UI's read/write surface. AUTH-GATED via the
+    # default middleware.
+
+    async def _http_skills_list(self, request: web.Request) -> web.Response:
+        from sunday.skills import list_skills
+        try:
+            out = []
+            for s in list_skills():
+                try:
+                    st = s.path.stat()
+                    size, mtime = st.st_size, st.st_mtime
+                except OSError:
+                    size, mtime = 0, 0.0
+                out.append({
+                    "slug":        s.slug,
+                    "name":        s.name,
+                    "description": s.description,
+                    "size":        size,
+                    "mtime":       mtime,
+                })
+            return web.json_response({"skills": out})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("skills list failed", error=str(exc))
+            return web.json_response({"skills": [], "error": str(exc)}, status=500)
+
+    async def _http_skill_get(self, request: web.Request) -> web.Response:
+        from sunday.skills import load_skill
+        slug = request.match_info.get("slug", "")
+        skill = load_skill(slug)
+        if skill is None:
+            return web.json_response({"error": f"no such skill: {slug}"}, status=404)
+        return web.json_response({
+            "slug":        skill.slug,
+            "name":        skill.name,
+            "description": skill.description,
+            "body":        skill.body(),
+        })
+
+    async def _http_skills_save(self, request: web.Request) -> web.Response:
+        """Create or overwrite a skill. Body: {slug?, name, body}. When slug is
+        omitted it's derived from name. Reusing a slug overwrites (the patch
+        path), matching the save_skill tool."""
+        from sunday.skills import skills_dir, _slug_safe, load_skill
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        markdown = body.get("body")
+        if not isinstance(markdown, str) or not markdown.strip():
+            return web.json_response({"error": "'body' is required"}, status=400)
+
+        slug = (body.get("slug") or "").strip()
+        name = (body.get("name") or "").strip()
+        if not slug:
+            slug = _slug_safe(name or markdown.lstrip("#").strip().splitlines()[0] if markdown else "")
+        else:
+            slug = _slug_safe(slug)
+        if not slug:
+            return web.json_response({"error": "could not derive a slug — pass 'slug' or 'name'"}, status=400)
+
+        # If the caller gave a name and the body has no H1, prepend one so the
+        # parsed name matches — keeps the list/editor honest about the title.
+        text = markdown
+        if name and not text.lstrip().startswith("#"):
+            text = f"# {name}\n\n{text.lstrip()}"
+
+        existed = load_skill(slug) is not None
+        p = skills_dir() / f"{slug}.md"
+        p.write_text(text, encoding="utf-8")
+        log.info("skill saved via http", slug=slug, bytes=len(text), overwrote=existed)
+        return web.json_response({"ok": True, "slug": slug, "created": not existed})
+
+    async def _http_skill_delete(self, request: web.Request) -> web.Response:
+        from sunday.skills import delete_skill
+        slug = request.match_info.get("slug", "")
+        if delete_skill(slug):
+            return web.json_response({"ok": True, "slug": slug})
+        return web.json_response({"error": f"no such skill: {slug}"}, status=404)
+
+    async def _http_skills_search(self, request: web.Request) -> web.Response:
+        """Search the open skills.sh directory (the 'find skills online'
+        surface). Thin wrapper over sunday.skills.search_directory."""
+        from sunday.skills import search_directory
+        q = (request.query.get("q") or "").strip()
+        if not q:
+            return web.json_response({"results": []})
+        try:
+            limit = max(1, min(int(request.query.get("limit", "10")), 25))
+        except ValueError:
+            limit = 10
+        try:
+            results = await search_directory(q, limit=limit)
+            return web.json_response({"results": results, "directory": "https://skills.sh"})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("skills search failed", error=str(exc))
+            return web.json_response({"results": [], "error": str(exc)}, status=502)
+
+    async def _http_skills_install(self, request: web.Request) -> web.Response:
+        """Install a skill from skills.sh by its directory id. Wrapper over
+        sunday.skills.install_from_directory."""
+        from sunday.skills import install_from_directory
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        slug = (body.get("slug") or "").strip()
+        if not slug:
+            return web.json_response({"error": "'slug' is required"}, status=400)
+        try:
+            return web.json_response(await install_from_directory(slug))
+        except FileNotFoundError as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("skill install failed", slug=slug, error=str(exc))
+            return web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=502)
+
     # --- cost meter -----------------------------------------------------
 
     async def _http_cost_log(self, request: web.Request) -> web.Response:
@@ -2327,6 +2447,15 @@ class Daemon:
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
+        app.router.add_get("/v1/skills", self._http_skills_list)
+        app.router.add_post("/v1/skills", self._http_skills_save)
+        # Literal sub-paths registered before the {slug} catch-all so the slug
+        # regex ([A-Za-z0-9_-]+, which would match "search"/"install") can't
+        # shadow them — aiohttp matches in registration order.
+        app.router.add_get("/v1/skills/search", self._http_skills_search)
+        app.router.add_post("/v1/skills/install", self._http_skills_install)
+        app.router.add_get("/v1/skills/{slug:[A-Za-z0-9_-]+}", self._http_skill_get)
+        app.router.add_delete("/v1/skills/{slug:[A-Za-z0-9_-]+}", self._http_skill_delete)
         app.router.add_post("/v1/cost/log", self._http_cost_log)
         app.router.add_get("/v1/cost/summary", self._http_cost_summary)
         app.router.add_get("/v1/cost/recent", self._http_cost_recent)

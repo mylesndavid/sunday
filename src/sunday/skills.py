@@ -74,20 +74,51 @@ class Skill:
 
 def _parse(path: Path) -> Skill:
     text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
     name = path.stem.replace("-", " ").replace("_", " ").title()
     description = ""
-    # First # heading becomes the name; the first paragraph after becomes
-    # the description.
-    if lines and lines[0].startswith("#"):
-        name = lines[0].lstrip("#").strip() or name
-        for line in lines[1:]:
-            if line.strip():
-                description = line.strip()
-                break
-    elif lines:
+
+    # Skills installed from skills.sh / Anthropic carry YAML frontmatter
+    # (--- name: … description: … ---). Honour it the way Hermes does: the
+    # frontmatter fields win, and we scan the BODY (not the delimiter line)
+    # for fallbacks. Without this, the shelf showed name="Frontend Design",
+    # description="---" — the delimiter leaking in as the one-liner.
+    fm_name, fm_desc, body = _split_frontmatter(text)
+    if fm_name:
+        name = fm_name
+    if fm_desc:
+        description = fm_desc
+
+    lines = body.splitlines()
+    # First # heading becomes the name (unless frontmatter already set one);
+    # the first non-blank line after it becomes the description fallback.
+    if lines and lines[0].lstrip().startswith("#"):
+        if not fm_name:
+            name = lines[0].lstrip("#").strip() or name
+        if not description:
+            for line in lines[1:]:
+                if line.strip():
+                    description = line.strip()
+                    break
+    elif lines and not description:
         description = next((l.strip() for l in lines if l.strip()), "")
     return Skill(slug=path.stem, name=name, description=description[:240], path=path)
+
+
+def _split_frontmatter(text: str) -> tuple[str | None, str | None, str]:
+    """Return (name, description, body) — name/description pulled from a leading
+    YAML frontmatter block if present, body being the markdown after it.
+    Returns (None, None, text) when there's no frontmatter."""
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return None, None, text
+    name = desc = None
+    for line in m.group(1).splitlines():
+        s = line.strip()
+        if s.startswith("name:") and name is None:
+            name = s.split(":", 1)[1].strip().strip("\"'") or None
+        elif s.startswith("description:") and desc is None:
+            desc = s.split(":", 1)[1].strip().strip("\"'") or None
+    return name, desc, text[m.end():]
 
 
 def list_skills() -> list[Skill]:
@@ -102,6 +133,64 @@ def load_skill(slug: str) -> Skill | None:
     if not p.exists():
         return None
     return _parse(p)
+
+
+def delete_skill(slug: str) -> bool:
+    """Remove a skill file. Returns True if it existed and was deleted."""
+    p = skills_dir() / f"{slug}.md"
+    if not p.exists():
+        return False
+    p.unlink()
+    log.info("skill deleted", slug=slug)
+    return True
+
+
+# How many skills to name on the shelf before the model would rather call
+# list_skills than read another line. Generous — the shelf is one line each
+# and only the description is truncated, so even a big library stays cheap.
+_SHELF_CAP = 60
+# Per-skill description budget on the shelf. Long enough to know if a skill
+# is relevant, short enough that 60 of them don't bloat the turn. Mirrors
+# Hermes's 60-char truncation in extract_skill_description.
+_SHELF_DESC_CHARS = 80
+
+
+def skills_shelf() -> str:
+    """The 'skills on the shelf' block injected into Sunday's per-turn context.
+
+    This is the awareness mechanism, lifted from Hermes (agent/prompt_builder.py
+    build_skills_system_prompt): the model SEES the full index of installed
+    skills every turn — name + one-line description — so it calls load_skill
+    when one's relevant without having to remember list_skills exists. Hermes
+    proves this is the difference between skills that get used and skills that
+    rot on disk.
+
+    Returns "" when no skills are installed (nothing to advertise). Kept out of
+    the cached system prefix and folded into the per-turn context block instead,
+    so the prompt cache stays warm even as the library changes — same reason
+    memory.core_block() rides the per-turn block, not stable_prefix().
+    """
+    skills = list_skills()
+    if not skills:
+        return ""
+    lines = []
+    for s in skills[:_SHELF_CAP]:
+        desc = " ".join(s.description.split())  # collapse newlines/runs
+        if len(desc) > _SHELF_DESC_CHARS:
+            desc = desc[: _SHELF_DESC_CHARS - 1].rstrip() + "…"
+        lines.append(f"- {s.slug}: {desc}" if desc else f"- {s.slug}")
+    more = ""
+    if len(skills) > _SHELF_CAP:
+        more = f"\n…and {len(skills) - _SHELF_CAP} more — list_skills to see them all."
+    return (
+        "Skills on the shelf — procedures you already know how to run. Before you "
+        "work through a task by hand, scan this list: if one matches or is even "
+        "partly relevant, load_skill(slug) and follow it. They hold the exact "
+        "steps, selectors, and gotchas that beat figuring it out fresh, plus the "
+        "way the user wants the task done. Loading one you don't end up needing "
+        "costs nothing; skipping one that fit costs a worse answer.\n\n"
+        + "\n".join(lines) + more
+    )
 
 
 # ─── skills.sh directory ─────────────────────────────────────────────────
@@ -331,11 +420,11 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="list_skills",
         description=(
-            "List Sunday's installed skills — reusable procedures she's been "
-            "taught (or has taught herself). Each skill has a slug, name, and "
-            "short description. Use this when starting a task that might "
-            "match an existing procedure; then load_skill(slug) to pull it "
-            "into context."
+            "List every installed skill with its full description. The skill "
+            "shelf you already see each turn is the short index; call this only "
+            "when you need the longer descriptions, or when the shelf was capped "
+            "and said there were more. Each entry has a slug, name, and "
+            "description — then load_skill(slug) to pull one into context."
         ),
         parameters={"type": "object", "properties": {}},
         run=_t_list_skills,
@@ -399,10 +488,13 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="save_skill",
         description=(
-            "Write a new skill to disk — a reusable procedure Sunday should "
+            "Write a skill to disk — a reusable procedure Sunday should "
             "remember HOW to do (not a fact about the user; use `remember` "
-            "for that). Slug becomes the filename. Body should read like a "
-            "short instruction sheet."
+            "for that). Slug becomes the filename; reusing an existing slug "
+            "OVERWRITES it, which is how you patch a skill you found outdated "
+            "or wrong. Body should read like a short instruction sheet — a "
+            "tight numbered procedure with the exact tools, selectors, and "
+            "gotchas. First H1 becomes the name."
         ),
         parameters={
             "type": "object",
