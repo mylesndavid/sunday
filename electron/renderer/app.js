@@ -584,11 +584,11 @@ document.addEventListener('keydown', (e) => {
 });
 window.addEventListener('resize', () => connPopOpen && positionConnPop());
 
-// "+ Add a connector" deeplinks into Settings → Connections.
+// "+ Add a connector" deeplinks into Settings → Tools.
 connPopAdd.addEventListener('click', () => {
   closeConnPop();
   document.querySelector('.tab[data-view="settings"]')?.click();
-  setTimeout(() => document.querySelector('#sec-connections')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+  setTimeout(() => document.querySelector('.set-navitem[data-page="page-tools"]')?.click(), 120);
 });
 fileInput.addEventListener('change', (e) => addFiles(e.target.files));
 composerEl.addEventListener('paste', async (e) => { const items = e.clipboardData?.items || []; const fs = []; for (const it of items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) fs.push(f); } if (fs.length) { e.preventDefault(); await addFiles(fs); } });
