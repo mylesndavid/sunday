@@ -221,7 +221,14 @@ $('#onb-save-key')?.addEventListener('click', async () => {
     v.dataset.state = 'ok'; v.textContent = `✓ Fully local. ${model} is Sunday's brain — nothing leaves this Mac.`;
     setTimeout(() => showStep('mic'), 1000);
   } catch (err) {
-    v.dataset.state = 'fail'; v.textContent = `✗ ${err.message || err}`;
+    const m = String(err.message || err);
+    v.dataset.state = 'fail';
+    if (/newer version of Ollama/i.test(m)) {
+      v.textContent = 'Your Ollama is too old for this model — update it from the page that just opened, then hit Continue again.';
+      window.sunday.openExternal('https://ollama.com/download');
+    } else {
+      v.textContent = `✗ ${m}`;
+    }
   } finally {
     btn.disabled = false;
   }

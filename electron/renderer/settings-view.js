@@ -610,7 +610,14 @@ $('#set-ollama-pull')?.addEventListener('click', async () => {
     flashSaved();
     await applyProvider('ollama', rec.name);
   } catch (err) {
-    lab.textContent = `✗ ${err.message || err}`;
+    const msg = String(err.message || err);
+    if (/newer version of Ollama/i.test(msg)) {
+      // Day-one models outrun installed Ollamas constantly — make the fix a click.
+      lab.textContent = 'Ollama is too old for this model — Install Ollama gets you the update, then retry.';
+      $('#set-ollama-install').hidden = false;
+    } else {
+      lab.textContent = `✗ ${msg}`;
+    }
   } finally {
     btn.disabled = false;
   }
