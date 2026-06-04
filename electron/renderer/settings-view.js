@@ -75,6 +75,7 @@ export async function loadAll() {
   loadConnections();
   loadMcp();
   loadMemorySummary();
+  loadSkills();
   updateOverview();
   updatePrivacy();
 }
@@ -112,6 +113,205 @@ async function loadMemorySummary() {
       ? `${m.total ?? 0} fact${m.total === 1 ? '' : 's'} remembered.`
       : 'Memory is not available on this runtime.';
   } catch { el.textContent = 'Couldn\'t reach memory.'; }
+}
+
+// ── skills (Behavior & memory) ───────────────────────────────────────────────
+// The local library plus a "find online" disclosure. The agent sees these on
+// the shelf every turn; this surface lets the user read, edit, add, and delete
+// them. Honest painting: list repaints only after a write succeeds, and a row
+// that failed to load offers retry inline.
+let skillsCache = [];
+let skillOpen = null;   // slug of the skill open in the detail card
+
+function skillStatus(msg, tone) {
+  const el = $('#skill-status'); if (!el) return;
+  if (!msg) { el.hidden = true; el.textContent = ''; el.removeAttribute('data-state'); return; }
+  el.hidden = false; el.textContent = msg;
+  if (tone) el.setAttribute('data-state', tone); else el.removeAttribute('data-state');
+}
+
+async function loadSkills() {
+  const ul = $('#skill-list'); if (!ul) return;
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/skills`)).json();
+    skillsCache = d.skills || [];
+    skillStatus(null);
+  } catch (err) {
+    skillsCache = [];
+    skillStatus('Couldn\'t load skills — retrying won\'t hurt.', 'fail');
+  }
+  renderSkills();
+}
+
+function renderSkills() {
+  const ul = $('#skill-list'); if (!ul) return;
+  const q = ($('#skill-search')?.value || '').trim().toLowerCase();
+  const rows = skillsCache.filter((s) =>
+    !q || s.slug.toLowerCase().includes(q) || (s.name || '').toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q));
+  if (!skillsCache.length) {
+    ul.innerHTML = '<li class="skill-empty">No skills yet. Add one, or Sunday will write her own as she learns.</li>';
+    return;
+  }
+  if (!rows.length) {
+    ul.innerHTML = `<li class="skill-empty">No skills match “${esc(q)}”.</li>`;
+    return;
+  }
+  ul.innerHTML = rows.map((s) => `
+    <li class="conn-row skill-row" data-slug="${esc(s.slug)}" tabindex="0" role="button">
+      <div class="skill-row-main">
+        <span class="conn-name">${esc(s.name || s.slug)}</span>
+        ${s.description ? `<span class="skill-row-desc">${esc(s.description)}</span>` : ''}
+      </div>
+      <span class="skill-row-slug mono">${esc(s.slug)}</span>
+    </li>`).join('');
+  ul.querySelectorAll('.skill-row').forEach((row) => {
+    const open = () => openSkill(row.dataset.slug);
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  });
+}
+
+function skillCardEditMode(on) {
+  $('#skill-view').hidden = on;
+  $('#skill-edit-pane').hidden = !on;
+  $('#skill-del-confirm').hidden = true;
+  $('#skill-edit-status').textContent = '';
+}
+
+async function openSkill(slug) {
+  const card = $('#skill-card'); if (!card) return;
+  skillOpen = slug;
+  card.hidden = false;
+  $('#skill-card-title').textContent = slug;
+  $('#skill-card-meta').textContent = '';
+  $('#skill-body-view').textContent = 'Loading…';
+  skillCardEditMode(false);
+  try {
+    const r = await fetch(`${DAEMON_HTTP}/v1/skills/${encodeURIComponent(slug)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    card._skill = d;
+    $('#skill-card-title').textContent = d.name || d.slug;
+    $('#skill-card-meta').textContent = d.slug;
+    $('#skill-body-view').textContent = d.body || '';
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) {
+    $('#skill-body-view').textContent = `Couldn't open this skill — ${err.message}`;
+  }
+}
+
+function closeSkillCard() {
+  const card = $('#skill-card'); if (card) { card.hidden = true; card._skill = null; }
+  skillOpen = null;
+}
+
+function enterSkillEdit() {
+  const card = $('#skill-card'); const d = card?._skill; if (!d) return;
+  $('#skill-name').value = d.name || d.slug;
+  $('#skill-body-edit').value = d.body || '';
+  skillCardEditMode(true);
+  $('#skill-body-edit').focus();
+}
+
+function newSkill() {
+  const card = $('#skill-card'); if (!card) return;
+  skillOpen = null;
+  card._skill = null;   // null slug = create
+  card.hidden = false;
+  $('#skill-card-title').textContent = 'New skill';
+  $('#skill-card-meta').textContent = '';
+  $('#skill-name').value = '';
+  $('#skill-body-edit').value = '';
+  skillCardEditMode(true);
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  $('#skill-name').focus();
+}
+
+async function saveSkill() {
+  const card = $('#skill-card'); if (!card) return;
+  const st = $('#skill-edit-status');
+  const name = $('#skill-name').value.trim();
+  const body = $('#skill-body-edit').value;
+  if (!body.trim()) { st.dataset.state = 'fail'; st.textContent = 'Body can\'t be empty.'; return; }
+  const payload = { name, body };
+  const existing = card._skill?.slug;
+  if (existing) payload.slug = existing;   // overwrite = the patch path
+  st.dataset.state = 'wait'; st.textContent = 'Saving…';
+  try {
+    const r = await fetch(`${DAEMON_HTTP}/v1/skills`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    await loadSkills();          // repaint only after the write lands
+    await openSkill(d.slug);     // reopen the saved skill in view mode
+  } catch (err) {
+    st.dataset.state = 'fail'; st.textContent = `Save failed — ${err.message}`;
+  }
+}
+
+async function deleteSkill() {
+  const card = $('#skill-card'); const slug = card?._skill?.slug; if (!slug) return;
+  $('#skill-del-confirm').hidden = false;
+  $('#skill-del-go').onclick = async () => {
+    try {
+      const r = await fetch(`${DAEMON_HTTP}/v1/skills/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `HTTP ${r.status}`); }
+      closeSkillCard();
+      await loadSkills();
+    } catch (err) { flashError(`delete failed: ${err.message}`); }
+  };
+}
+
+// ── find skills online (skills.sh directory) ───
+function skillFindStatus(msg, tone) {
+  const el = $('#skill-find-status'); if (!el) return;
+  if (!msg) { el.hidden = true; el.textContent = ''; el.removeAttribute('data-state'); return; }
+  el.hidden = false; el.textContent = msg;
+  if (tone) el.setAttribute('data-state', tone); else el.removeAttribute('data-state');
+}
+
+async function searchSkillsOnline() {
+  const q = ($('#skill-find-q')?.value || '').trim();
+  const ul = $('#skill-find-list'); if (!ul) return;
+  ul.innerHTML = '';
+  if (!q) { skillFindStatus('Type something to search.', null); return; }
+  skillFindStatus('Searching skills.sh…', 'wait');
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/skills/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    const items = d.results || [];
+    skillFindStatus(items.length ? null : 'Nothing found in the directory for that.', null);
+    ul.innerHTML = items.map((s) => `
+      <li class="conn-row skill-find-row" data-id="${esc(s.id)}">
+        <div class="skill-row-main">
+          <span class="conn-name">${esc(s.name || s.skill_id || s.id)}</span>
+          <span class="skill-row-desc">${esc(s.source || '')}${s.installs ? ` · ${s.installs} installs` : ''}</span>
+        </div>
+        <button type="button" class="btn skill-install" data-id="${esc(s.id)}">Install</button>
+      </li>`).join('');
+    ul.querySelectorAll('.skill-install').forEach((b) => b.addEventListener('click', () => installSkillOnline(b)));
+  } catch (err) {
+    skillFindStatus(`Search failed — ${err.message}`, 'fail');
+  }
+}
+
+async function installSkillOnline(btn) {
+  const id = btn.dataset.id;
+  btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Installing…';
+  try {
+    const r = await fetch(`${DAEMON_HTTP}/v1/skills/install`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: id }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+    btn.textContent = 'Installed';
+    await loadSkills();
+  } catch (err) {
+    btn.disabled = false; btn.textContent = prev;
+    skillFindStatus(`Install failed — ${err.message}`, 'fail');
+  }
 }
 
 // ── custom servers (Tools) ──────────────────────────────────────────────────
@@ -1056,6 +1256,22 @@ function wire() {
 
   // ── memory: Open Memory tab ──
   $('#set-mem-open')?.addEventListener('click', () => document.querySelector('.tab[data-view="memory"]')?.click());
+
+  // ── skills ──
+  $('#skill-search')?.addEventListener('input', renderSkills);
+  $('#skill-new')?.addEventListener('click', newSkill);
+  $('#skill-card-close')?.addEventListener('click', closeSkillCard);
+  $('#skill-edit')?.addEventListener('click', enterSkillEdit);
+  $('#skill-edit-cancel')?.addEventListener('click', () => {
+    const card = $('#skill-card');
+    if (card?._skill) skillCardEditMode(false);   // back to view
+    else closeSkillCard();                          // was a new-skill draft
+  });
+  $('#skill-save')?.addEventListener('click', saveSkill);
+  $('#skill-delete')?.addEventListener('click', deleteSkill);
+  $('#skill-del-cancel')?.addEventListener('click', () => { $('#skill-del-confirm').hidden = true; });
+  $('#skill-find-go')?.addEventListener('click', searchSkillsOnline);
+  $('#skill-find-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchSkillsOnline(); } });
 
   // ── custom servers: add form + raw config ──
   document.querySelectorAll('#mcp-add-type .seg-btn').forEach((b) => b.addEventListener('click', () => {

@@ -930,6 +930,36 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .sys-list li:last-child { border-bottom: 0; } .sys-list li.empty { color: var(--text-3); font-style: italic; }
 .sys-list .cap { display: inline-block; background: var(--surface-2); color: var(--text-2); font: 10px/1 var(--font-mono); padding: 3px 7px; border-radius: 6px; margin: 3px 4px 0 0; }
 
+/* ── skills (Behavior & memory) ───────────────────────────────────────── */
+.skill-bar { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }
+.skill-bar .field { flex: 1; }
+.skill-status { font: 400 12.5px/1.5 var(--font-sans); color: var(--text-3); margin: 0 0 10px; }
+.skill-status[hidden] { display: none; }
+.skill-status[data-state="wait"] { color: var(--text-2); }
+.skill-status[data-state="fail"] { color: var(--error); }
+.skill-list { margin: 0; }
+.skill-list .skill-empty { list-style: none; padding: 12px 2px; color: var(--text-3); font: 400 13px/1.5 var(--font-sans); }
+.skill-row { cursor: pointer; align-items: center; gap: 12px; }
+.skill-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.skill-row-desc { font: 400 12px/1.45 var(--font-sans); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-row-slug { font: 500 11px/1 var(--font-mono); color: var(--text-3); flex-shrink: 0; }
+.skill-card-meta { font: 500 11px/1 var(--font-mono); color: var(--text-3); margin: 0 0 12px; }
+.skill-body { max-height: 360px; overflow: auto; }
+.skill-confirm { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; background: var(--error-tint); border: 1px solid var(--error); border-radius: var(--r-md); }
+.skill-confirm[hidden] { display: none; }
+.skill-confirm .set-verify { flex: 1; color: var(--text); }
+.skill-edit-status { font: 400 12px/1.5 var(--font-sans); color: var(--text-3); margin-top: 8px; min-height: 16px; }
+.skill-edit-status[data-state="wait"] { color: var(--text-2); }
+.skill-edit-status[data-state="fail"] { color: var(--error); }
+#skill-name { margin: 0 0 10px; }
+.skill-find { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.skill-find > summary { cursor: pointer; font: 600 12.5px/1 var(--font-sans); color: var(--text-2); list-style: none; padding: 2px 0; }
+.skill-find > summary::-webkit-details-marker { display: none; }
+.skill-find > summary::before { content: '+ '; color: var(--text-3); }
+.skill-find[open] > summary::before { content: '– '; }
+.skill-find > summary:hover { color: var(--text); }
+.skill-find-row .skill-install { flex-shrink: 0; }
+
 /* ── dropzone ─────────────────────────────────────────────────────────── */
 .dropzone { position: absolute; inset: var(--topbar-h) 0 0 0; margin: 14px; background: rgba(251,250,247,0.82); backdrop-filter: blur(6px); border-radius: 20px; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 80; }
 .dropzone[hidden] { display: none; }

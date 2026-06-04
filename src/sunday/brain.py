@@ -229,6 +229,20 @@ async def respond(
             T["memory_ms"] = (time.perf_counter() - _t) * 1000
             log.warning("memory core block failed", error=str(exc))
 
+    # Skill shelf — the awareness mechanism (see sunday.skills.skills_shelf,
+    # lifted from Hermes). Folded into the per-turn context block, NOT the
+    # cached system prefix, for the same prompt-cache reason as memory above:
+    # the library can change without busting the breakpoint-1 cache. The model
+    # sees what's on the shelf every turn and loads what fits — list_skills
+    # stops being something it has to remember exists.
+    try:
+        from sunday.skills import skills_shelf
+        shelf = skills_shelf()
+        if shelf:
+            memory_block = (memory_block + "\n\n" + shelf) if memory_block else shelf
+    except Exception as exc:  # noqa: BLE001
+        log.warning("skill shelf block failed", error=str(exc))
+
     async def _emit_delta(piece: str) -> None:
         if broadcast is not None:
             await broadcast({

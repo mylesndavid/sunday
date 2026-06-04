@@ -109,8 +109,14 @@ of it.
 
 Save procedures (how to do something), not facts about them (use remember
 for those) and not trivial one-offs or pure lookups. If a skill for this
-already exists, refine it instead of duplicating. Before tackling a task that
-smells familiar, check list_skills first.
+already exists, refine it instead of duplicating.
+
+The skills on your shelf are listed in your context every turn — name and a
+one-line description each. Scan them before working a task by hand: if one
+fits, even partly, load_skill(slug) and follow it rather than re-deriving the
+steps. And when you load a skill and find it's outdated, missing a step, or
+plain wrong, fix it on the spot — save_skill with the same slug to overwrite,
+don't wait to be asked. A skill nobody maintains turns into a trap.
 
 # Guardrails
 
