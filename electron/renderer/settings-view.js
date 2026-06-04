@@ -74,6 +74,7 @@ export async function loadAll() {
   refreshSystem();
   loadConnections();
   loadMcp();
+  loadGmailStatus();
   loadMemorySummary();
   loadSkills();
   updateOverview();
@@ -389,6 +390,43 @@ function renderBuiltins(wrap, connectors) {
     catch { b.disabled = false; b.textContent = act === 'disable' ? 'Disconnect' : 'Connect'; }
   }));
   wrap.querySelectorAll('.mcp-bi-link').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal(a.dataset.href); }));
+}
+
+// Gmail (direct IMAP/SMTP via an app password). Saves GMAIL_ADDRESS +
+// GMAIL_APP_PASSWORD through the standard saveBrain({credentials}) path, then
+// reflects the daemon's quick login probe.
+async function loadGmailStatus() {
+  const line = $('#gmail-status'); if (!line) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/gmail/status`)).json(); }
+  catch { line.dataset.state = ''; line.textContent = ''; return; }
+  if (!d.configured) {
+    line.dataset.state = ''; line.textContent = 'Not connected';
+    const addr = $('#gmail-address'); if (addr && !addr.value) addr.value = '';
+    return;
+  }
+  const addr = $('#gmail-address');
+  if (addr && !addr.value && d.address) addr.value = d.address;
+  if (d.ok) { line.dataset.state = 'ok'; line.textContent = `connected as ${d.address}`; }
+  else { line.dataset.state = 'fail'; line.textContent = `saved, but couldn't log in as ${d.address} — check the app password`; }
+}
+
+async function saveGmailCreds() {
+  const address = $('#gmail-address')?.value.trim() || '';
+  const password = $('#gmail-password')?.value.trim() || '';
+  const line = $('#gmail-status');
+  if (!address || !password) {
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter both an address and an app password.'; }
+    return;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  try {
+    await saveBrain({ credentials: { GMAIL_ADDRESS: address, GMAIL_APP_PASSWORD: password } });
+    if ($('#gmail-password')) $('#gmail-password').value = '';   // don't keep the secret on screen
+    await loadGmailStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
 }
 
 function renderMcpServers(servers) {
@@ -1221,6 +1259,13 @@ function wire() {
       await saveBrain({ provider: 'codex' });
       await applyProvider('codex');
     } catch (err) { setCodexStatus(err.message || 'Sign-in failed', 'fail'); }
+  });
+
+  // Gmail (app password) card — save on Enter in either field; open Google's
+  // app-password page; status reflects the daemon's quick IMAP login probe.
+  $('#gmail-apppw-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://myaccount.google.com/apppasswords'); });
+  ['#gmail-address', '#gmail-password'].forEach((sel) => {
+    $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveGmailCreds(); } });
   });
 
   // Ollama wizard buttons

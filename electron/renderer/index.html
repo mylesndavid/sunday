@@ -337,6 +337,25 @@
             <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
           </div>
 
+          <!-- GMAIL (app password — direct IMAP/SMTP) -->
+          <div class="set-panel">
+            <div class="brain-label">Gmail (app password)</div>
+            <div class="mcp-bi" id="gmail-card">
+              <label class="set-field">
+                <span class="set-field-l">Gmail address</span>
+                <input type="email" id="gmail-address" class="field" placeholder="you@gmail.com" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">App password</span>
+                <input type="password" id="gmail-password" class="field mono" placeholder="abcd efgh ijkl mnop" autocomplete="off" spellcheck="false">
+              </label>
+              <p class="set-help set-help-tight">Needs 2-step verification on, then create an app password. <a href="#" id="gmail-apppw-link" class="mcp-bi-link">Create an app password</a></p>
+              <div class="set-actions">
+                <span class="set-verify" id="gmail-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
           <!-- CONNECTED SERVICES -->
           <div class="set-panel">
             <div class="brain-label">Connected services</div>

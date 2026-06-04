@@ -198,6 +198,10 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",
         "sunday.integrations.google",
+        # Direct Gmail (IMAP/SMTP app password) registered AFTER the Nango
+        # google module so it overrides gmail_search/read/send by name when
+        # an app password is configured.
+        "sunday.gmail_tools",
         "sunday.integrations.fireflies",
     ):
         try:

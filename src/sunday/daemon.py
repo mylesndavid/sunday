@@ -1501,6 +1501,52 @@ class Daemon:
             "error": pend.get("error"),
         })
 
+    async def _http_gmail_status(self, request: web.Request) -> web.Response:
+        """Report whether the direct Gmail connector (IMAP/SMTP app password)
+        is configured, and — once — whether the credentials actually log in.
+
+        The IMAP login probe is cached for the daemon's lifetime after the
+        first success (an app password doesn't change underneath us), runs with
+        a tight timeout, and never throws — a flaky network must not 500 the
+        Settings page. {configured, address, ok}."""
+        from sunday.credentials import get_credential
+        address = get_credential("GMAIL_ADDRESS")
+        password = get_credential("GMAIL_APP_PASSWORD")
+        if password:
+            password = password.replace(" ", "")
+        configured = bool(address and password)
+        if not configured:
+            return web.json_response({"configured": False, "address": None, "ok": False})
+
+        # Cached probe, keyed on the address so a credential change re-tests.
+        cache = getattr(self, "_gmail_login_ok", None)
+        if cache and cache.get("address") == address and cache.get("ok"):
+            return web.json_response({"configured": True, "address": address, "ok": True})
+
+        def _probe() -> bool:
+            import imaplib
+            try:
+                imap = imaplib.IMAP4_SSL("imap.gmail.com", timeout=3)
+                try:
+                    imap.login(address, password)
+                    return True
+                finally:
+                    try:
+                        imap.logout()
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001 — never throw out of a status probe
+                return False
+
+        ok = False
+        try:
+            ok = await asyncio.wait_for(asyncio.to_thread(_probe), timeout=3.5)
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            self._gmail_login_ok = {"address": address, "ok": True}
+        return web.json_response({"configured": True, "address": address, "ok": ok})
+
     async def _start_codex_callback(self) -> None:
         """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
         catches the OAuth redirect. Torn down once we have the code."""
@@ -2440,6 +2486,7 @@ class Daemon:
         app.router.add_post("/v1/config", self._http_post_config)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
+        app.router.add_get("/v1/gmail/status", self._http_gmail_status)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)
