@@ -7,7 +7,15 @@
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+// The 'key' step is branched into from 'node' for local installs, so it isn't
+// a linear member of the order. We still want the pill to count it sensibly:
+// it sits between 'node' and 'mic', occupying the same slot a self-hosted user
+// reaches at 'mic'. STEP_SLOT maps each step to its 1-based position out of
+// STEP_TOTAL; 'key' shares its slot with 'mic' so "step 3 of 5" reads right on
+// both branches.
 const STEP_ORDER = ['welcome', 'node', 'mic', 'browser', 'done'];
+const STEP_SLOT = { welcome: 1, node: 2, key: 3, mic: 3, browser: 4, done: 5 };
+const STEP_TOTAL = 5;
 
 let chosenDaemonHttp = '';
 let chosenDaemonWs   = '';
@@ -20,8 +28,8 @@ function showStep(name) {
   $$('.onb-step').forEach((el) => {
     el.hidden = el.dataset.step !== name;
   });
-  const idx = STEP_ORDER.indexOf(name);
-  stepPill.textContent = `step ${idx + 1} of ${STEP_ORDER.length}`;
+  const slot = STEP_SLOT[name] || (STEP_ORDER.indexOf(name) + 1);
+  stepPill.textContent = `step ${slot} of ${STEP_TOTAL}`;
 }
 
 // ─── step 1 → 2 ────────────────────────────────────────────────────────

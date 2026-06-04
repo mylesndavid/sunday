@@ -172,254 +172,456 @@
 
   <!-- ─── SETTINGS ─────────────────────────────────────────────────── -->
   <section class="view view-settings" id="view-settings">
-    <nav class="set-nav" id="set-nav">
-      <a data-target="sec-brain" class="active">Brain</a>
-      <a data-target="sec-connections">Connections</a>
-      <a data-target="sec-mcp">Servers</a>
-      <a data-target="sec-personality">Personality</a>
-      <a data-target="sec-permissions">Permissions</a>
-      <a data-target="sec-voice">Voice</a>
-      <a data-target="sec-observer">Observer</a>
-      <a data-target="sec-argus">Analytics</a>
-      <a data-target="sec-updates">Updates</a>
-      <a data-target="sec-system">System</a>
+    <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings">
+      <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
+      <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
+      <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
+      <button type="button" class="set-navitem" data-page="page-voice">Voice &amp; capture</button>
+      <button type="button" class="set-navitem" data-page="page-behavior">Behavior &amp; memory</button>
+      <button type="button" class="set-navitem" data-page="page-privacy">Privacy</button>
+      <button type="button" class="set-navitem" data-page="page-about">About</button>
     </nav>
     <div class="set-stage" id="set-stage">
       <div class="set-inner">
-        <span class="set-saved" id="set-saved" hidden>saved</span>
+        <span class="set-error" id="set-error" role="alert" hidden></span>
 
-        <section class="set-block" id="sec-brain">
-          <h2>Sunday's brain</h2>
-          <p class="set-help">Where Sunday runs, and which model it thinks with.</p>
+        <!-- ═══ OVERVIEW ═══════════════════════════════════════════════════ -->
+        <section class="set-page active" id="page-overview">
+          <h2>Overview</h2>
+          <p class="set-help">Where Sunday stands right now, at a glance.</p>
 
-          <!-- WHERE IT RUNS -->
-          <div class="brain-label">Where it runs</div>
-          <div class="brain-cards" id="set-runmode">
-            <button class="brain-card" data-mode="cloud">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.5-8.74A6 6 0 0 0 4.6 12 3.5 3.5 0 0 0 5.5 19z"/></svg>
-              <div class="brain-card-t">Cloud</div>
-              <div class="brain-card-d">Always on. Runs on your server, reachable from anywhere.</div>
-            </button>
-            <button class="brain-card" data-mode="local">
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="1.5"/><path d="M2 20.5h20"/></svg>
-              <div class="brain-card-t">This Mac</div>
-              <div class="brain-card-d">Private and free. Can use your ChatGPT subscription.</div>
-            </button>
-          </div>
-          <div class="brain-inline" id="set-migrate-row" hidden>
-            <span class="set-verify" id="set-migrate-note">Moving to This Mac — bring your cloud chat + memory along, or start fresh?</span>
-            <button class="btn" id="set-migrate-fresh">Start fresh</button>
-            <button class="btn btn-primary" id="set-migrate">Bring my history over</button>
+          <div class="ov-attention" id="ov-attention" role="status" aria-live="polite" hidden></div>
+
+          <div class="ov-card">
+            <div class="ov-card-h">Current setup</div>
+            <dl class="ov-rows" id="ov-rows" aria-live="polite">
+              <div class="ov-row"><dt>Runtime</dt><dd id="ov-runtime">—</dd></div>
+              <div class="ov-row"><dt>Thinking</dt><dd id="ov-thinking">—</dd></div>
+              <div class="ov-row"><dt>Data path</dt><dd id="ov-datapath">—</dd></div>
+              <div class="ov-row"><dt>Voice</dt><dd id="ov-voice">—</dd></div>
+              <div class="ov-row"><dt>Tools</dt><dd id="ov-tools">—</dd></div>
+              <div class="ov-row"><dt>Permissions</dt><dd id="ov-perms">—</dd></div>
+            </dl>
           </div>
 
-          <!-- PROVIDER — one dropdown; the chosen provider's options appear below -->
-          <div class="brain-label">Provider</div>
-          <div class="set-dd" id="set-prov-dd">
-            <button type="button" class="field set-dd-btn" id="set-prov-btn"><span id="set-prov-label">OpenRouter</span></button>
-            <div class="model-results set-dd-menu" id="set-prov-menu" hidden>
-              <button type="button" class="model-row" data-provider="codex"><span class="mr-name">ChatGPT</span><span class="mr-slug">your subscription · no key</span></button>
-              <button type="button" class="model-row" data-provider="openrouter"><span class="mr-name">OpenRouter</span><span class="mr-slug">any model · your key</span></button>
-              <button type="button" class="model-row" data-provider="ollama"><span class="mr-name">Ollama</span><span class="mr-slug">local · free</span></button>
-              <button type="button" class="model-row" data-provider="openai"><span class="mr-name">OpenAI</span><span class="mr-slug">your key</span></button>
-              <button type="button" class="model-row" data-provider="anthropic"><span class="mr-name">Anthropic</span><span class="mr-slug">your key</span></button>
+          <div class="ov-actions">
+            <button type="button" class="ov-action" data-goto="page-model">
+              <span class="ov-action-t">Change model</span>
+              <span class="ov-action-d">Pick a provider and model.</span>
+            </button>
+            <button type="button" class="ov-action" data-goto="page-tools">
+              <span class="ov-action-t">Manage tools</span>
+              <span class="ov-action-d">Browser, services, custom servers.</span>
+            </button>
+            <button type="button" class="ov-action" data-goto="page-privacy">
+              <span class="ov-action-t">Fix permissions</span>
+              <span class="ov-action-d">Microphone, screen, control, disk.</span>
+            </button>
+            <button type="button" class="ov-action" data-goto="page-about">
+              <span class="ov-action-t">Check for updates</span>
+              <span class="ov-action-d">See what version you're on.</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- ═══ MODEL & DATA PATH ══════════════════════════════════════════ -->
+        <section class="set-page" id="page-model">
+          <h2>Model and data path</h2>
+          <p class="set-help">Where Sunday runs, which model it thinks with, and what that means for your data.</p>
+
+          <!-- RUNTIME -->
+          <div class="set-panel">
+            <div class="brain-label" id="set-runtime-label">Runtime</div>
+            <div class="seg" id="set-runmode" role="group" aria-labelledby="set-runtime-label">
+              <button type="button" class="seg-btn" data-mode="local" aria-pressed="false">This Mac</button>
+              <button type="button" class="seg-btn" data-mode="cloud" aria-pressed="false">Remote daemon</button>
+            </div>
+            <p class="set-help set-help-tight" id="set-runtime-copy">The daemon, memory, and local tools run inside this app.</p>
+
+            <!-- Remote daemon form -->
+            <div class="set-remote" id="set-remote-form" hidden>
+              <label class="set-field">
+                <span class="set-field-l">HTTP URL</span>
+                <input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">WebSocket URL</span>
+                <input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">Auth token</span>
+                <input type="password" id="set-token" class="field mono" placeholder="optional bearer token" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <span class="set-verify" id="set-conn-verify" aria-live="polite"></span>
+                <button type="button" class="btn" id="set-conn-test">Test connection</button>
+                <button type="button" class="btn btn-primary" id="set-conn-save">Save connection</button>
+              </div>
             </div>
           </div>
 
-          <!-- MODEL — one searchable dropdown, same control for every provider -->
-          <div class="brain-label">Model</div>
-          <div class="model-pick" id="set-model-pick">
-            <input type="text" id="set-model-search" class="field" placeholder="Search models…" autocomplete="off" spellcheck="false">
-            <div class="model-results" id="set-model-results" hidden></div>
-          </div>
-          <div class="model-current" id="set-model-current" hidden></div>
+          <!-- THINKING MODEL -->
+          <div class="set-panel">
+            <div class="brain-label" id="set-prov-label-h">Thinking model</div>
+            <ul class="prov-list" id="set-prov-list" role="radiogroup" aria-labelledby="set-prov-label-h">
+              <li class="prov-row" data-provider="ollama" role="radio" aria-checked="false" tabindex="0">
+                <span class="prov-row-main">
+                  <span class="prov-row-name">Local (Ollama)</span>
+                  <span class="prov-row-sub">runs on this Mac · free</span>
+                </span>
+                <span class="prov-badge" data-tone="local">stays on this Mac</span>
+                <span class="prov-key" id="prov-key-ollama"></span>
+                <span class="prov-row-status" id="prov-status-ollama" aria-live="polite"></span>
+              </li>
+              <li class="prov-row" data-provider="codex" role="radio" aria-checked="false" tabindex="0">
+                <span class="prov-row-main">
+                  <span class="prov-row-name">ChatGPT</span>
+                  <span class="prov-row-sub" id="prov-sub-codex">your subscription · no key</span>
+                </span>
+                <span class="prov-badge" data-tone="openai">sent to OpenAI</span>
+                <span class="prov-key" id="prov-key-codex"></span>
+                <span class="prov-row-status" id="prov-status-codex" aria-live="polite"></span>
+              </li>
+              <li class="prov-row" data-provider="openrouter" role="radio" aria-checked="false" tabindex="0">
+                <span class="prov-row-main">
+                  <span class="prov-row-name">OpenRouter</span>
+                  <span class="prov-row-sub">any model · your key</span>
+                </span>
+                <span class="prov-badge" data-tone="openrouter">sent to OpenRouter</span>
+                <span class="prov-key" id="prov-key-openrouter"></span>
+                <span class="prov-row-status" id="prov-status-openrouter" aria-live="polite"></span>
+              </li>
+              <li class="prov-row" data-provider="openai" role="radio" aria-checked="false" tabindex="0">
+                <span class="prov-row-main">
+                  <span class="prov-row-name">OpenAI</span>
+                  <span class="prov-row-sub">your key</span>
+                </span>
+                <span class="prov-badge" data-tone="openai">sent to OpenAI</span>
+                <span class="prov-key" id="prov-key-openai"></span>
+                <span class="prov-row-status" id="prov-status-openai" aria-live="polite"></span>
+              </li>
+              <li class="prov-row" data-provider="anthropic" role="radio" aria-checked="false" tabindex="0">
+                <span class="prov-row-main">
+                  <span class="prov-row-name">Anthropic</span>
+                  <span class="prov-row-sub">your key</span>
+                </span>
+                <span class="prov-badge" data-tone="anthropic">sent to Anthropic</span>
+                <span class="prov-key" id="prov-key-anthropic"></span>
+                <span class="prov-row-status" id="prov-status-anthropic" aria-live="polite"></span>
+              </li>
+            </ul>
 
-          <!-- API key — shown only for providers that need one -->
-          <input type="password" id="set-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false" hidden style="margin-top:10px;">
-          <!-- ChatGPT sign-in status -->
-          <div class="brain-codex-status" id="set-codex-status" hidden></div>
-          <!-- Fully-local status — appears when the Ollama provider is selected -->
-          <div class="brain-inline" id="set-ollama-row" hidden>
-            <span class="set-verify" id="set-ollama-status">checking Ollama…</span>
-            <button class="btn" id="set-ollama-install" hidden>Install Ollama</button>
-            <button class="btn btn-primary" id="set-ollama-start" hidden>Start Ollama</button>
-            <button class="btn btn-primary" id="set-ollama-pull" hidden>Download</button>
-          </div>
-          <div class="set-pullbar" id="set-pullbar" hidden>
-            <div class="set-pullbar-fill" id="set-pullbar-fill"></div>
-            <span class="set-pullbar-label" id="set-pullbar-label"></span>
-          </div>
+            <!-- API key — shown only for providers that need one -->
+            <label class="set-field" id="set-key-field" hidden>
+              <span class="set-field-l" id="set-key-label">API key</span>
+              <input type="password" id="set-key" class="field" placeholder="API key" autocomplete="off" spellcheck="false">
+            </label>
 
-          <div class="set-actions">
-            <span class="set-verify" id="set-model-note"></span>
-            <button class="btn" id="set-connect" hidden>Connect ChatGPT</button>
-          </div>
-          <input type="text" id="set-model" hidden>
-          <input type="text" id="set-provider" hidden>
-
-          <!-- Self-hosted: point the app at a daemon you run elsewhere -->
-          <details class="set-advanced">
-            <summary>Self-hosted connection</summary>
-            <p class="set-help">Point the app at a specific daemon (HTTP + WebSocket URL).</p>
-            <label><span>HTTP URL</span><input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com"></label>
-            <label><span>WebSocket URL</span><input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws"></label>
-            <div class="set-actions">
-              <span class="set-verify" id="set-conn-verify"></span>
-              <button class="btn" id="set-conn-test">Test</button>
-              <button class="btn" id="set-conn-save">Save connection</button>
+            <!-- ChatGPT sign-in status + connect -->
+            <div class="brain-codex-status" id="set-codex-status" hidden></div>
+            <div class="set-actions" id="set-connect-row" hidden>
+              <span class="set-verify" id="set-model-note" aria-live="polite"></span>
+              <button type="button" class="btn" id="set-connect" hidden>Connect ChatGPT</button>
             </div>
-          </details>
-        </section>
 
-        <section class="set-block" id="sec-connections">
-          <h2>Connections</h2>
-          <p class="set-help">Everything Sunday plugs into, in one place: the connectors that come with her, services you sign into, and any MCP server you add yourself.</p>
+            <!-- MODEL — one searchable combobox -->
+            <div class="set-field" id="set-model-field">
+              <span class="set-field-l" id="set-model-label">Model</span>
+              <div class="model-pick" id="set-model-pick">
+                <input type="text" id="set-model-search" class="field" placeholder="Search models…" autocomplete="off" spellcheck="false"
+                       role="combobox" aria-expanded="false" aria-controls="set-model-results" aria-autocomplete="list" aria-labelledby="set-model-label">
+                <div class="model-results" id="set-model-results" role="listbox" aria-label="Models" hidden></div>
+              </div>
+            </div>
+            <div class="model-current" id="set-model-current" hidden></div>
 
-          <div class="brain-label">Comes with Sunday</div>
-          <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
+            <!-- Fully-local stepped wizard (Ollama) -->
+            <div class="local-wizard" id="set-ollama-row" hidden>
+              <span class="set-verify" id="set-ollama-status" aria-live="polite">Checking hardware…</span>
+              <div class="set-actions">
+                <button type="button" class="btn" id="set-ollama-install" hidden>Install Ollama</button>
+                <button type="button" class="btn btn-primary" id="set-ollama-start" hidden>Start Ollama</button>
+                <button type="button" class="btn btn-primary" id="set-ollama-pull" hidden>Download</button>
+              </div>
+              <div class="set-pullbar" id="set-pullbar" hidden>
+                <div class="set-pullbar-fill" id="set-pullbar-fill"></div>
+                <span class="set-pullbar-label" id="set-pullbar-label"></span>
+              </div>
+            </div>
 
-          <div class="brain-label" style="margin-top:20px">Your services</div>
-          <p class="set-help conn-subhelp">Toggle a connected service <strong>on</strong> to pin its tools to every chat; off means Sunday still finds them on demand. <span id="conn-unconfigured" hidden>Service sign-ins run on the cloud brain — connect them there, or add anything as a custom server below.</span></p>
-
-          <ul class="conn-pinned" id="conn-pinned"><li class="conn-loading">loading…</li></ul>
-
-          <h3 class="conn-subhead">Add a new connection</h3>
-          <p class="set-help conn-subhelp">Pick from 800+ services — Sunday walks you through getting the keys, then handles OAuth for you.</p>
-
-          <div class="conn-browse">
-            <input type="text" id="conn-search" class="set-input conn-search" placeholder="Search gmail, slack, notion, stripe, …" autocomplete="off">
-            <div class="conn-cats" id="conn-cats"></div>
+            <input type="text" id="set-model" hidden>
+            <input type="text" id="set-provider" hidden>
           </div>
 
-          <ul class="conn-list" id="conn-list"><li class="conn-loading">loading providers…</li></ul>
-
-          <div class="conn-card" id="conn-card" hidden></div>
+          <!-- PRIVACY IMPACT -->
+          <div class="set-panel set-impact">
+            <div class="brain-label">Privacy impact</div>
+            <p class="set-impact-line" id="set-impact" aria-live="polite">—</p>
+          </div>
         </section>
 
-        <section class="set-block" id="sec-mcp">
-          <h2>Custom servers</h2>
-          <p class="set-help">Connect Sunday to any <strong>Model Context Protocol</strong> server and its tools become hers. Your connected servers are listed below; the raw config is there when you want it, out of the way when you don't.</p>
-          <ul class="conn-list" id="mcp-servers"></ul>
-          <details class="set-advanced" style="margin-top:14px">
-            <summary>Add or edit servers (mcp.json)</summary>
-            <p class="set-help" style="margin-top:10px">Standard MCP config — remote servers use <code>"url"</code>, local ones use <code>"command"</code>.</p>
-            <textarea id="mcp-config" class="set-textarea" spellcheck="false" placeholder='{
+        <!-- ═══ TOOLS ══════════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-tools">
+          <h2>Tools</h2>
+          <p class="set-help">The browser, the services you sign into, and any server you add yourself.</p>
+
+          <!-- BROWSER (first-class) -->
+          <div class="set-panel">
+            <div class="brain-label">Browser</div>
+            <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
+          </div>
+
+          <!-- CONNECTED SERVICES -->
+          <div class="set-panel">
+            <div class="brain-label">Connected services</div>
+            <p class="set-help set-help-tight conn-subhelp">Turn a service on to keep it <strong>always available</strong>; off means Sunday finds it when needed. <span id="conn-unconfigured" hidden>Service sign-ins run on the remote daemon — connect them there, or add anything as a custom server below.</span></p>
+            <ul class="conn-pinned" id="conn-pinned"><li class="conn-loading">loading…</li></ul>
+          </div>
+
+          <!-- ADD A SERVICE -->
+          <div class="set-panel">
+            <div class="brain-label">Add a service</div>
+            <div class="conn-browse">
+              <label class="set-field-inline">
+                <span class="sr-only">Search services</span>
+                <input type="text" id="conn-search" class="set-input conn-search" placeholder="Search gmail, slack, notion, stripe, …" autocomplete="off">
+              </label>
+              <div class="conn-cats" id="conn-cats"></div>
+            </div>
+            <ul class="conn-list" id="conn-list"><li class="conn-loading">loading providers…</li></ul>
+            <div class="conn-card" id="conn-card" hidden></div>
+          </div>
+
+          <!-- CUSTOM SERVERS -->
+          <div class="set-panel">
+            <div class="brain-label">Custom servers</div>
+            <p class="set-help set-help-tight">Connect Sunday to any tool server and its tools become hers.</p>
+            <ul class="conn-list" id="mcp-servers"></ul>
+
+            <form class="mcp-add" id="mcp-add-form">
+              <div class="brain-label brain-label-sm">Add server</div>
+              <label class="set-field">
+                <span class="set-field-l">Name</span>
+                <input type="text" id="mcp-add-name" class="field" placeholder="agentos" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-field">
+                <span class="set-field-l" id="mcp-add-type-l">Type</span>
+                <div class="seg seg-sm" id="mcp-add-type" role="group" aria-labelledby="mcp-add-type-l">
+                  <button type="button" class="seg-btn active" data-type="remote" aria-pressed="true">Remote URL</button>
+                  <button type="button" class="seg-btn" data-type="local" aria-pressed="false">Local command</button>
+                </div>
+              </div>
+              <label class="set-field" id="mcp-add-target-field">
+                <span class="set-field-l" id="mcp-add-target-l">URL</span>
+                <input type="text" id="mcp-add-target" class="field mono" placeholder="https://example.com/mcp" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">Headers (JSON, optional)</span>
+                <input type="text" id="mcp-add-headers" class="field mono" placeholder='{ "Authorization": "Bearer …" }' autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <span class="set-verify" id="mcp-add-status" aria-live="polite"></span>
+                <button type="submit" class="btn btn-primary" id="mcp-add-save">Add server</button>
+              </div>
+            </form>
+
+            <details class="set-advanced" style="margin-top:14px">
+              <summary>Advanced: edit raw config</summary>
+              <p class="set-help" style="margin-top:10px">Standard MCP config — remote servers use <code>"url"</code>, local ones use <code>"command"</code>.</p>
+              <textarea id="mcp-config" class="set-textarea" spellcheck="false" placeholder='{
   "mcpServers": {
     "agentos": { "url": "https://…", "headers": { "Authorization": "Bearer …" } }
   }
 }'></textarea>
+              <div class="set-actions">
+                <span class="set-verify" id="mcp-status" aria-live="polite"></span>
+                <button type="button" class="btn btn-primary" id="mcp-save">Save config</button>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <!-- ═══ VOICE & CAPTURE ════════════════════════════════════════════ -->
+        <section class="set-page" id="page-voice">
+          <h2>Voice and capture</h2>
+          <p class="set-help">Talking to Sunday out loud, and what she listens for in the background.</p>
+
+          <!-- LIVE VOICE -->
+          <div class="set-panel">
+            <div class="brain-label">Live voice</div>
+            <p class="set-help set-help-tight">Live voice talks to this provider directly; the key is separate from your chat model.</p>
+            <div class="seg" id="set-voice-provider" role="group" aria-label="Voice provider">
+              <button type="button" class="seg-btn" data-vp="openai" aria-pressed="false">OpenAI gpt-realtime</button>
+              <button type="button" class="seg-btn" data-vp="gemini" aria-pressed="false">Gemini Live</button>
+            </div>
+            <label class="set-field" style="margin-top:12px">
+              <span class="set-field-l" id="set-voice-key-l">Voice provider key</span>
+              <input type="password" id="set-voice-key" class="field" autocomplete="off" spellcheck="false" aria-labelledby="set-voice-key-l">
+            </label>
             <div class="set-actions">
-              <span class="set-verify" id="mcp-status"></span>
-              <button class="btn btn-primary" id="mcp-save">Connect</button>
+              <span class="set-verify" id="set-voice-note" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="set-voice-open">Open voice mode</button>
+            </div>
+          </div>
+
+          <!-- BACKGROUND LISTENING -->
+          <div class="set-panel">
+            <div class="brain-label">Background listening</div>
+            <p class="set-help set-help-tight">Sunday listens to the mic in the background, works out what you're doing, and shows it in the notch with how long you've been at it. Off by default.</p>
+            <div class="set-actions">
+              <span class="set-verify" id="set-observer-status" aria-live="polite">off</span>
+              <button type="button" class="btn btn-primary" id="set-observer-toggle">Turn on</button>
+            </div>
+            <div class="set-trans" id="set-trans" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <!-- ═══ BEHAVIOR & MEMORY ══════════════════════════════════════════ -->
+        <section class="set-page" id="page-behavior">
+          <h2>Behavior and memory</h2>
+          <p class="set-help">How Sunday should be, and what she remembers.</p>
+
+          <!-- INSTRUCTIONS -->
+          <div class="set-panel">
+            <div class="brain-label">Instructions</div>
+            <p class="set-help set-help-tight">Read on every message. The built-in instructions are used until you customize them.</p>
+
+            <!-- Preview state -->
+            <div class="instr-preview" id="instr-preview">
+              <div class="instr-status" id="set-prompt-status" aria-live="polite">—</div>
+              <pre class="instr-text" id="instr-text-preview"></pre>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="instr-customize">Customize</button>
+              </div>
+            </div>
+
+            <!-- Edit state -->
+            <div class="instr-edit" id="instr-edit" hidden>
+              <textarea id="set-prompt" class="set-textarea" spellcheck="false"></textarea>
+              <div class="set-prompt-meta mono"><span id="set-prompt-chars">0 chars</span></div>
+              <div class="instr-confirm" id="instr-reset-confirm" role="alertdialog" aria-label="Reset instructions" hidden>
+                <span class="set-verify">Reset to the built-in instructions?</span>
+                <button type="button" class="btn" id="instr-reset-cancel">Keep mine</button>
+                <button type="button" class="btn btn-primary" id="instr-reset-go">Reset</button>
+              </div>
+              <div class="set-actions">
+                <button type="button" class="btn" id="set-prompt-reset">Reset to default</button>
+                <button type="button" class="btn" id="instr-discard">Discard</button>
+                <button type="button" class="btn btn-primary" id="set-prompt-save">Save instructions</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- MEMORY -->
+          <div class="set-panel">
+            <div class="brain-label">Memory</div>
+            <div class="mem-summary">
+              <span class="mem-summary-line" id="set-mem-summary" aria-live="polite">—</span>
+              <button type="button" class="btn" id="set-mem-open">Open Memory</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ PRIVACY ════════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-privacy">
+          <h2>Privacy</h2>
+          <p class="set-help">What leaves this Mac, and the system permissions Sunday holds.</p>
+
+          <!-- DATA LEAVING THIS MAC -->
+          <div class="set-panel">
+            <div class="brain-label">Data leaving this Mac</div>
+            <dl class="ov-rows" id="set-dataflow" aria-live="polite">
+              <div class="ov-row"><dt>Chat prompts</dt><dd id="df-chat">—</dd></div>
+              <div class="ov-row"><dt>Voice audio</dt><dd id="df-voice">—</dd></div>
+              <div class="ov-row"><dt>Background audio</dt><dd id="df-bg">—</dd></div>
+              <div class="ov-row"><dt>Browser actions</dt><dd id="df-browser">runs on this Mac</dd></div>
+              <div class="ov-row"><dt>Memory storage</dt><dd id="df-memory">—</dd></div>
+            </dl>
+          </div>
+
+          <!-- PERMISSIONS MATRIX -->
+          <div class="set-panel">
+            <div class="brain-label">System permissions</div>
+            <p class="set-help set-help-tight">Each row reads the real state from macOS — flip the switch in System Settings and it updates here in a couple of seconds.</p>
+            <ul class="perm-list">
+              <li class="perm-row" id="perm-microphone">
+                <div class="perm-info">
+                  <div class="perm-name">Microphone</div>
+                  <div class="perm-why">Used by live voice and background listening.</div>
+                </div>
+                <span class="perm-status"></span>
+                <button type="button" class="btn perm-grant">Allow</button>
+              </li>
+              <li class="perm-row" id="perm-screen">
+                <div class="perm-info">
+                  <div class="perm-name">Screen recording</div>
+                  <div class="perm-why">Used by screen context — letting Sunday see what's on your screen.</div>
+                </div>
+                <span class="perm-status"></span>
+                <button type="button" class="btn perm-grant">Allow</button>
+              </li>
+              <li class="perm-row" id="perm-control">
+                <div class="perm-info">
+                  <div class="perm-name">Accessibility</div>
+                  <div class="perm-why">Used for clicking and typing in apps.</div>
+                </div>
+                <span class="perm-status"></span>
+                <button type="button" class="btn perm-grant">Allow</button>
+              </li>
+              <li class="perm-row" id="perm-fulldisk">
+                <div class="perm-info">
+                  <div class="perm-name">Full disk access</div>
+                  <div class="perm-why">Used by iMessage — reading your threads and other protected data.</div>
+                </div>
+                <span class="perm-status"></span>
+                <button type="button" class="btn perm-grant">Open System Settings</button>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- ═══ ABOUT ══════════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-about">
+          <h2>About</h2>
+          <p class="set-help">Updates, and tools for digging into what Sunday is doing.</p>
+
+          <!-- UPDATES -->
+          <div class="set-panel">
+            <div class="brain-label">Updates</div>
+            <p class="set-help set-help-tight">Sunday checks in the background and brings new builds down silently. Code-signed, so every update inherits your permissions. Restart when ready, or any time you quit. <strong id="upd-version-line"></strong></p>
+            <div class="upd-status" id="upd-status">
+              <span class="upd-state" id="upd-state-text" aria-live="polite">Checking…</span>
+              <div class="upd-bar" id="upd-bar" hidden><div class="upd-bar-fill" id="upd-bar-fill"></div></div>
+            </div>
+            <div class="set-actions">
+              <button type="button" class="btn" id="upd-check-btn">Check for updates</button>
+              <button type="button" class="btn btn-primary" id="upd-restart-btn" hidden>Restart to update</button>
+            </div>
+          </div>
+
+          <!-- DEVELOPER DIAGNOSTICS -->
+          <details class="set-advanced set-diag">
+            <summary>Developer diagnostics</summary>
+
+            <div class="set-panel set-panel-flush">
+              <div class="brain-label">Developer diagnostics</div>
+              <p class="set-help set-help-tight">Records local traces, tool calls, token usage and failures to local SQLite. Runs as its own process and sends nothing anywhere. Off by default. Needs Node 22+ on your machine.</p>
+              <div class="set-actions">
+                <span class="set-verify" id="set-argus-status" aria-live="polite">checking…</span>
+                <button type="button" class="btn btn-primary" id="set-argus-toggle">Turn on</button>
+                <button type="button" class="btn" id="set-argus-open" hidden>Open dashboard</button>
+              </div>
+            </div>
+
+            <div class="set-panel set-panel-flush">
+              <div class="brain-label">System status</div>
+              <div class="sys-grid mono" id="sys-grid"></div>
+              <h3 class="sys-sub">Devices</h3>
+              <ul class="sys-list" id="sys-devices"><li class="empty">—</li></ul>
+              <h3 class="sys-sub">Memory</h3>
+              <div class="sys-grid mono" id="sys-memory"></div>
             </div>
           </details>
-        </section>
-
-        <section class="set-block" id="sec-personality">
-          <h2>Personality</h2>
-          <p class="set-help">How Sunday should be — read on every message. What you see below is exactly what's active: Sunday's built-in personality until you edit it, your own version once you save. Reset brings the built-in back.</p>
-          <textarea id="set-prompt" class="set-textarea" spellcheck="false"></textarea>
-          <div class="set-prompt-meta mono"><span id="set-prompt-status">—</span><span id="set-prompt-chars">0 chars</span></div>
-          <div class="set-actions">
-            <button class="btn" id="set-prompt-reset">Reset to default</button>
-            <button class="btn btn-primary" id="set-prompt-save">Save personality</button>
-          </div>
-        </section>
-
-        <section class="set-block" id="sec-permissions">
-          <h2>Permissions</h2>
-          <p class="set-help">Sunday only asks for what it actually uses. Each row reads the real state from macOS — flip the switch in System Settings and it updates here in a couple seconds. <strong>Nothing leaves your Mac</strong> from any of these.</p>
-          <ul class="perm-list">
-            <li class="perm-row" id="perm-microphone">
-              <div class="perm-info">
-                <div class="perm-name">Microphone</div>
-                <div class="perm-why">Needed for the ambient observer — Sunday hears what you're doing.</div>
-              </div>
-              <span class="perm-status"></span>
-              <button class="btn perm-grant">Allow</button>
-            </li>
-            <li class="perm-row" id="perm-screen">
-              <div class="perm-info">
-                <div class="perm-name">Screen recording</div>
-                <div class="perm-why">Lets Sunday see what's on your screen when she needs to.</div>
-              </div>
-              <span class="perm-status"></span>
-              <button class="btn perm-grant">Allow</button>
-            </li>
-            <li class="perm-row" id="perm-control">
-              <div class="perm-info">
-                <div class="perm-name">Accessibility</div>
-                <div class="perm-why">Lets Sunday click, type, and use menus in other apps.</div>
-              </div>
-              <span class="perm-status"></span>
-              <button class="btn perm-grant">Allow</button>
-            </li>
-            <li class="perm-row" id="perm-fulldisk">
-              <div class="perm-info">
-                <div class="perm-name">Full disk access</div>
-                <div class="perm-why">Lets Sunday read iMessage threads and other protected app data.</div>
-              </div>
-              <span class="perm-status"></span>
-              <button class="btn perm-grant">Open System Settings</button>
-            </li>
-          </ul>
-        </section>
-
-        <section class="set-block" id="sec-voice">
-          <h2>Voice mode</h2>
-          <p class="set-help">Talk to Sunday out loud — full-duplex, with a live animated face, her full brain and tools along for the ride. Tap the <strong>voice pill</strong> in the message bar (or the button below). Realtime voice connects straight to the provider, so it needs that provider's own key. Your mic streams only while voice mode is open.</p>
-          <div class="brain-label">Voice provider</div>
-          <div class="set-actions" id="set-voice-provider">
-            <button class="btn" data-vp="openai">OpenAI gpt-realtime</button>
-            <button class="btn" data-vp="gemini">Gemini Live</button>
-          </div>
-          <input type="password" id="set-voice-key" class="field" autocomplete="off" spellcheck="false" style="margin-top:10px" hidden>
-          <div class="set-actions">
-            <span class="set-verify" id="set-voice-note"></span>
-            <button class="btn btn-primary" id="set-voice-open">Open voice mode</button>
-          </div>
-        </section>
-
-        <section class="set-block" id="sec-observer">
-          <h2>Ambient observer</h2>
-          <p class="set-help">Sunday listens to the mic in the background, figures out what you're doing right now, and shows it in the notch with how long you've been at it. Off by default; mic only. With local transcription installed, audio never leaves this Mac.</p>
-          <div class="set-actions">
-            <span class="set-verify" id="set-observer-status">off</span>
-            <button class="btn btn-primary" id="set-observer-toggle">Turn on</button>
-          </div>
-          <div class="set-trans" id="set-trans"></div>
-        </section>
-
-        <section class="set-block" id="sec-argus">
-          <h2>Analytics <span class="set-tag">for nerds</span></h2>
-          <p class="set-help">Run <strong>Argus</strong> alongside Sunday — a local, zero-dependency observability dashboard for the agent itself: traces, tool calls, token usage, loops, and silent failures. It runs as its own process on <code>127.0.0.1:4317</code>, stores everything in local SQLite, and sends nothing anywhere. Off by default. Each Sunday build bundles the latest Argus. Needs Node 22+ on your machine.</p>
-          <div class="set-actions">
-            <span class="set-verify" id="set-argus-status">checking…</span>
-            <button class="btn btn-primary" id="set-argus-toggle">Turn on</button>
-            <button class="btn" id="set-argus-open" hidden>Open dashboard</button>
-          </div>
-        </section>
-
-        <section class="set-block" id="sec-updates">
-          <h2>Updates</h2>
-          <p class="set-help">Sunday checks in the background and brings new builds down silently. Code-signed so every update inherits your permissions — no re-grants. Restart when ready, or any time you quit. <strong id="upd-version-line"></strong></p>
-          <div class="upd-status" id="upd-status">
-            <span class="upd-state" id="upd-state-text">Checking…</span>
-            <div class="upd-bar" id="upd-bar" hidden><div class="upd-bar-fill" id="upd-bar-fill"></div></div>
-          </div>
-          <div class="set-actions">
-            <button class="btn" id="upd-check-btn">Check for updates</button>
-            <button class="btn btn-primary" id="upd-restart-btn" hidden>Restart to update</button>
-          </div>
-        </section>
-
-        <section class="set-block" id="sec-system">
-          <h2>System</h2>
-          <p class="set-help">Live status of the daemon and connected devices.</p>
-          <div class="sys-grid mono" id="sys-grid"></div>
-          <h3 class="sys-sub">Devices</h3>
-          <ul class="sys-list" id="sys-devices"><li class="empty">—</li></ul>
-          <h3 class="sys-sub">Memory</h3>
-          <div class="sys-grid mono" id="sys-memory"></div>
         </section>
       </div>
     </div>
