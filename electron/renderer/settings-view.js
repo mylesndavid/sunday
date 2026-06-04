@@ -524,29 +524,41 @@ async function applyProvider(provider, currentModel) {
   refreshOllamaRow(provider === 'ollama');
 }
 
+let _ollamaRec = null;   // the recommended model from /v1/local/recommend
+
 async function refreshOllamaRow(show) {
   const row = $('#set-ollama-row'); if (!row) return;
   row.hidden = !show;
+  $('#set-pullbar').hidden = true;
   if (!show) return;
   const status = $('#set-ollama-status');
   const install = $('#set-ollama-install');
   const start = $('#set-ollama-start');
+  const pull = $('#set-ollama-pull');
   let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/local/recommend`)).json(); } catch { return; }
   const o = d.ollama || {};
   const rec = (d.models || []).find((m) => m.recommended);
+  _ollamaRec = rec || null;
+  install.hidden = true; start.hidden = true; pull.hidden = true;
   if (o.running) {
-    status.dataset.state = 'ok';
-    status.textContent = `Ollama running — fully local, nothing leaves this Mac.` +
-      (rec && !(o.models || []).some((n) => n.startsWith(rec.name)) ? ` Recommended for this Mac: ${rec.label} (search "${rec.name}" above).` : '');
-    install.hidden = true; start.hidden = true;
+    const hasRec = rec && (o.models || []).some((n) => n.split(':latest')[0] === rec.name || n.startsWith(`${rec.name}`));
+    if (rec && !hasRec) {
+      status.dataset.state = 'wait';
+      status.textContent = `Ollama running. This Mac (${d.chip}, ${d.ram_gb}GB) runs ${rec.label} — one download away from fully local.`;
+      pull.textContent = `Download ${rec.label}`;
+      pull.hidden = false;
+    } else {
+      status.dataset.state = 'ok';
+      status.textContent = 'Ollama running — fully local, nothing leaves this Mac.';
+    }
   } else if (o.installed) {
     status.dataset.state = 'wait';
     status.textContent = 'Ollama is installed but not running.';
-    install.hidden = true; start.hidden = false;
+    start.hidden = false;
   } else {
     status.dataset.state = 'fail';
     status.textContent = `Fully-local needs Ollama (free). This Mac: ${d.chip || ''} · ${d.ram_gb || '?'}GB${rec ? ` — runs ${rec.label}` : ''}.`;
-    install.hidden = false; start.hidden = true;
+    install.hidden = false;
   }
 }
 $('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));
@@ -555,6 +567,53 @@ $('#set-ollama-start')?.addEventListener('click', async () => {
   if (status) { status.dataset.state = 'wait'; status.textContent = 'Starting Ollama…'; }
   try { await fetch(`${DAEMON_HTTP}/v1/ollama/start`, { method: 'POST' }); } catch {}
   setTimeout(() => refreshOllamaRow(true), 2500);
+});
+$('#set-ollama-pull')?.addEventListener('click', async () => {
+  // One click: pull the recommended Gemma with live progress, then make it
+  // the active brain. The whole fully-local path without leaving the GUI.
+  const rec = _ollamaRec; if (!rec) return;
+  const btn = $('#set-ollama-pull'); const status = $('#set-ollama-status');
+  const bar = $('#set-pullbar'); const fill = $('#set-pullbar-fill'); const lab = $('#set-pullbar-label');
+  btn.disabled = true; bar.hidden = false; fill.style.width = '0%';
+  lab.textContent = `downloading ${rec.label}…`;
+  try {
+    const r = await fetch(`${DAEMON_HTTP}/v1/ollama/pull`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: rec.name }),
+    });
+    if (!r.ok || !r.body) throw new Error(`pull failed (${r.status})`);
+    const reader = r.body.getReader(); const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let p; try { p = JSON.parse(line); } catch { continue; }
+        if (p.error) throw new Error(p.error);
+        if (p.total && p.completed != null) {
+          const pct = Math.round((100 * p.completed) / p.total);
+          fill.style.width = `${pct}%`;
+          lab.textContent = `${rec.label}: ${pct}%  (${(p.completed / 1e9).toFixed(1)} / ${(p.total / 1e9).toFixed(1)} GB)`;
+        } else if (p.status) { lab.textContent = `${rec.label}: ${p.status}`; }
+      }
+    }
+    fill.style.width = '100%'; lab.textContent = `${rec.label}: activating…`;
+    const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'ollama', model_name: rec.name }),
+    });
+    if (!res.ok) { const dd = await res.json().catch(() => ({})); throw new Error(dd.error || `HTTP ${res.status}`); }
+    lab.textContent = `${rec.label}: active — Sunday is fully local.`;
+    flashSaved();
+    await applyProvider('ollama', rec.name);
+  } catch (err) {
+    lab.textContent = `✗ ${err.message || err}`;
+  } finally {
+    btn.disabled = false;
+  }
 });
 function setCodexStatus(text, state) {
   const el = $('#set-codex-status'); if (!el) return;
