@@ -71,7 +71,9 @@ function resolveSatellite(prefs) {
 function deviceWsFromPrefs(prefs) {
   // Prefer an explicit devices WS; else derive from daemonHttp/daemonWs.
   if (prefs.devicesWs) return prefs.devicesWs;
-  const http = prefs.daemonHttp || 'http://127.0.0.1:8765';
+  // fallback mirrors main.js's per-macOS-user port (uid 501 → 8765, 502 → 8766, …)
+  const port = 8765 + Math.max(0, ((os.userInfo().uid ?? 501) - 501));
+  const http = prefs.daemonHttp || `http://127.0.0.1:${port}`;
   const wsBase = http.replace(/^http/, 'ws').replace(/\/+$/, '');
   return `${wsBase}/v1/devices/ws`;
 }
