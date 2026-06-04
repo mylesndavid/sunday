@@ -10,7 +10,6 @@ const $ = (s) => document.querySelector(s);
 const chatEl     = $('#chat');
 const composerEl = $('#composer');
 const sendBtn    = $('#send-btn');
-const micBtn     = $('#mic-btn');
 const attachBtn  = $('#attach-btn');
 const connBtn    = $('#connectors-btn');
 const fileInput  = $('#file-input');
@@ -54,12 +53,7 @@ async function boot() {
     DAEMON_WS    = cfg.daemonWs   || DAEMON_WS;
     DAEMON_TOKEN = cfg.daemonToken || '';
   }
-  memoryView.init({ daemonHttp: DAEMON_HTTP }, {
-    canvas: $('#mem-canvas'), legend: $('#mem-legend'), refresh: $('#mem-refresh'),
-    empty: $('#mem-empty'), detail: $('#mem-detail'),
-    detailKind: $('#mem-detail-kind'), detailName: $('#mem-detail-name'),
-    detailFacts: $('#mem-detail-facts'), detailConns: $('#mem-detail-conns'),
-  });
+  memoryView.init({ daemonHttp: DAEMON_HTTP }, {});
   settingsView.init(DAEMON_HTTP);
   rewindView.init({ daemonHttp: DAEMON_HTTP }, {
     img: $('#rw-img'), empty: $('#rw-empty'), emptyTitle: $('#rw-empty-title'), emptySub: $('#rw-empty-sub'),
@@ -437,20 +431,6 @@ async function addFiles(files) {
   renderChips(); updateSend();
 }
 
-// voice
-let recog = null, listening = false;
-function startVoice() {
-  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!R) { appendMessage({ role: 'system', content: 'Voice input is not available in this build.', created_at: Date.now() / 1000 }); return; }
-  recog = new R(); recog.lang = 'en-US'; recog.interimResults = true; recog.continuous = false;
-  let final = '';
-  recog.onstart = () => { listening = true; micBtn.dataset.active = 'true'; window.sunday?.setOverlayState({ listening: true }); };
-  recog.onresult = (e) => { final = ''; let it = ''; for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) final += t; else it += t; } composerEl.value = (final + it).trim(); resize(); updateSend(); };
-  recog.onerror = () => { listening = false; micBtn.dataset.active = 'false'; };
-  recog.onend = () => { listening = false; micBtn.dataset.active = 'false'; window.sunday?.setOverlayState({ listening: false }); if (final.trim()) send(); };
-  recog.start();
-}
-
 // composer
 function updateSend() { sendBtn.disabled = !(composerEl.value.trim() || pending.length); }
 function resize() { composerEl.style.height = 'auto'; composerEl.style.height = Math.min(composerEl.scrollHeight, 200) + 'px'; }
@@ -592,7 +572,6 @@ connPopAdd.addEventListener('click', () => {
 });
 fileInput.addEventListener('change', (e) => addFiles(e.target.files));
 composerEl.addEventListener('paste', async (e) => { const items = e.clipboardData?.items || []; const fs = []; for (const it of items) if (it.kind === 'file') { const f = it.getAsFile(); if (f) fs.push(f); } if (fs.length) { e.preventDefault(); await addFiles(fs); } });
-micBtn.addEventListener('click', () => (listening ? recog?.stop() : startVoice()));
 
 // ─── voice mode (live, full-duplex) — lazy + isolated so its heavy deps
 // (Three.js / TalkingHead / WebRTC) can't touch the main app's load path ──
@@ -620,14 +599,12 @@ function switchView(name) {
   currentView = name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
-  if (name === 'memory') { memoryView.resize(); if (!memoryView.isLoaded()) memoryView.load(); }
+  if (name === 'memory') { memoryView.refresh(); }
   if (name === 'rewind') rewindView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
   if (name === 'chat') scrollToEnd();
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
-$('#mem-refresh').addEventListener('click', () => memoryView.load(true));
-$('#mem-detail-close').addEventListener('click', () => memoryView.closeDetail());
 
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); switchView('settings'); }
@@ -637,7 +614,6 @@ document.addEventListener('keydown', (e) => {
 });
 window.sunday?.onSwitchView?.((name) => switchView(name));
 window.sunday?.onOpenAdmin?.(() => switchView('settings'));
-window.addEventListener('resize', () => { if (currentView === 'memory') memoryView.resize(); });
 
 // drag & drop (chat only)
 document.addEventListener('dragover', (e) => { if (currentView !== 'chat') return; e.preventDefault(); dropzoneEl.hidden = false; });
