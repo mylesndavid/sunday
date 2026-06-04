@@ -1622,18 +1622,76 @@ class Daemon:
         self.runtime = build_runtime(self.config)
 
     async def _http_memory_facts(self, request: web.Request) -> web.Response:
+        """List facts (newest first), or — when `q` is present — FTS-search
+        them. Powers the "What Sunday Knows" facts pane. `limit` caps the rows."""
         try:
             limit = int(request.query.get("limit", "500"))
         except ValueError:
             limit = 500
-        rows = self.memory.all(limit=limit) if self.memory.available else []
+        limit = max(1, min(limit, 2000))
+        q = (request.query.get("q") or "").strip()
+        if not self.memory.available:
+            rows = []
+        elif q:
+            rows = self.memory.search(q, limit=limit)
+        else:
+            rows = self.memory.all(limit=limit)
         return web.json_response({
             "available": self.memory.available,
+            "total":     self.memory.count() if self.memory.available else 0,
             "facts": [
                 {"id": r.id, "content": r.content, "source": r.source, "created_at": r.created_at}
                 for r in rows
             ],
         })
+
+    async def _http_memory_facts_add(self, request: web.Request) -> web.Response:
+        """Add a fact by hand (the "Add fact" button). Body: {content, source?}.
+        Goes through the same store path the auto-extractor uses, so it lands in
+        core context + gets background-embedded for recall."""
+        if not self.memory.available:
+            return web.json_response({"error": "memory unavailable"}, status=503)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        content = (body.get("content") or "").strip()
+        if not content:
+            return web.json_response({"error": "'content' is required"}, status=400)
+        source = (body.get("source") or "chat").strip() or "chat"
+        mem_id = await self.memory.store(content, source=source)
+        if not mem_id:
+            return web.json_response({"error": "store failed"}, status=500)
+        return web.json_response({"ok": True, "id": mem_id, "content": content, "source": source})
+
+    async def _http_memory_facts_update(self, request: web.Request) -> web.Response:
+        """Edit a fact's text. Body: {content}. Rewrites the row + FTS and drops
+        the stale vector so background indexing re-embeds the new text."""
+        if not self.memory.available:
+            return web.json_response({"error": "memory unavailable"}, status=503)
+        try:
+            mem_id = int(request.match_info["id"])
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid request"}, status=400)
+        content = (body.get("content") or "").strip()
+        if not content:
+            return web.json_response({"error": "'content' is required"}, status=400)
+        if not self.memory.update(mem_id, content):
+            return web.json_response({"error": f"no such fact: {mem_id}"}, status=404)
+        return web.json_response({"ok": True, "id": mem_id, "content": content})
+
+    async def _http_memory_facts_delete(self, request: web.Request) -> web.Response:
+        """Forget a fact (the "Forget" action). DELETE /v1/memory/facts/{id}."""
+        if not self.memory.available:
+            return web.json_response({"error": "memory unavailable"}, status=503)
+        try:
+            mem_id = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "invalid id"}, status=400)
+        if not self.memory.forget(mem_id):
+            return web.json_response({"error": f"no such fact: {mem_id}"}, status=404)
+        return web.json_response({"ok": True, "id": mem_id})
 
     async def _http_memory_graph(self, request: web.Request) -> web.Response:
         from sunday import memory_graph
@@ -2492,6 +2550,10 @@ class Daemon:
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)
         app.router.add_post("/v1/ollama/pull", self._http_ollama_pull)
         app.router.add_get("/v1/memory/facts", self._http_memory_facts)
+        app.router.add_post("/v1/memory/facts", self._http_memory_facts_add)
+        app.router.add_put("/v1/memory/facts/{id:[0-9]+}", self._http_memory_facts_update)
+        app.router.add_post("/v1/memory/facts/{id:[0-9]+}", self._http_memory_facts_update)
+        app.router.add_delete("/v1/memory/facts/{id:[0-9]+}", self._http_memory_facts_delete)
         app.router.add_get("/v1/memory/graph", self._http_memory_graph)
         app.router.add_post("/v1/memory/graph/rebuild", self._http_memory_graph_rebuild)
         app.router.add_get("/v1/skills", self._http_skills_list)

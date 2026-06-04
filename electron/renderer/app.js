@@ -93,6 +93,7 @@ async function refreshLog() {
     // drop transient placeholders; the real rows are about to land
     chatEl.querySelectorAll('.pending, .stream-temp').forEach((n) => n.remove());
     const atBottom = nearBottom();
+    removeLogError();
     if (!msgs.length && renderedIds.size === 0) { renderEmptyState(); bootedChat = true; return; }
     removeSkeleton();
     removeEmpty();
@@ -106,8 +107,29 @@ async function refreshLog() {
     }
     if (!bootedChat || atBottom) scrollToEnd(true);
     bootedChat = true;
-  } catch (err) { console.warn('log fetch failed', err); }
+  } catch (err) {
+    console.warn('log fetch failed', err);
+    // On the FIRST load, a failed fetch leaves the skeleton shimmering forever
+    // (the user thinks it's still loading). Replace it with an explicit failure
+    // + retry. On later refreshes we already have content rendered, so leave it.
+    if (!bootedChat) renderLogError();
+  }
 }
+
+function renderLogError() {
+  removeSkeleton();
+  if (chatEl.querySelector('.log-error')) return;
+  const w = document.createElement('div');
+  w.className = 'log-error';
+  w.innerHTML = `<h2>Couldn't reach Sunday</h2><p>The daemon didn't answer. Check that it's running, then try again.</p>`;
+  const b = document.createElement('button');
+  b.className = 'btn btn-primary';
+  b.textContent = 'Retry';
+  b.onclick = () => { w.remove(); renderSkeleton(); refreshLog(); refreshStatus(); };
+  w.appendChild(b);
+  chatEl.appendChild(w);
+}
+function removeLogError() { chatEl.querySelector('.log-error')?.remove(); }
 
 function connectWs() {
   // The daemon authenticates the WS via ?token= (browsers can't set the
@@ -135,7 +157,12 @@ function handleWs(ev) {
     case 'tool_result':
       if (stream && stream.id === ev.stream_id) finishToolRow(stream, ev); return;
     case 'stream_end':
-      if (stream && stream.id === ev.stream_id) stream.el.classList.remove('streaming');
+      // Only tear down if this end belongs to the stream we're showing. A
+      // stale end for a prior stream (id mismatch) must NOT null out the live
+      // stream, hide Stop, or refreshLog (which would rip down the active
+      // thinking block and drop the in-flight bubble).
+      if (!stream || stream.id !== ev.stream_id) return;
+      stream.el.classList.remove('streaming');
       stream = null; showStop(false); refreshLog(); refreshStatus(); return;
     case 'reply': if (!stream) refreshLog(); return;
     case 'browser_frame': case 'device_browser_frame': case 'device_screen': showLiveFrame(ev); return;
@@ -370,6 +397,19 @@ function autoScroll(force) { if (force || nearBottom()) chatEl.scrollTop = chatE
 chatEl.addEventListener('scroll', () => { jumpBtn.hidden = nearBottom(); });
 jumpBtn.addEventListener('click', () => { scrollToEnd(); jumpBtn.hidden = true; });
 
+// Links rendered inline in the thread (mdLite turns URLs into <a href>) would
+// otherwise navigate the whole Electron window away from the app. Intercept
+// the click and hand the URL to the OS browser instead. (main.js also guards
+// will-navigate as a backstop, but catching it here avoids the flash.)
+chatEl.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!/^https?:\/\//i.test(href)) return;
+  e.preventDefault();
+  window.sunday?.openExternal(href);
+});
+
 function showLiveFrame(ev) {
   removeEmpty();
   const wrap = document.createElement('div'); wrap.className = 'msg system';
@@ -392,12 +432,39 @@ async function send() {
 
   const payload = { text, modality: 'electron' };
   if (pending.length) payload.attachments = pending;
+  // capture what we sent so a failed bubble can be retried with the same content
+  const sentPending = pending.slice();
   composerEl.value = ''; pending = []; renderChips(); resize(); updateSend();
+
+  // Mark this optimistic bubble as failed-to-send with a tap-to-retry
+  // affordance. The composer was already cleared, so retry re-uses the captured
+  // text + attachments rather than reading the (now-empty) input.
+  const markFailed = (reason) => {
+    w.classList.remove('pending', 'steer');
+    w.classList.add('failed');
+    w.title = reason ? `Couldn't send: ${reason}` : "Couldn't send";
+    let note = w.querySelector('.send-fail');
+    if (!note) {
+      note = document.createElement('button');
+      note.type = 'button';
+      note.className = 'send-fail';
+      note.textContent = 'failed — tap to retry';
+      w.appendChild(note);
+    }
+    note.onclick = () => {
+      w.remove();
+      composerEl.value = text;
+      pending = sentPending.slice();
+      renderChips(); resize(); updateSend();
+      send();
+    };
+    scrollToEnd();
+  };
 
   try {
     const res = await fetch(`${DAEMON_HTTP}/v1/say`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const d = await res.json();
-    if (!res.ok) { appendMessage({ role: 'system', content: `Error: ${d.error || res.status}`, created_at: Date.now() / 1000 }); scrollToEnd(); return; }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { markFailed(d.error || res.status); return; }
     // Typed while a task was running → the daemon folded it in as steering
     // (not a new turn). Do NOT refreshLog here: the steer isn't in the server
     // log until the next step, and a rebuild would tear down the live thinking
@@ -405,7 +472,7 @@ async function send() {
     // stream_end refreshLog reconciles it with the real message later.
     if (d.steered) { w.classList.add('steer'); scrollToEnd(); return; }
     setTimeout(refreshLog, 50);
-  } catch (err) { appendMessage({ role: 'system', content: `Network error: ${err.message}`, created_at: Date.now() / 1000 }); scrollToEnd(); }
+  } catch (err) { markFailed(err.message); }
 }
 
 // attachments
@@ -575,18 +642,33 @@ composerEl.addEventListener('paste', async (e) => { const items = e.clipboardDat
 
 // ─── voice mode (live, full-duplex) — lazy + isolated so its heavy deps
 // (Three.js / TalkingHead / WebRTC) can't touch the main app's load path ──
+let _voiceModule = null;
 $('#voice-mode-btn')?.addEventListener('click', async () => {
+  const overlay = $('#voice-overlay');
+  // Wire close BEFORE the dynamic import. If the import (or open) throws, the
+  // catch still reveals the overlay to show the error — so the × must already
+  // close it, otherwise the user is trapped with no escape. The handler hides
+  // the overlay and calls the module's own teardown if it loaded.
+  const closeBtn = $('#voice-close');
+  if (closeBtn && !closeBtn.dataset.wired) {
+    closeBtn.dataset.wired = '1';
+    closeBtn.addEventListener('click', () => {
+      try { _voiceModule?.close(); } catch {}
+      overlay?.classList.remove('open');
+      overlay?.setAttribute('hidden', '');
+    });
+  }
   try {
     const vm = await import('./voice-mode.js');
+    _voiceModule = vm;
     if (vm.isOpen()) return;
     await vm.open({
       daemonHttp: DAEMON_HTTP, daemonToken: DAEMON_TOKEN,
-      overlay: $('#voice-overlay'), avatarMount: $('#voice-avatar'), status: $('#voice-status'),
+      overlay, avatarMount: $('#voice-avatar'), status: $('#voice-status'),
     });
-    $('#voice-close')?.addEventListener('click', () => vm.close(), { once: true });
   } catch (e) {
     const s = $('#voice-status'); if (s) { s.dataset.state = 'fail'; s.textContent = `Voice mode failed to load: ${e.message}`; }
-    $('#voice-overlay')?.removeAttribute('hidden');
+    overlay?.removeAttribute('hidden');
     console.error('voice mode import failed', e);
   }
 });

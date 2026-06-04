@@ -1,7 +1,12 @@
-// Memory tab — Conversations, Atoms, and Meetings panes. (The old
-// force-directed memory map was removed when memory moved to flat facts +
-// hybrid recall; a map of extracted entities no longer reflected how Sunday
-// actually remembers.)
+// Memory tab — "What Sunday Knows". Facts-first: the primary pane is the flat
+// fact store (everything Sunday remembers about you), with Sources (the
+// Conversations + Meetings she derived them from) and Open loops (things she's
+// tracking) as secondary subtabs.
+//
+// (The old force-directed memory map was removed when memory moved to flat
+// facts + hybrid recall; a map of extracted entities no longer reflected how
+// Sunday actually remembers. "Open loops" is the user-facing name for what the
+// code still calls atoms.)
 
 let cfg = null;          // { daemonHttp }
 let els = null;          // dom refs
@@ -9,33 +14,228 @@ let els = null;          // dom refs
 export function init(config, refs) {
   cfg = config; els = refs;
   wireSubtabs();
+  wireFacts();
+  wireSourceToggle();
   refreshAtomCount();
+  refreshFactCount();
 }
 
 // Refresh whatever pane is active — called when the Memory tab is opened.
 export function refresh() {
   const active = document.querySelector('.mem-subtab.active');
-  switchSubtab(active ? active.dataset.mempane : 'conversations');
+  switchSubtab(active ? active.dataset.mempane : 'facts');
 }
 
-// ── Memory sub-tabs (Map / Atoms) ─────────────────────────────────────────
+// ── Memory sub-tabs (Facts / Sources / Open loops) ────────────────────────
 function wireSubtabs() {
   const tabs = document.querySelectorAll('.mem-subtab');
   tabs.forEach((t) => t.addEventListener('click', () => switchSubtab(t.dataset.mempane)));
 }
 function switchSubtab(name) {
   document.querySelectorAll('.mem-subtab').forEach((t) => t.classList.toggle('active', t.dataset.mempane === name));
+  const facts = document.getElementById('mem-pane-facts');
+  const sources = document.getElementById('mem-pane-sources');
   const atoms = document.getElementById('mem-pane-atoms');
-  const convs = document.getElementById('mem-pane-conversations');
-  const mtgs = document.getElementById('mem-pane-meetings');
-  const hideAll = () => { atoms.hidden = true; convs.hidden = true; mtgs.hidden = true; };
+  const hideAll = () => { facts.hidden = true; sources.hidden = true; atoms.hidden = true; };
   if (name === 'atoms') {
     hideAll(); atoms.hidden = false; loadAtoms();
-  } else if (name === 'meetings') {
-    hideAll(); mtgs.hidden = false; loadMeetings();
+  } else if (name === 'sources') {
+    hideAll(); sources.hidden = false; loadActiveSource();
   } else {
-    hideAll(); convs.hidden = false; loadConversations();
+    hideAll(); facts.hidden = false; loadFacts();
   }
+}
+
+// ── Sources subtab: Conversations | Meetings toggle ───────────────────────
+let _activeSource = 'conversations';
+function wireSourceToggle() {
+  document.querySelectorAll('.src-toggle-btn').forEach((b) => {
+    b.addEventListener('click', () => switchSource(b.dataset.src));
+  });
+}
+function switchSource(name) {
+  _activeSource = name === 'meetings' ? 'meetings' : 'conversations';
+  document.querySelectorAll('.src-toggle-btn').forEach((b) => b.classList.toggle('active', b.dataset.src === _activeSource));
+  const conv = document.getElementById('src-conversations');
+  const mtg = document.getElementById('src-meetings');
+  conv.hidden = _activeSource !== 'conversations';
+  mtg.hidden = _activeSource !== 'meetings';
+  loadActiveSource();
+}
+function loadActiveSource() {
+  if (_activeSource === 'meetings') loadMeetings();
+  else loadConversations();
+}
+
+// ── FACTS — the primary "what Sunday knows" pane ──────────────────────────
+let _facts = [];          // last-fetched [{id, content, source, created_at}]
+let _factFilter = '';
+let _factDetailId = null;
+
+function wireFacts() {
+  const search = document.getElementById('facts-search');
+  if (search) search.addEventListener('input', () => { _factFilter = search.value.trim().toLowerCase(); renderFacts(); });
+
+  // Add-fact form
+  const addBtn = document.getElementById('facts-add-btn');
+  const addBox = document.getElementById('facts-add');
+  const addText = document.getElementById('facts-add-text');
+  const addStatus = document.getElementById('facts-add-status');
+  if (addBtn) addBtn.addEventListener('click', () => {
+    const opening = addBox.hidden;
+    addBox.hidden = !opening;
+    if (opening) { addStatus.textContent = ''; addText.value = ''; addText.focus(); }
+  });
+  document.getElementById('facts-add-cancel')?.addEventListener('click', () => { addBox.hidden = true; });
+  document.getElementById('facts-add-save')?.addEventListener('click', async () => {
+    const content = addText.value.trim();
+    if (!content) { addStatus.textContent = 'Type a fact first.'; return; }
+    addStatus.textContent = 'Saving…';
+    try {
+      const r = await fetch(`${cfg.daemonHttp}/v1/memory/facts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, source: 'chat' }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      addText.value = ''; addBox.hidden = true; addStatus.textContent = '';
+      await loadFacts(); refreshFactCount();
+    } catch (e) { addStatus.textContent = `Couldn't save: ${e.message}`; }
+  });
+
+  // Fact detail — back / edit / forget
+  document.getElementById('fact-detail-exit')?.addEventListener('click', closeFactDetail);
+  document.getElementById('fact-edit')?.addEventListener('click', () => setFactEditing(true));
+  document.getElementById('fact-edit-cancel')?.addEventListener('click', () => setFactEditing(false));
+  document.getElementById('fact-save')?.addEventListener('click', saveFactEdit);
+  document.getElementById('fact-forget')?.addEventListener('click', () => toggleForgetConfirm(true));
+  document.getElementById('fact-del-cancel')?.addEventListener('click', () => toggleForgetConfirm(false));
+  document.getElementById('fact-del-go')?.addEventListener('click', forgetFact);
+}
+
+async function loadFacts() {
+  const ul = document.getElementById('facts-list');
+  const empty = document.getElementById('facts-empty');
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/memory/facts?limit=1000`);
+    const d = await r.json();
+    _facts = d.facts || [];
+    renderFacts();
+  } catch (err) {
+    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
+    ul.innerHTML = `<li class="fact-row"><span class="fact-row-text" style="color:var(--error)">couldn't load facts: ${esc(err.message)}</span></li>`;
+  }
+}
+
+function renderFacts() {
+  const ul = document.getElementById('facts-list');
+  const empty = document.getElementById('facts-empty');
+  const countEl = document.getElementById('facts-count');
+  const f = _factFilter;
+  const items = f ? _facts.filter((x) => (x.content || '').toLowerCase().includes(f)) : _facts;
+  // Count reflects the total store, not the filtered view.
+  if (countEl) countEl.textContent = _facts.length ? `${_facts.length} fact${_facts.length > 1 ? 's' : ''}` : '';
+  if (!_facts.length) { empty.hidden = false; ul.innerHTML = ''; return; }
+  empty.hidden = true;
+  if (!items.length) {
+    ul.innerHTML = `<li class="fact-row fact-row-none"><span class="fact-row-text">No facts match “${esc(_factFilter)}”.</span></li>`;
+    return;
+  }
+  ul.innerHTML = items.map((x) => `
+    <li class="fact-row" data-id="${x.id}">
+      <span class="fact-row-text">${esc(x.content || '')}</span>
+      <span class="fact-row-meta">
+        <span class="fact-src" data-src="${esc(srcKind(x.source))}">${esc(srcLabel(x.source))}</span>
+        <span class="fact-age">${esc(ago(x.created_at))}</span>
+      </span>
+    </li>`).join('');
+  ul.querySelectorAll('.fact-row[data-id]').forEach((row) => {
+    row.addEventListener('click', () => openFactDetail(parseInt(row.dataset.id, 10)));
+  });
+}
+
+// Normalize the stored source string into one of the known chips.
+function srcKind(source) {
+  const s = (source || '').toLowerCase();
+  if (s === 'meeting') return 'meeting';
+  if (s === 'chat') return 'chat';
+  if (s === 'tool') return 'tool';
+  return 'auto';   // 'auto', 'observer', anything else
+}
+function srcLabel(source) {
+  return { chat: 'chat', auto: 'auto', meeting: 'meeting', tool: 'tool' }[srcKind(source)];
+}
+
+function openFactDetail(id) {
+  const fact = _facts.find((x) => x.id === id);
+  if (!fact) return;
+  _factDetailId = id;
+  document.getElementById('fact-detail-text').textContent = fact.content || '';
+  document.getElementById('fact-detail-meta').textContent =
+    `${srcLabel(fact.source)} · ${ago(fact.created_at)}`;
+  document.getElementById('fact-edit-text').value = fact.content || '';
+  document.getElementById('fact-edit-status').textContent = '';
+  setFactEditing(false);
+  toggleForgetConfirm(false);
+  document.getElementById('fact-detail').hidden = false;
+}
+function closeFactDetail() {
+  document.getElementById('fact-detail').hidden = true;
+  _factDetailId = null;
+}
+function setFactEditing(on) {
+  document.getElementById('fact-view').hidden = on;
+  document.getElementById('fact-edit-pane').hidden = !on;
+  if (on) { toggleForgetConfirm(false); document.getElementById('fact-edit-text').focus(); }
+}
+function toggleForgetConfirm(on) {
+  const c = document.getElementById('fact-del-confirm');
+  if (c) c.hidden = !on;
+}
+async function saveFactEdit() {
+  if (_factDetailId == null) return;
+  const content = document.getElementById('fact-edit-text').value.trim();
+  const status = document.getElementById('fact-edit-status');
+  if (!content) { status.textContent = 'A fact can\'t be empty.'; return; }
+  status.textContent = 'Saving…';
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/memory/facts/${_factDetailId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    const fact = _facts.find((x) => x.id === _factDetailId);
+    if (fact) fact.content = content;
+    document.getElementById('fact-detail-text').textContent = content;
+    setFactEditing(false);
+    renderFacts();
+  } catch (e) { status.textContent = `Couldn't save: ${e.message}`; }
+}
+async function forgetFact() {
+  if (_factDetailId == null) return;
+  const id = _factDetailId;
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/memory/facts/${id}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    _facts = _facts.filter((x) => x.id !== id);
+    closeFactDetail();
+    renderFacts(); refreshFactCount();
+  } catch (e) {
+    document.getElementById('fact-edit-status').textContent = `Couldn't forget: ${e.message}`;
+    toggleForgetConfirm(false);
+  }
+}
+
+async function refreshFactCount() {
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/memory/facts?limit=1`);
+    const d = await r.json();
+    const s = document.getElementById('mem-facts-count');
+    const n = d.total ?? 0;
+    if (s) { if (n > 0) { s.textContent = n; s.hidden = false; } else s.hidden = true; }
+  } catch {}
 }
 
 // ── Meetings tab ─────────────────────────────────────────────────────────
@@ -85,6 +285,7 @@ async function loadMeetings() {
       card.addEventListener('click', () => openMeetingView(card.dataset.cid));
     });
   } catch (e) {
+    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
     list.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load: ${esc(e.message)}</div></li>`;
   }
 }
@@ -199,9 +400,18 @@ async function stopAndFinalizeMeeting() {
   for (const s of [_mtgSysStream, _mtgMicStream]) { try { s && s.getTracks().forEach((t) => t.stop()); } catch {} }
   _mtgSysRec = _mtgMicRec = _mtgSysStream = _mtgMicStream = null;
   await new Promise((r) => setTimeout(r, 700));   // let last chunks land
-  const r = await window.sunday.meetingFinalize();
-  if (r.ok) { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; loadMeetings(); }
-  else { document.getElementById('mtg-rec-title').textContent = 'Record a meeting'; document.getElementById('mtg-rec-sub').textContent = `Stopped — ${r.error || 'no notes produced'}.`; }
+  // The finalize IPC can reject (transcription crash, daemon down). Without a
+  // catch, the title sticks on "Writing your notes…" forever. Always reset the
+  // record card; surface the failure in the sub-line.
+  try {
+    const r = await window.sunday.meetingFinalize();
+    document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
+    if (r && r.ok) { loadMeetings(); }
+    else { document.getElementById('mtg-rec-sub').textContent = `Stopped — ${(r && r.error) || 'no notes produced'}.`; }
+  } catch (e) {
+    document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
+    document.getElementById('mtg-rec-sub').textContent = `Stopped — couldn't write notes: ${e.message || e}.`;
+  }
 }
 // Tray "Start/Stop meeting" lands here. Main calls this via executeJavaScript
 // with the userGesture flag set, so getDisplayMedia's transient-activation
@@ -288,6 +498,7 @@ async function loadConversations() {
       });
     });
   } catch (err) {
+    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
     ul.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load conversations: ${esc(err.message)}</div></li>`;
   }
 }
@@ -323,6 +534,7 @@ async function loadAtoms() {
         <span class="a-time">${esc(ago(a.updated_at))}</span>
       </li>`).join('');
   } catch (err) {
+    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
     ul.innerHTML = `<li class="atom"><span class="a-text" style="color:var(--error)">couldn't load atoms: ${esc(err.message)}</span></li>`;
   }
 }

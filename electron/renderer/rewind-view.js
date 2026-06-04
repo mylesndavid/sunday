@@ -10,6 +10,7 @@ let idx = 0;
 let playing = false, playTimer = null;
 let loaded = false;
 let imgCache = new Map();
+let showSeq = 0;      // monotonic token; guards async image loads against fast scrubbing
 
 export function init(config, refs) { cfg = config; els = refs; wire(); }
 export function setDaemon(http) { cfg.daemonHttp = http; }
@@ -65,9 +66,15 @@ async function showEmptyState() {
 async function showFrame(i) {
   const f = frames[i];
   if (!f) return;
+  // Sequence guard: fast scrubbing fires many showFrame() calls; an earlier
+  // frame's image (loaded over IPC) can resolve AFTER a later one and clobber
+  // the picture the user is now looking at. Only the most recent call may
+  // write the <img> src. Text/time update synchronously, so they're always current.
+  const seq = ++showSeq;
   els.time.textContent = fmt(f.ts);
   els.ocr.textContent = (f.ocr_text || '').trim() || 'No text was on screen.';
   const url = await imageFor(f.image_path);
+  if (seq !== showSeq) return;   // a newer frame was selected while we awaited — drop this
   if (url) { els.img.src = url; els.img.hidden = false; }
 }
 

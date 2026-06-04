@@ -5,12 +5,12 @@
 
 /* Palette aliases onto the shared design system (theme.css, linked first). */
 :root {
-  --bg-soft:    var(--surface-1);
+  --bg-soft:    var(--surface);
   --bg-soft-2:  var(--surface-2);
   --text-dim:   var(--text-2);
   --text-faint: var(--text-3);
   --user:       var(--accent);
-  --user-fade:  var(--accent-soft);
+  --user-fade:  var(--accent-tint);
   --radius:     var(--r-lg);
 }
 
@@ -268,7 +268,7 @@ kbd {
 .onb-btn:hover { border-color: var(--text-faint); background: var(--bg-soft); }
 .onb-btn.primary {
   background: var(--user);
-  color: var(--on-accent);
+  color: var(--text-on-accent);
   border-color: var(--user);
 }
 .onb-btn.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }

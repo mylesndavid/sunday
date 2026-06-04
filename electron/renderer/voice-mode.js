@@ -154,7 +154,13 @@ async function connectGemini(sdata, ctx) {
       for (const fc of msg.toolCall.functionCalls) await runGeminiTool(fc, ctx);
     }
   });
-  ws.addEventListener('close', () => { if (!session?.closed) session.ctx && (session.ctx.status.dataset.state = 'fail'); });
+  ws.addEventListener('close', () => {
+    // An unexpected drop (not our own teardown) — flip BOTH the color and the
+    // text so the status doesn't keep claiming "Listening" on a dead socket.
+    if (session?.closed) return;
+    const s = session?.ctx?.status;
+    if (s) { s.dataset.state = 'fail'; s.textContent = 'Disconnected — close and reopen voice mode.'; }
+  });
 
   // mic → PCM16/16k → realtimeInput.mediaChunks
   const mic = await navigator.mediaDevices.getUserMedia({ audio: true });

@@ -369,11 +369,51 @@ class Memory:
         ).fetchall()
         return [MemoryRow(id=r[0], content=r[1], source=r[2] or "", created_at=r[3]) for r in rows]
 
+    def update(self, mem_id: int, content: str) -> bool:
+        """Edit a fact's text in place, keeping every index consistent:
+          - rewrite the row's content,
+          - rewrite the FTS row so keyword search reflects the new text,
+          - drop the vector row so background index_pending() re-embeds it
+            (a stale embedding for the old text would poison hybrid recall).
+        Returns False if the id doesn't exist or content is empty."""
+        if not self.available or not self._conn:
+            return False
+        content = (content or "").strip()
+        if not content:
+            return False
+        cur = self._conn.execute(
+            "UPDATE memories SET content = ? WHERE id = ?", (content, mem_id)
+        )
+        if cur.rowcount == 0:
+            return False
+        if self._fts:
+            # FTS5 standalone table — keep it in sync (delete + reinsert is the
+            # simplest correct path; mem_id is UNINDEXED so we target by it).
+            self._conn.execute("DELETE FROM memories_fts WHERE mem_id = ?", (mem_id,))
+            self._conn.execute(
+                "INSERT INTO memories_fts(content, mem_id) VALUES (?, ?)", (content, mem_id)
+            )
+        if self._vec:
+            # Drop the now-stale vector; index_pending() will re-embed the new text.
+            try:
+                self._conn.execute("DELETE FROM memory_vecs_local WHERE memory_id = ?", (mem_id,))
+            except sqlite3.OperationalError:
+                pass   # vec table may not exist yet — nothing to drop
+        self._conn.commit()
+        log.info("memory updated", id=mem_id, preview=content[:60])
+        self._schedule_indexing()
+        return True
+
     def forget(self, mem_id: int) -> bool:
         if not self.available or not self._conn:
             return False
         if self._fts:
             self._conn.execute("DELETE FROM memories_fts WHERE mem_id = ?", (mem_id,))
+        if self._vec:
+            try:
+                self._conn.execute("DELETE FROM memory_vecs_local WHERE memory_id = ?", (mem_id,))
+            except sqlite3.OperationalError:
+                pass
         cur = self._conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
         self._conn.commit()
         return cur.rowcount > 0
