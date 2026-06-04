@@ -1402,22 +1402,28 @@ class Daemon:
         apple = platform.machine() == "arm64"
         installed = bool(shutil.which("ollama")) or Path("/Applications/Ollama.app").exists() \
             or Path("/opt/homebrew/bin/ollama").exists() or Path("/usr/local/bin/ollama").exists()
-        running, have = False, []
+        running, have, oversion = False, [], ""
         try:
             import httpx
             async with httpx.AsyncClient(timeout=1.5) as c:
                 r = await c.get("http://localhost:11434/api/tags")
                 running = r.status_code == 200
                 have = [m.get("name", "") for m in (r.json().get("models") or [])]
+                try:
+                    oversion = (await c.get("http://localhost:11434/api/version")).json().get("version", "")
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:  # noqa: BLE001
             pass
 
         # The Gemma-line ladder. Recommendation gates on hardware; the OPTION
         # is always there — we just don't push local on machines it'd hurt.
+        # NB: there is no bare `gemma4:12b` tag — on Apple Silicon the right
+        # one is the MLX build (and we only recommend local on arm64 anyway).
         if apple and ram_gb >= 16:
             rec = "local"
-            menu = [{"name": "gemma4:12b", "label": "Gemma 4 12B",
-                     "note": "multimodal, 256K context — the one to get", "recommended": True}]
+            menu = [{"name": "gemma4:12b-mlx", "label": "Gemma 4 12B",
+                     "note": "multimodal, 256K context — the one to get (~10GB)", "recommended": True}]
             if ram_gb >= 32:
                 menu.append({"name": "gemma4:26b", "label": "Gemma 4 26B (MoE)",
                              "note": f"bigger brain — comfortable with {ram_gb}GB", "recommended": False})
@@ -1434,7 +1440,7 @@ class Daemon:
         from sunday.embeddings import EMBED_MODEL
         return web.json_response({
             "apple_silicon": apple, "chip": chip, "ram_gb": ram_gb,
-            "ollama": {"installed": installed, "running": running, "models": have},
+            "ollama": {"installed": installed, "running": running, "models": have, "version": oversion},
             "recommendation": rec, "models": menu, "embed_model": EMBED_MODEL,
         })
 
