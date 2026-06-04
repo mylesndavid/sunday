@@ -40,11 +40,8 @@
         </button>
         <input id="file-input" type="file" multiple hidden>
         <textarea id="composer" rows="1" placeholder="Message Sunday…" aria-label="Message"></textarea>
-        <button id="mic-btn" class="iconbtn" title="Voice (one-shot)" aria-label="Voice">
+        <button id="voice-mode-btn" class="iconbtn voice-pill" title="Voice mode" aria-label="Voice mode">
           <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M9 22h6"/></svg>
-        </button>
-        <button id="voice-mode-btn" class="iconbtn voice-pill" title="Voice mode (live)" aria-label="Voice mode">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h.01M12 9v6M16 12h.01"/></svg>
         </button>
         <button id="send-btn" class="send-btn" title="Send (↵)" aria-label="Send" disabled>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
@@ -56,58 +53,27 @@
   <!-- ─── MEMORY ───────────────────────────────────────────────────── -->
   <section class="view view-memory" id="view-memory">
     <nav class="mem-subtabs" id="mem-subtabs">
-      <button class="mem-subtab active" data-mempane="map">Map</button>
+      <button class="mem-subtab active" data-mempane="conversations">
+        Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
+      </button>
       <button class="mem-subtab" data-mempane="atoms">
         Atoms <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
-      </button>
-      <button class="mem-subtab" data-mempane="conversations">
-        Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
       </button>
       <button class="mem-subtab" data-mempane="meetings">
         Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
       </button>
     </nav>
-    <div class="mem-stage" id="mem-pane-map">
-      <canvas id="mem-canvas"></canvas>
-      <div class="mem-legend" id="mem-legend"></div>
-      <button class="mem-refresh" id="mem-refresh" title="Refresh map">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-        <span>Refresh</span>
-      </button>
-      <div class="mem-empty" id="mem-empty" hidden>
-        <div class="mem-empty-sun"></div>
-        <h2>Nothing mapped yet</h2>
-        <p>As you talk, Sunday builds a map of the people, places, and things in your life. Chat a little and check back.</p>
-      </div>
-    </div>
-    <aside class="mem-detail" id="mem-detail" hidden>
-      <button class="mem-detail-close iconbtn" id="mem-detail-close" aria-label="Close">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button>
-      <div class="mem-detail-head">
-        <span class="mem-chip" id="mem-detail-kind">—</span>
-        <h2 id="mem-detail-name">—</h2>
-      </div>
-      <div class="mem-detail-section">
-        <h3>What I know</h3>
-        <ul class="mem-facts" id="mem-detail-facts"></ul>
-      </div>
-      <div class="mem-detail-section">
-        <h3>Connected to</h3>
-        <ul class="mem-conns" id="mem-detail-conns"></ul>
-      </div>
-    </aside>
-    <div class="atoms-pane" id="mem-pane-atoms" hidden>
+        <div class="atoms-pane" id="mem-pane-atoms" hidden>
       <div class="atoms-empty" id="atoms-empty" hidden>
         <h2>No atoms yet</h2>
         <p>As Sunday observes what you're doing, open threads, commitments, and decisions show up here.</p>
       </div>
       <ul class="atoms-list" id="atoms-list"></ul>
     </div>
-    <div class="atoms-pane" id="mem-pane-conversations" hidden>
+    <div class="atoms-pane" id="mem-pane-conversations">
       <div class="atoms-empty" id="conv-empty" hidden>
         <h2>No conversations yet</h2>
-        <p>Turn on the ambient observer in Settings and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
+        <p>Turn on Background listening in Settings → Voice &amp; capture and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
       </div>
       <ul class="conv-list" id="conv-list"></ul>
     </div>
