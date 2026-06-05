@@ -148,7 +148,7 @@
       </div>
     </section>
 
-    <!-- Step: give Sunday a browser (Playwright extension) -->
+    <!-- Step: give Sunday a browser (Cockpit extension) -->
     <section class="onb-step" data-step="browser" hidden>
       <h1>Give Sunday a browser.</h1>
       <p class="lede">
@@ -157,12 +157,15 @@
         sandbox, not a scraper. Your actual Chrome, doing what you'd do.
       </p>
       <p class="lede">
-        Two steps: install the small browser extension, then paste the token it shows you.
+        Two steps: install the small Cockpit extension, then paste the token it shows you.
       </p>
       <div class="onb-actions" style="justify-content:flex-start">
-        <button class="onb-btn" id="onb-pw-install">Install the extension</button>
+        <button class="onb-btn" id="onb-pw-install">Show me the extension</button>
       </div>
-      <div class="onb-pw-hint" id="onb-pw-hint">Click the extension in Chrome, copy the token it shows, and paste it here.</div>
+      <div class="onb-pw-hint" id="onb-pw-hint">
+        Drag this folder onto the <code>chrome://extensions</code> page (turn Developer mode on first),
+        then paste the token the extension shows.
+      </div>
       <input type="text" id="onb-pw-token" placeholder="paste token from the extension" class="onb-input" autocomplete="off" spellcheck="false">
       <div class="onb-verify" id="onb-pw-verify" hidden></div>
       <div class="onb-actions">

@@ -1,0 +1,16 @@
+/* Sunday Cockpit overlay styles. Most styling is inline (to resist host CSS),
+   this file just protects the overlay root and adds a subtle pulse. */
+#__copilot_agent_overlay_root,
+#__copilot_agent_overlay_root * {
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+#__copilot_agent_overlay_root .__copilot_box {
+  animation: __copilot_pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes __copilot_pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

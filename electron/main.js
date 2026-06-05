@@ -556,6 +556,21 @@ ipcMain.handle('sunday:open-external', (_evt, url) => {
   try { shell.openExternal(String(url)); return true; } catch { return false; }
 });
 
+// Reveal the bundled Cockpit extension folder in Finder so the user can drag
+// it onto chrome://extensions. Packaged: it ships under Resources/extension;
+// dev: it lives at repo-root ../extension relative to this file.
+ipcMain.handle('sunday:reveal-extension', () => {
+  try {
+    const dir = app.isPackaged
+      ? path.join(process.resourcesPath, 'extension')
+      : path.join(__dirname, '..', 'extension');
+    shell.showItemInFolder(dir);
+    return { ok: true, path: dir };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
 ipcMain.on('sunday:overlay-state', (_evt, state) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('sunday:overlay-state', state);

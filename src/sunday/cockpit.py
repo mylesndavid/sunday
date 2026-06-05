@@ -166,6 +166,23 @@ class CockpitBridge:
 
     # ── server-side WS handler ──────────────────────────────────────────────
 
+    async def _handle_say(self, ws: web.WebSocketResponse, text: str) -> None:
+        """Side-panel chat: run a normal Sunday turn and push the reply back
+        over the socket. Protocol v1.1: {event:'say'} in, {event:'thinking'}
+        then {event:'reply', text} out."""
+        try:
+            await ws.send_json({"event": "thinking"})
+        except Exception:  # noqa: BLE001 — socket died; the turn is pointless
+            return
+        try:
+            reply = await self.say_handler(text)
+        except Exception as exc:  # noqa: BLE001
+            reply = f"that didn't work: {exc}"
+        try:
+            await ws.send_json({"event": "reply", "text": reply or ""})
+        except Exception:  # noqa: BLE001
+            log.warning("cockpit: reply push failed (socket closed mid-turn)")
+
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Accept the extension's outbound connection.
 
@@ -213,7 +230,7 @@ class CockpitBridge:
                         asyncio.create_task(self._handle_say(ws, text))
                     continue
                 if evt:
-                    log.debug("cockpit event", event=evt)
+                    log.debug("cockpit event", evt=evt)
                     continue
         finally:
             self._clear_socket(ws)
@@ -499,20 +516,3 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         }, "required": ["message"]},
         run=_t_instruct_user,
     ))
-
-    async def _handle_say(self, ws: web.WebSocketResponse, text: str) -> None:
-        """Side-panel chat: run a normal Sunday turn and push the reply back
-        over the socket. Protocol v1.1: {event:'say'} in, {event:'thinking'}
-        then {event:'reply', text} out."""
-        try:
-            await ws.send_json({"event": "thinking"})
-        except Exception:  # noqa: BLE001 — socket died; the turn is pointless
-            return
-        try:
-            reply = await self.say_handler(text)
-        except Exception as exc:  # noqa: BLE001
-            reply = f"that didn't work: {exc}"
-        try:
-            await ws.send_json({"event": "reply", "text": reply or ""})
-        except Exception:  # noqa: BLE001
-            log.warning("cockpit: reply push failed (socket closed mid-turn)")

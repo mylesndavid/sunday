@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      :root {
+        --bg: #0e0e12; --bg-2: #16161d; --bg-3: #1d1d27; --border: #2a2a36;
+        --text: #ececf2; --muted: #8b8b9a; --ok: #22c55e; --warn: #ffb020;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; width: 320px; background: var(--bg); color: var(--text);
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .wrap { padding: 16px; }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+      .status { display: flex; align-items: center; gap: 8px; background: var(--bg-2);
+        border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); flex: 0 0 auto; }
+      .dot.connected { background: var(--ok); }
+      .status .label { font-weight: 600; }
+      .status .detail { color: var(--muted); font-size: 12px; }
+      .tokenbox { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px 12px; margin-bottom: 12px; }
+      .tokenbox .head { font-weight: 600; font-size: 12px; margin-bottom: 6px; }
+      .row { display: flex; gap: 6px; }
+      input#token { flex: 1; min-width: 0; background: var(--bg); color: var(--text);
+        border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+      button { background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
+        border-radius: 7px; padding: 7px 10px; font: 600 12px/1.4 inherit; cursor: pointer; white-space: nowrap; }
+      button:hover { filter: brightness(1.15); }
+      .hint { color: var(--muted); font-size: 11px; margin-top: 6px; }
+      .foot { display: flex; justify-content: space-between; align-items: center; }
+      .linkish { background: none; border: none; color: var(--muted); padding: 0; cursor: pointer;
+        font: 12px/1.4 inherit; text-decoration: underline; }
+      .linkish:hover { color: var(--text); filter: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Sunday Cockpit</h1>
+      <p class="sub">Lets Sunday work in this browser with you.</p>
+
+      <div class="status">
+        <span class="dot" id="dot"></span>
+        <div>
+          <div class="label" id="statusLabel">Checking…</div>
+          <div class="detail" id="statusDetail"></div>
+        </div>
+      </div>
+
+      <div class="tokenbox">
+        <div class="head">Pairing token</div>
+        <div class="row">
+          <input id="token" readonly />
+          <button id="copy">Copy</button>
+        </div>
+        <div class="hint">Paste this into Sunday when it asks to connect your browser.</div>
+      </div>
+
+      <div class="foot">
+        <button class="linkish" id="chat">Chat</button>
+        <button class="linkish" id="regenerate">New token</button>
+        <button class="linkish" id="options">Options</button>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

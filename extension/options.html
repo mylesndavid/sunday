@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sunday Cockpit — Options</title>
+    <style>
+      :root {
+        --bg: #0e0e12; --bg-2: #16161d; --bg-3: #1d1d27; --border: #2a2a36;
+        --text: #ececf2; --muted: #8b8b9a; --ok: #22c55e;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text);
+        font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .wrap { max-width: 520px; margin: 0 auto; padding: 32px 20px 60px; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      .sub { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+      .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+      .card h2 { font-size: 14px; margin: 0 0 4px; }
+      .card .cardsub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+      input { width: 100%; background: var(--bg); color: var(--text);
+        border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font: inherit; outline: none; }
+      input:focus { border-color: var(--muted); }
+      .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+      .actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+      .btn { border: 1px solid var(--border); border-radius: 10px; padding: 11px 18px;
+        font: 600 14px/1 inherit; cursor: pointer; background: var(--bg-3); color: var(--text); }
+      .btn:hover { filter: brightness(1.15); }
+      .saved { color: var(--ok); font-size: 13px; opacity: 0; transition: opacity .2s; }
+      .saved.show { opacity: 1; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Sunday Cockpit options</h1>
+      <p class="sub">The pairing token lives in the extension popup. This page only configures how the extension finds Sunday.</p>
+
+      <div class="card">
+        <h2>Sunday port</h2>
+        <p class="cardsub">The local port Sunday's daemon listens on. Leave as 8765 unless Sunday says otherwise.</p>
+        <input id="port" type="number" min="1" max="65535" placeholder="8765" />
+        <div class="hint">The extension connects to 127.0.0.1 only — nothing leaves this machine.</div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="save">Save</button>
+        <span class="saved" id="saved">Saved</span>
+      </div>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>
