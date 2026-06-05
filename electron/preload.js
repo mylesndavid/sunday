@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('sunday', {
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
   revealExtension: () => ipcRenderer.invoke('sunday:reveal-extension'),
+  openChromeExtensions: () => ipcRenderer.invoke('sunday:open-chrome-extensions'),
   notchMetrics: () => ipcRenderer.invoke('sunday:notch-metrics'),
   notchMode: (mode) => ipcRenderer.send('sunday:notch-mode', mode),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),

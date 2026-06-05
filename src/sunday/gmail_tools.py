@@ -142,33 +142,25 @@ def _do_search(address: str, password: str, query: str, limit: int) -> dict[str,
         ids = ids[::-1][:limit]  # newest first
         out: list[dict[str, Any]] = []
         for uid in ids:
+            # Headers only — X-GM-SNIPPET is NOT a real Gmail IMAP extension
+            # (only X-GM-MSGID/THRID/LABELS/RAW exist); asking for it made the
+            # server reject the whole FETCH with BAD "Could not parse command".
+            # gmail_read fetches the body for any hit worth opening.
             typ, msg_data = imap.fetch(
-                uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] X-GM-SNIPPET)"
+                uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])"
             )
             if typ != "OK" or not msg_data:
                 continue
             header_bytes = b""
-            snippet = ""
             for chunk in msg_data:
                 if isinstance(chunk, tuple) and len(chunk) == 2:
-                    meta = (chunk[0] or b"").decode("utf-8", errors="replace")
                     header_bytes += chunk[1] or b""
-                    # X-GM-SNIPPET rides in the metadata segment as
-                    # X-GM-SNIPPET "..." — pull it if present.
-                    if "X-GM-SNIPPET" in meta:
-                        start = meta.find("X-GM-SNIPPET")
-                        seg = meta[start:]
-                        q1 = seg.find('"')
-                        q2 = seg.find('"', q1 + 1)
-                        if q1 != -1 and q2 != -1:
-                            snippet = seg[q1 + 1:q2]
             parsed = email.message_from_bytes(header_bytes)
             out.append({
                 "id": uid.decode("ascii", errors="replace"),
                 "from": _decode(parsed.get("From")),
                 "subject": _decode(parsed.get("Subject")) or "(no subject)",
                 "date": _decode(parsed.get("Date")),
-                "snippet": snippet,
             })
         return {"messages": out, "count": len(out)}
     finally:

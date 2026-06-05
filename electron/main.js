@@ -571,6 +571,22 @@ ipcMain.handle('sunday:reveal-extension', () => {
   }
 });
 
+// Open chrome://extensions in the user's Chrome. `open -a Chrome chrome://…`
+// is silently swallowed (Chrome refuses chrome:// URLs from the OS), but the
+// AppleScript tab API sets the URL through Chrome's own scripting interface,
+// which is allowed. First use triggers the one-time "Sunday wants to control
+// Google Chrome" Automation prompt.
+ipcMain.handle('sunday:open-chrome-extensions', () => new Promise((resolve) => {
+  const script = 'tell application "Google Chrome"\n'
+    + 'if (count of windows) = 0 then make new window\n'
+    + 'set URL of active tab of front window to "chrome://extensions/"\n'
+    + 'activate\n'
+    + 'end tell';
+  require('node:child_process').execFile('osascript', ['-e', script], { timeout: 15000 }, (err) => {
+    resolve(err ? { ok: false, error: String(err.message || err) } : { ok: true });
+  });
+}));
+
 ipcMain.on('sunday:overlay-state', (_evt, state) => {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.webContents.send('sunday:overlay-state', state);

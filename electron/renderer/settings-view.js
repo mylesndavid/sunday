@@ -433,14 +433,21 @@ async function saveGmailCreds() {
 // Cockpit (the user's real logged-in Chrome via the extension). Saves the
 // COCKPIT_TOKEN credential through the standard saveBrain({credentials}) path;
 // status reflects whether the daemon has the token and a live extension socket.
+// While the settings view is open we poll so "Connected" appears the moment
+// the extension dials in — pairing has no other feedback channel.
+let cockpitPollTimer = null;
 async function loadCockpitStatus() {
   const line = $('#cockpit-status'); if (!line) return;
+  if (!cockpitPollTimer) cockpitPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    loadCockpitStatus();
+  }, 4000);
   let d;
   try { d = await (await fetch(`${DAEMON_HTTP}/v1/cockpit/status`)).json(); }
   catch { line.dataset.state = ''; line.textContent = ''; return; }
-  if (!d.paired) { line.dataset.state = ''; line.textContent = 'Not paired'; return; }
-  if (d.connected) { line.dataset.state = 'ok'; line.textContent = 'Connected'; }
-  else { line.dataset.state = 'wait'; line.textContent = 'Paired — waiting for the extension'; }
+  if (!d.paired) { line.dataset.state = ''; line.textContent = 'Not paired — extension installed? Paste its token above.'; return; }
+  if (d.connected) { line.dataset.state = 'ok'; line.textContent = 'Connected — Sunday has hands in your browser'; }
+  else { line.dataset.state = 'wait'; line.textContent = 'Token saved — waiting for the extension to dial in…'; }
 }
 
 async function saveCockpitToken() {
@@ -1292,15 +1299,27 @@ function wire() {
     } catch (err) { setCodexStatus(err.message || 'Sign-in failed', 'fail'); }
   });
 
-  // Gmail (app password) card — save on Enter in either field; open Google's
+  // Gmail (app password) card — Save button (Enter still works); open Google's
   // app-password page; status reflects the daemon's quick IMAP login probe.
   $('#gmail-apppw-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://myaccount.google.com/apppasswords'); });
+  $('#gmail-save')?.addEventListener('click', () => saveGmailCreds());
   ['#gmail-address', '#gmail-password'].forEach((sel) => {
     $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveGmailCreds(); } });
   });
 
-  // Cockpit (browser extension) card — save the pairing token on Enter; status
-  // reflects whether the daemon is paired and has a live extension socket.
+  // Cockpit (browser extension) card — the full pairing flow lives here:
+  // reveal the bundled extension folder, deep-link chrome://extensions (via
+  // AppleScript in the main process — Chrome refuses chrome:// from `open`),
+  // then Connect saves the pasted token (Enter still works too).
+  $('#cockpit-reveal')?.addEventListener('click', () => window.sunday.revealExtension());
+  $('#cockpit-open-chrome')?.addEventListener('click', async () => {
+    const r = await window.sunday.openChromeExtensions().catch(() => ({ ok: false }));
+    if (!r?.ok) {
+      const line = $('#cockpit-status');
+      if (line) { line.dataset.state = 'wait'; line.textContent = 'Couldn’t drive Chrome — open chrome://extensions yourself.'; }
+    }
+  });
+  $('#cockpit-connect')?.addEventListener('click', () => saveCockpitToken());
   $('#cockpit-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveCockpitToken(); } });
 
   // Ollama wizard buttons
