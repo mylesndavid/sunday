@@ -236,9 +236,19 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 
   // Open external links in the user's real browser, not inside the app.
+  // setWindowOpenHandler only covers window.open / target=_blank. An inline
+  // <a href> in the chat thread triggers a top-level navigation instead, which
+  // would replace the whole renderer (blank app, lost session). Catch that via
+  // will-navigate: anything that isn't our own file:// document is sent to the
+  // real browser and the in-window navigation is cancelled.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url.startsWith('file://')) return;   // our own app shell — allow
+    event.preventDefault();
+    shell.openExternal(url);
   });
 }
 
