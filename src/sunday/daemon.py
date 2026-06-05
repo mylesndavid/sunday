@@ -26,6 +26,7 @@ from aiohttp import web
 from sunday import __version__
 from sunday.brain import respond
 from sunday.chat import Chat
+from sunday.cockpit import CockpitBridge
 from sunday.config import load_config
 from sunday.devices.manager import DeviceManager
 from sunday.ipc import IpcError, read_json, write_json
@@ -129,7 +130,10 @@ def get_or_create_auth_token() -> str:
 # handshake — it already sends `Bearer <token>`. Letting it ride the normal
 # middleware means an unauthenticated peer can't register a device, hijack a
 # device_id, or feed the brain forged tool results over a public daemon.
-_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws")
+# /v1/cockpit/ws is exempt for the same reason as /v1/ws: the Cockpit browser
+# extension can't set our Authorization header on the WS handshake, so the
+# handler enforces the COCKPIT_TOKEN credential via the ?token= query param.
+_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/cockpit/ws")
 
 
 @web.middleware
@@ -218,6 +222,17 @@ class Daemon:
         # Tools find_tools has activated this session (beyond the core set).
         self._active_tools: set[str] = set()
         self.devices = DeviceManager(broadcast=self._broadcast_lazy)
+        # Bridge to the user's real logged-in Chrome via the Cockpit extension.
+        # Holds the single live extension WS; tools route through it.
+        self.cockpit = CockpitBridge()
+
+        async def _cockpit_say(text: str) -> str:
+            # Side-panel chat rides the normal turn path (turn lock, memory,
+            # broadcast) — the reply ALSO lands in the app via _broadcast, so
+            # the two surfaces never diverge.
+            out = await self._say(text, "cockpit", None)
+            return (out or {}).get("reply") or ""
+        self.cockpit.say_handler = _cockpit_say
         self._unix_server: asyncio.Server | None = None
         self._http_runner: web.AppRunner | None = None
         self._ws_clients: set[web.WebSocketResponse] = set()
@@ -326,6 +341,7 @@ class Daemon:
                 extras={
                     "broadcast": self._broadcast,
                     "devices":   self.devices,
+                    "cockpit":   self.cockpit,
                     "memory":    self.memory,
                     "runtime":       self.runtime,
                     # tiered tools: lean core + whatever find_tools has pulled in
@@ -1547,6 +1563,17 @@ class Daemon:
             self._gmail_login_ok = {"address": address, "ok": True}
         return web.json_response({"configured": True, "address": address, "ok": ok})
 
+    async def _http_cockpit_status(self, request: web.Request) -> web.Response:
+        """Cockpit pairing + connection state for the Settings card.
+
+        paired    — a COCKPIT_TOKEN credential is set (the user pasted the token).
+        connected — the extension's WebSocket is live right now.
+        """
+        return web.json_response({
+            "paired": self.cockpit.paired(),
+            "connected": self.cockpit.connected,
+        })
+
     async def _start_codex_callback(self) -> None:
         """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
         catches the OAuth redirect. Torn down once we have the code."""
@@ -2301,7 +2328,8 @@ class Daemon:
         if tool is None:
             return web.json_response({"error": f"unknown tool '{name}'"}, status=404)
         ctx = ToolContext(chat=self.chat, config=self.config, modality="voice", extras={
-            "broadcast": self._broadcast, "devices": self.devices, "memory": self.memory,
+            "broadcast": self._broadcast, "devices": self.devices, "cockpit": self.cockpit,
+            "memory": self.memory,
             "runtime": self.runtime, "registry": self.registry, "active_tools": self._active_tools,
             "inject_and_wake": self._inject_and_wake,
         })
@@ -2545,6 +2573,7 @@ class Daemon:
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
+        app.router.add_get("/v1/cockpit/status", self._http_cockpit_status)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)
@@ -2593,6 +2622,9 @@ class Daemon:
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)
+        # The Cockpit browser extension connects OUT to here (auth via ?token=
+        # against COCKPIT_TOKEN — exempt from the bearer middleware).
+        app.router.add_get("/v1/cockpit/ws", self.cockpit.handle_ws)
         # Catch-all webhook dispatcher — modules register paths in _webhooks.
         app.router.add_post("/webhooks/{name}", self._webhook_dispatch)
         return app

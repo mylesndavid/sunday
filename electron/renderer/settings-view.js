@@ -75,6 +75,7 @@ export async function loadAll() {
   loadConnections();
   loadMcp();
   loadGmailStatus();
+  loadCockpitStatus();
   loadMemorySummary();
   loadSkills();
   updateOverview();
@@ -424,6 +425,36 @@ async function saveGmailCreds() {
     await saveBrain({ credentials: { GMAIL_ADDRESS: address, GMAIL_APP_PASSWORD: password } });
     if ($('#gmail-password')) $('#gmail-password').value = '';   // don't keep the secret on screen
     await loadGmailStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+// Cockpit (the user's real logged-in Chrome via the extension). Saves the
+// COCKPIT_TOKEN credential through the standard saveBrain({credentials}) path;
+// status reflects whether the daemon has the token and a live extension socket.
+async function loadCockpitStatus() {
+  const line = $('#cockpit-status'); if (!line) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/cockpit/status`)).json(); }
+  catch { line.dataset.state = ''; line.textContent = ''; return; }
+  if (!d.paired) { line.dataset.state = ''; line.textContent = 'Not paired'; return; }
+  if (d.connected) { line.dataset.state = 'ok'; line.textContent = 'Connected'; }
+  else { line.dataset.state = 'wait'; line.textContent = 'Paired — waiting for the extension'; }
+}
+
+async function saveCockpitToken() {
+  const token = $('#cockpit-token')?.value.trim() || '';
+  const line = $('#cockpit-status');
+  if (!token) {
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'Paste the token the extension shows.'; }
+    return;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  try {
+    await saveBrain({ credentials: { COCKPIT_TOKEN: token } });
+    if ($('#cockpit-token')) $('#cockpit-token').value = '';   // don't keep the secret on screen
+    await loadCockpitStatus();
   } catch (err) {
     if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
   }
@@ -1267,6 +1298,10 @@ function wire() {
   ['#gmail-address', '#gmail-password'].forEach((sel) => {
     $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveGmailCreds(); } });
   });
+
+  // Cockpit (browser extension) card — save the pairing token on Enter; status
+  // reflects whether the daemon is paired and has a live extension socket.
+  $('#cockpit-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveCockpitToken(); } });
 
   // Ollama wizard buttons
   $('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));
