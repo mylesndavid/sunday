@@ -52,14 +52,14 @@
 
   <!-- ─── MEMORY — "What Sunday Knows" ─────────────────────────────── -->
   <section class="view view-memory" id="view-memory">
-    <nav class="mem-subtabs" id="mem-subtabs">
-      <button class="mem-subtab active" data-mempane="facts">
+    <nav class="mem-subtabs" id="mem-subtabs" role="tablist" aria-label="Memory views">
+      <button class="mem-subtab active" data-mempane="facts" role="tab" aria-selected="true">
         Facts <span class="mem-subtab-count" id="mem-facts-count" hidden></span>
       </button>
-      <button class="mem-subtab" data-mempane="sources">
+      <button class="mem-subtab" data-mempane="sources" role="tab" aria-selected="false">
         Sources
       </button>
-      <button class="mem-subtab" data-mempane="atoms">
+      <button class="mem-subtab" data-mempane="atoms" role="tab" aria-selected="false">
         Open loops <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
       </button>
     </nav>
@@ -127,11 +127,11 @@
 
     <!-- SOURCES — Conversations + Meetings merged under one subtab -->
     <div class="atoms-pane" id="mem-pane-sources" hidden>
-      <nav class="src-toggle" id="src-toggle" role="group" aria-label="Source kind">
-        <button type="button" class="src-toggle-btn active" data-src="conversations">
+      <nav class="src-toggle" id="src-toggle" role="tablist" aria-label="Source kind">
+        <button type="button" class="src-toggle-btn active" data-src="conversations" role="tab" aria-selected="true">
           Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
         </button>
-        <button type="button" class="src-toggle-btn" data-src="meetings">
+        <button type="button" class="src-toggle-btn" data-src="meetings" role="tab" aria-selected="false">
           Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
         </button>
       </nav>

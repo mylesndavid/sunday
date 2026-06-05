@@ -32,18 +32,26 @@ function wireSubtabs() {
   tabs.forEach((t) => t.addEventListener('click', () => switchSubtab(t.dataset.mempane)));
 }
 function switchSubtab(name) {
-  document.querySelectorAll('.mem-subtab').forEach((t) => t.classList.toggle('active', t.dataset.mempane === name));
-  const facts = document.getElementById('mem-pane-facts');
-  const sources = document.getElementById('mem-pane-sources');
-  const atoms = document.getElementById('mem-pane-atoms');
-  const hideAll = () => { facts.hidden = true; sources.hidden = true; atoms.hidden = true; };
-  if (name === 'atoms') {
-    hideAll(); atoms.hidden = false; loadAtoms();
-  } else if (name === 'sources') {
-    hideAll(); sources.hidden = false; loadActiveSource();
-  } else {
-    hideAll(); facts.hidden = false; loadFacts();
-  }
+  const pane = ['facts', 'sources', 'atoms'].includes(name) ? name : 'facts';
+  document.querySelectorAll('.mem-subtab').forEach((t) => {
+    const selected = t.dataset.mempane === pane;
+    t.classList.toggle('active', selected);
+    t.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+
+  const panes = {
+    facts: document.getElementById('mem-pane-facts'),
+    sources: document.getElementById('mem-pane-sources'),
+    atoms: document.getElementById('mem-pane-atoms'),
+  };
+  Object.values(panes).forEach((el) => { if (el) el.hidden = true; });
+  if (pane !== 'facts') closeFactDetail();
+  if (pane !== 'sources') closeMeetingView();
+
+  panes[pane].hidden = false;
+  if (pane === 'atoms') loadAtoms();
+  else if (pane === 'sources') loadActiveSource();
+  else loadFacts();
 }
 
 // ── Sources subtab: Conversations | Meetings toggle ───────────────────────
@@ -55,11 +63,16 @@ function wireSourceToggle() {
 }
 function switchSource(name) {
   _activeSource = name === 'meetings' ? 'meetings' : 'conversations';
-  document.querySelectorAll('.src-toggle-btn').forEach((b) => b.classList.toggle('active', b.dataset.src === _activeSource));
+  document.querySelectorAll('.src-toggle-btn').forEach((b) => {
+    const selected = b.dataset.src === _activeSource;
+    b.classList.toggle('active', selected);
+    b.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
   const conv = document.getElementById('src-conversations');
   const mtg = document.getElementById('src-meetings');
   conv.hidden = _activeSource !== 'conversations';
   mtg.hidden = _activeSource !== 'meetings';
+  if (_activeSource !== 'meetings') closeMeetingView();
   loadActiveSource();
 }
 function loadActiveSource() {
@@ -180,7 +193,8 @@ function openFactDetail(id) {
   document.getElementById('fact-detail').hidden = false;
 }
 function closeFactDetail() {
-  document.getElementById('fact-detail').hidden = true;
+  const detail = document.getElementById('fact-detail');
+  if (detail) detail.hidden = true;
   _factDetailId = null;
 }
 function setFactEditing(on) {
@@ -308,6 +322,10 @@ function setMeetingRecordingUI(recording, since) {
   }
 }
 // Full meeting view — pops over the tab, Exit to close.
+function closeMeetingView() {
+  const view = document.getElementById('mtg-view');
+  if (view) view.hidden = true;
+}
 async function openMeetingView(cid) {
   const view = document.getElementById('mtg-view');
   view.hidden = false;
@@ -418,7 +436,10 @@ async function stopAndFinalizeMeeting() {
 // requirement is satisfied even though the click was in the menu bar. Brings
 // the Meetings tab forward first so you can see the recording state.
 window.__sundayTrayMeeting = async function () {
-  try { switchSubtab('meetings'); } catch {}
+  try {
+    switchSubtab('sources');
+    switchSource('meetings');
+  } catch {}
   // Make sure the record card is wired + state is fresh, then toggle.
   try { await loadMeetings(); } catch {}
   return toggleMeetingRecording();
