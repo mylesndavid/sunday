@@ -189,6 +189,23 @@ class CockpitBridge:
         except Exception:  # noqa: BLE001
             log.warning("cockpit: reply push failed (socket closed mid-turn)")
 
+    async def handle_precheck(self, request: web.Request) -> web.Response:
+        """Quiet HTTP twin of the WS handshake auth.
+
+        The extension calls this before opening the WebSocket: a rejected WS
+        handshake lands in Chrome's extension Errors list as a red entry the
+        user reads as breakage, while a caught fetch() logs nothing. Same
+        ?token= check as handle_ws, same last_reject bookkeeping so the
+        Settings card's token_mismatch hint fires for quiet knocks too.
+        """
+        import time as _time
+        token = request.query.get("token", "")
+        expected = get_credential("COCKPIT_TOKEN") or ""
+        if not expected or not token or not hmac.compare_digest(token, expected):
+            self.last_reject = _time.monotonic()
+            return web.json_response({"ok": False})
+        return web.json_response({"ok": True})
+
     async def handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         """Accept the extension's outbound connection.
 
