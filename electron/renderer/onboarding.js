@@ -283,8 +283,13 @@ async function pollCockpitConnected(maxSec) {
 
 $('#onb-pw-install')?.addEventListener('click', async (e) => {
   e.preventDefault();
-  try { await window.sunday.revealExtension(); }
-  catch { window.sunday.openExternal('chrome://extensions'); }
+  try { await window.sunday.revealExtension(); } catch { /* hint text covers it */ }
+});
+// Deep-link chrome://extensions via the main process (AppleScript — Chrome
+// swallows chrome:// URLs from openExternal, so that's not a usable fallback).
+$('#onb-pw-chrome')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  try { await window.sunday.openChromeExtensions(); } catch { /* hint text covers it */ }
 });
 $('#onb-pw-skip')?.addEventListener('click', () => showStep('done'));
 $('#onb-pw-connect')?.addEventListener('click', async () => {

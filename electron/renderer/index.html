@@ -403,12 +403,18 @@
           <div class="set-panel">
             <div class="brain-label">Cockpit (your browser)</div>
             <div class="mcp-bi" id="cockpit-card">
-              <label class="set-field">
-                <span class="set-field-l">Pairing token</span>
-                <input type="password" id="cockpit-token" class="field mono" placeholder="paste the token the extension shows" autocomplete="off" spellcheck="false">
-              </label>
-              <p class="set-help set-help-tight">Install the Cockpit extension (chrome://extensions → Load unpacked → the extension folder), then paste the token it shows.</p>
+              <p class="set-help set-help-tight">Sunday drives your real Chrome — logged in as you. One-time setup:</p>
               <div class="set-actions">
+                <button type="button" class="btn" id="cockpit-reveal">1 · Show me the extension</button>
+                <button type="button" class="btn" id="cockpit-open-chrome">2 · Open chrome://extensions</button>
+              </div>
+              <p class="set-help set-help-tight">Turn on <strong>Developer mode</strong> (top-right), drag the folder onto the page, then click the Cockpit icon and copy the token it shows.</p>
+              <label class="set-field">
+                <span class="set-field-l">3 · Pairing token</span>
+                <input type="password" id="cockpit-token" class="field mono" placeholder="paste the token here" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="cockpit-connect">Connect</button>
                 <span class="set-verify" id="cockpit-status" aria-live="polite"></span>
               </div>
             </div>
@@ -428,6 +434,7 @@
               </label>
               <p class="set-help set-help-tight">Needs 2-step verification on, then create an app password. <a href="#" id="gmail-apppw-link" class="mcp-bi-link">Create an app password</a></p>
               <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="gmail-save">Save</button>
                 <span class="set-verify" id="gmail-status" aria-live="polite"></span>
               </div>
             </div>
