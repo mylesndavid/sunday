@@ -133,7 +133,7 @@ def get_or_create_auth_token() -> str:
 # /v1/cockpit/ws is exempt for the same reason as /v1/ws: the Cockpit browser
 # extension can't set our Authorization header on the WS handshake, so the
 # handler enforces the COCKPIT_TOKEN credential via the ?token= query param.
-_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/cockpit/ws")
+_AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/cockpit/ws", "/v1/cockpit/precheck")
 
 
 @web.middleware
@@ -2634,6 +2634,7 @@ class Daemon:
         # The Cockpit browser extension connects OUT to here (auth via ?token=
         # against COCKPIT_TOKEN — exempt from the bearer middleware).
         app.router.add_get("/v1/cockpit/ws", self.cockpit.handle_ws)
+        app.router.add_get("/v1/cockpit/precheck", self.cockpit.handle_precheck)
         # Catch-all webhook dispatcher — modules register paths in _webhooks.
         app.router.add_post("/webhooks/{name}", self._webhook_dispatch)
         return app

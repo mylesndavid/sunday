@@ -80,15 +80,30 @@ function candidatePorts({ override, lastGoodPort }) {
   return out;
 }
 
-/** Is a Sunday daemon listening here? /v1/health is auth-exempt and instant. */
-async function portAlive(port) {
+/** Would this daemon accept our token? Asked over plain HTTP because a
+ * REJECTED WebSocket handshake lands in Chrome's extension Errors list as a
+ * red entry (users read it as breakage), while a caught fetch logs nothing.
+ *   "ok"     → open the WS, it will succeed
+ *   "denied" → live daemon, wrong/unset token (another user's Sunday, or a
+ *              stale paste) — skip quietly; the daemon notes the knock and
+ *              Sunday's Settings card tells the user to re-copy the token
+ *   "legacy" → daemon predates the precheck endpoint — attempt the WS blind
+ *   "dead"   → nothing listening here */
+async function probePort(port, token) {
   try {
-    const r = await fetch(`http://127.0.0.1:${port}/v1/health`, {
-      signal: AbortSignal.timeout(800),
-    });
-    return r.ok;
+    const r = await fetch(
+      `http://127.0.0.1:${port}/v1/cockpit/precheck?token=${encodeURIComponent(token)}`,
+      { signal: AbortSignal.timeout(800) },
+    );
+    // Older daemons have no precheck route: their auth middleware 401s the
+    // path before the router can 404 it. Both mean "daemon without precheck"
+    // — fall back to the blind WS attempt rather than skipping a live Sunday.
+    if (r.status === 404 || r.status === 401) return "legacy";
+    if (!r.ok) return "dead";
+    const d = await r.json().catch(() => null);
+    return d && d.ok ? "ok" : "denied";
   } catch (_) {
-    return false;
+    return "dead";
   }
 }
 
@@ -121,7 +136,8 @@ async function connect() {
 
   let socket = null;
   for (const port of candidatePorts(settings)) {
-    if (!(await portAlive(port))) continue;
+    const verdict = await probePort(port, settings.token);
+    if (verdict === "dead" || verdict === "denied") continue;
     socket = await tryHandshake(port, settings.token);
     if (socket) {
       activePort = port;
