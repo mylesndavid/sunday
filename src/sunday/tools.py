@@ -45,6 +45,11 @@ CORE_TOOLS = frozenset({
     # Hiring a local coding agent (Claude Code / Codex) for long-running repo
     # work is delegation too — core, not tail.
     "delegate_coder", "check_coder_task",
+    # The shell is the universal escape hatch — the system prompt literally
+    # says "never claim you lack a capability the shell covers". A promise in
+    # the prompt about a tool the model can't see is the harness lying to the
+    # model (live failure: "I can't check Docker" with a satellite connected).
+    "device_run_command",
 })
 
 
@@ -151,6 +156,24 @@ async def _t_find_tools(args: dict[str, Any], ctx: ToolContext) -> Any:
     matches = reg.search(query, limit=int(args.get("limit") or 15))
     # don't bother re-listing what's already always-on
     matches = [t for t in matches if t.name not in CORE_TOOLS]
+    if not matches:
+        # Graceful no-match: a keyword miss must never read as "no such
+        # capability" (live failure: searching 'docker' found nothing, model
+        # told the user it couldn't run shell commands). Hand back the full
+        # name index so the model can pick by name and re-query.
+        return {
+            "activated": [],
+            "no_match_for": query,
+            "all_available_tools": [t.name for t in reg.list_tools() if t.name not in CORE_TOOLS],
+            "note": (
+                "Nothing matched those keywords — but that does NOT mean the "
+                "capability is missing. The full tool list is above: call "
+                "find_tools again with the exact tool name to activate it. "
+                "Search by CAPABILITY (shell, browser, email, screen), not by "
+                "task (docker, disk). Anything a terminal can do = "
+                "device_run_command, which is always available."
+            ),
+        }
     if active is not None:
         for t in matches:
             active.add(t.name)
@@ -169,9 +192,12 @@ def _find_tools_tool() -> Tool:
             "more tools than are shown — email, calendar, screen history, "
             "browser control, any connected MCP server (e.g. AgentOS: tasks, "
             "wiki, CRM), etc. When a task needs something you don't see, call "
-            "find_tools with a few keywords ('gmail', 'calendar event', "
-            "'agentos tasks', 'screen history'); the matches become callable "
-            "right after. Cheap — use it whenever you're unsure a tool exists."
+            "find_tools with a few keywords; the matches become callable right "
+            "after. Search by CAPABILITY ('shell command', 'gmail', 'calendar "
+            "event', 'screen history'), not by task ('docker', 'disk space') — "
+            "matching runs on tool names + descriptions. A no-match response "
+            "lists every available tool by name so you can activate one "
+            "directly. Cheap — use it whenever you're unsure a tool exists."
         ),
         parameters={"type": "object", "properties": {
             "query": {"type": "string", "description": "Keywords for what you need to do."},
