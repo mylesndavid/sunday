@@ -188,7 +188,10 @@ def skills_shelf() -> str:
         "partly relevant, load_skill(slug) and follow it. They hold the exact "
         "steps, selectors, and gotchas that beat figuring it out fresh, plus the "
         "way the user wants the task done. Loading one you don't end up needing "
-        "costs nothing; skipping one that fit costs a worse answer.\n\n"
+        "costs nothing; skipping one that fit costs a worse answer. Nothing here "
+        "for the task? search_skills checks the open directory of community "
+        "skills and install_skill adds one in seconds — worth a look before "
+        "improvising a multi-step procedure.\n\n"
         + "\n".join(lines) + more
     )
 
