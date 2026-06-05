@@ -89,6 +89,16 @@ class Message:
 
         text_part = (self.content or "") + descriptor
 
+        # Origin tag for browser-side-panel messages. The model can't see
+        # message modality otherwise, and "what's on this page" from the
+        # Cockpit panel means THE ACTIVE CHROME TAB — without the tag the
+        # model reaches for the wrong browser (live failure: it hunted down
+        # the headless browser_read and died on "no CDP session"). The rule
+        # for what to do with the tag lives in the static system prompt; the
+        # tag itself is per-message data, not a per-message rule.
+        if role == "user" and self.modality == "cockpit":
+            text_part = "[via Cockpit side panel — the user is in their browser] " + text_part
+
         # Multipart vision content only makes sense on user-role messages.
         if images and role == "user":
             content_parts: list[dict[str, Any]] = []

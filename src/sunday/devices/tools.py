@@ -624,12 +624,14 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     registry.register(Tool(
         name="browser_read",
         description=(
-            "Read the current page in the connected, logged-in browser as text "
-            "you can act on: title, url, visible text, and a list of interactive "
-            "elements each with a numeric `ref`. This is your eyes on the web — "
-            "call it to see what's on screen, then browser_click/browser_type by "
-            "ref. The browser shares the user's logins, so private docs, Gmail, "
-            "Loom transcripts, etc. are all readable. Launch one first with "
+            "Read the current page in Sunday's OWN headless shadow browser — "
+            "NOT the user's Chrome. It cannot see the user's open tabs and has "
+            "its own separate logins. For anything in the user's real browser "
+            "('this page', 'this tab', signed-in sites) use cockpit_read_page "
+            "instead. This one is for background jobs and Electron apps "
+            "(electron_launch). Returns title, url, visible text, and "
+            "interactive elements each with a numeric `ref` for "
+            "browser_click/browser_type. Launch one first with "
             "device_cdp_launch if none is open."
         ),
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}}},
@@ -637,13 +639,13 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     ))
     registry.register(Tool(
         name="browser_click",
-        description="Click an element in the browser by its `ref` from browser_read (or a CSS `selector`). Re-read the page after to see what changed.",
+        description="Click an element in Sunday's own shadow browser (NOT the user's Chrome — use cockpit_click for that) by its `ref` from browser_read (or a CSS `selector`). Re-read the page after to see what changed.",
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "ref": {"type": "integer"}, "selector": {"type": "string"}}},
         run=_t_browser_click,
     ))
     registry.register(Tool(
         name="browser_type",
-        description="Type text into a field in the browser by its `ref` from browser_read. Set submit=true to press Enter after (e.g. search boxes).",
+        description="Type text into a field in Sunday's own shadow browser (NOT the user's Chrome — use cockpit_fill for that) by its `ref` from browser_read. Set submit=true to press Enter after (e.g. search boxes).",
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}, "ref": {"type": "integer"}, "text": {"type": "string"}, "submit": {"type": "boolean"}}, "required": ["ref", "text"]},
         run=_t_browser_type,
     ))
