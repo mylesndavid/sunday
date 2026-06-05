@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('sunday', {
   onUpdateState: (h) => ipcRenderer.on('sunday:update-state', (_evt, s) => h(s)),
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
+  revealExtension: () => ipcRenderer.invoke('sunday:reveal-extension'),
   notchMetrics: () => ipcRenderer.invoke('sunday:notch-metrics'),
   notchMode: (mode) => ipcRenderer.send('sunday:notch-mode', mode),
   checkFDA: () => ipcRenderer.invoke('sunday:check-fda'),

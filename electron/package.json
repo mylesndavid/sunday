@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.4.57",
+  "version": "0.4.58",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -111,6 +111,10 @@
       {
         "from": "build/argus",
         "to": "argus"
+      },
+      {
+        "from": "../extension",
+        "to": "extension"
       }
     ]
   },
