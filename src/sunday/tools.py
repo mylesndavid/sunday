@@ -28,14 +28,19 @@ ToolFn = Callable[[dict[str, Any], "ToolContext"], Awaitable[Any]]
 # demand via find_tools — so the per-turn schema stays small no matter how
 # many servers are connected. Names that don't exist in a given build are
 # simply ignored.
+# Lean core, unlimited tail (owner directive, 2026-06-05): the always-visible
+# set is ONLY discovery (find_tools), memory, skills, the Cockpit hands, and
+# delegation. Everything else — device/app/CDP-browser/iMessage/connectors —
+# lives in the tail: one find_tools call surfaces a tool and it stays active
+# for the session, so breadth costs nothing until summoned. Add tools freely;
+# never agonize over count. The schema-bloat failure mode only applies here.
 CORE_TOOLS = frozenset({
     "find_tools", "sunday_config",
     "remember", "recall", "search_history",
     "list_skills", "load_skill", "save_skill", "search_skills", "install_skill",
-    "device_screen_text", "device_screenshot", "device_run_command",
-    "browser_read", "browser_click", "browser_type",
-    "app_snapshot", "app_click", "app_type",
-    "imessage_read_recent", "imessage_read_thread", "imessage_search", "imessage_send",
+    "cockpit_read_page", "cockpit_click", "cockpit_fill", "cockpit_press_key",
+    "cockpit_scroll", "cockpit_navigate", "cockpit_tabs", "cockpit_screenshot",
+    "cockpit_highlight", "cockpit_instruct_user",
     "delegate", "delegate_parallel",
 })
 
@@ -203,6 +208,8 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         # an app password is configured.
         "sunday.gmail_tools",
         "sunday.integrations.fireflies",
+        # Cockpit — drives the user's real logged-in Chrome via the extension.
+        "sunday.cockpit",
     ):
         try:
             mod = __import__(module_path, fromlist=["register"])

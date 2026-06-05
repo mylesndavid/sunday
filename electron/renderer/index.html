@@ -399,6 +399,21 @@
             <div class="mcp-builtin" id="mcp-builtin"><div class="conn-loading">loading…</div></div>
           </div>
 
+          <!-- COCKPIT (the user's real logged-in Chrome via the extension) -->
+          <div class="set-panel">
+            <div class="brain-label">Cockpit (your browser)</div>
+            <div class="mcp-bi" id="cockpit-card">
+              <label class="set-field">
+                <span class="set-field-l">Pairing token</span>
+                <input type="password" id="cockpit-token" class="field mono" placeholder="paste the token the extension shows" autocomplete="off" spellcheck="false">
+              </label>
+              <p class="set-help set-help-tight">Install the Cockpit extension (chrome://extensions → Load unpacked → the extension folder), then paste the token it shows.</p>
+              <div class="set-actions">
+                <span class="set-verify" id="cockpit-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
           <!-- GMAIL (app password — direct IMAP/SMTP) -->
           <div class="set-panel">
             <div class="brain-label">Gmail (app password)</div>
