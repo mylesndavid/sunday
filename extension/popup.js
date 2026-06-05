@@ -14,7 +14,9 @@ function render({ state, token, port }) {
     detail.textContent = `127.0.0.1:${port}`;
   } else {
     label.textContent = state === "connecting" ? "Connecting…" : "Waiting for Sunday";
-    detail.textContent = `Looking for Sunday on 127.0.0.1:${port}`;
+    detail.textContent = port
+      ? `Looking for Sunday on 127.0.0.1:${port}`
+      : "Scanning 127.0.0.1 for Sunday…";
   }
 }
 

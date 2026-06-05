@@ -13,7 +13,7 @@ Sunday's daemon is the brain, this extension is the hands.
 
 1. Open `chrome://extensions`
 2. Turn on "Developer mode" (top right)
-3. Click "Load unpacked" and pick this `extension/` folder
+3. Drag this `extension/` folder anywhere onto the page (Chrome installs it on drop)
 4. Click the Sunday Cockpit toolbar icon and copy the pairing token
 5. Paste the token into Sunday when it asks to connect your browser
 
