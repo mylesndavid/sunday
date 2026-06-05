@@ -23,7 +23,13 @@ function addMessage(role, text) {
   clearEmpty();
   const el = document.createElement("div");
   el.className = `msg ${role}`;
-  el.textContent = text;
+  if (role === "sunday") {
+    // Sunday replies in markdown; mdToHtml escapes everything first and only
+    // builds known-safe tags, so this innerHTML can't go live with page HTML.
+    el.innerHTML = window.mdToHtml(text);
+  } else {
+    el.textContent = text;
+  }
   transcript.appendChild(el);
   scrollToBottom();
   return el;

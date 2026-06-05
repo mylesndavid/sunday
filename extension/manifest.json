@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sunday Cockpit",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Connects this browser to Sunday. Sunday can read pages, click, fill forms, and hand control back to you for anything sensitive.",
   "permissions": [
     "scripting",
