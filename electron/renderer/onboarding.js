@@ -271,10 +271,18 @@ async function loadBrowserStep() {
 }
 
 async function pollCockpitConnected(maxSec) {
+  const v = $('#onb-pw-verify');
   for (let i = 0; i < maxSec; i++) {
     try {
       const d = await (await fetch(`${chosenDaemonHttp}/v1/cockpit/status`, { headers: await daemonAuthHeaders() })).json();
       if (d.connected) return true;
+      // Wrong-token knock seen by the daemon: the pasted token is stale
+      // (extension reinstall regenerates it). Tell the user mid-poll instead
+      // of timing out into a generic failure.
+      if (d.token_mismatch && v) {
+        v.hidden = false; v.dataset.state = 'fail';
+        v.textContent = 'The extension shows a different token now — copy it again and hit Connect.';
+      }
     } catch { /* daemon hiccup — keep polling */ }
     await new Promise((res) => setTimeout(res, 1000));
   }

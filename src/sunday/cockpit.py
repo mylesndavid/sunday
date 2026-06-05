@@ -75,6 +75,12 @@ class CockpitBridge:
         # paired socket — no second auth surface, no app ping-pong while
         # Sunday is driving the browser.
         self.say_handler = None
+        # When an extension knocked with the wrong/no token (monotonic time).
+        # Surfaced via /v1/cockpit/status so the Settings card can say "an
+        # extension is dialing with a DIFFERENT token — re-copy it from the
+        # popup" instead of leaving the mismatch silent (tokens regenerate on
+        # extension reinstall, so this happens to real users).
+        self.last_reject: float = 0.0
 
     # ── connection state ────────────────────────────────────────────────────
 
@@ -190,16 +196,20 @@ class CockpitBridge:
         is exempt from the bearer middleware). On mismatch we close with 401
         semantics. Latest connection wins.
         """
+        import time as _time
         token = request.query.get("token", "")
         expected = get_credential("COCKPIT_TOKEN") or ""
         if not expected:
             # Not paired yet — nothing to authenticate against. Refuse rather
             # than accept an unauthenticated controller of the user's browser.
+            self.last_reject = _time.monotonic()
             return web.json_response(
                 {"error": "Cockpit is not paired — set a token in Settings first."},
                 status=401,
             )
         if not token or not hmac.compare_digest(token, expected):
+            self.last_reject = _time.monotonic()
+            log.warning("cockpit: rejected handshake (token mismatch — extension reinstalled?)")
             return web.json_response({"error": "unauthorized"}, status=401)
 
         ws = web.WebSocketResponse(heartbeat=30.0, max_msg_size=32 * 1024 * 1024)
