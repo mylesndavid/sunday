@@ -42,6 +42,9 @@ CORE_TOOLS = frozenset({
     "cockpit_scroll", "cockpit_navigate", "cockpit_tabs", "cockpit_screenshot",
     "cockpit_highlight", "cockpit_instruct_user",
     "delegate", "delegate_parallel",
+    # Hiring a local coding agent (Claude Code / Codex) for long-running repo
+    # work is delegation too — core, not tail.
+    "delegate_coder", "check_coder_task",
 })
 
 
@@ -197,6 +200,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.skills",
         "sunday.subagents.native",
         "sunday.subagents.hermes",
+        "sunday.coder",
         "sunday.channels.messages_local",
         "sunday.channels.sendblue",
         "sunday.channels.vapi",
