@@ -31,7 +31,7 @@ ToolFn = Callable[[dict[str, Any], "ToolContext"], Awaitable[Any]]
 CORE_TOOLS = frozenset({
     "find_tools", "sunday_config",
     "remember", "recall", "search_history",
-    "list_skills", "load_skill", "save_skill",
+    "list_skills", "load_skill", "save_skill", "search_skills", "install_skill",
     "device_screen_text", "device_screenshot", "device_run_command",
     "browser_read", "browser_click", "browser_type",
     "app_snapshot", "app_click", "app_type",
