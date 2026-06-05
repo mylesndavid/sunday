@@ -2,8 +2,11 @@
  *
  * Pairing (Playwright-shaped): the extension generates a token on install and
  * shows it in the popup; the user pastes it into Sunday. The extension then
- * connects OUT to ws://127.0.0.1:<port>/v1/cockpit/ws?token=<token> (port from
- * the options page, default 8765) and reconnects with backoff forever.
+ * connects OUT to ws://127.0.0.1:<port>/v1/cockpit/ws?token=<token> and
+ * reconnects with backoff forever. The port is AUTO-DISCOVERED: Sunday's
+ * daemon port is per-macOS-user (8765 + uid offset), so we probe the range
+ * for live daemons and adopt the one that accepts our token. The options
+ * page can pin a port explicitly; leaving it empty means auto.
  *
  * Protocol (frozen contract with the daemon):
  *   daemon → extension   {id, method, params}
@@ -20,6 +23,9 @@
 import { Executor } from "./lib/executor.js";
 
 const DEFAULT_PORT = 8765;
+// How many per-user ports to scan upward from the base (uid 501 → 8765,
+// 502 → 8766, …). Ten logged-in macOS accounts ought to be enough for anybody.
+const PORT_SCAN_SPAN = 10;
 const HEARTBEAT_MS = 20000;
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
@@ -44,63 +50,116 @@ function generateToken() {
 }
 
 async function getSettings() {
-  const s = await chrome.storage.local.get(["token", "port"]);
+  const s = await chrome.storage.local.get(["token", "port", "lastGoodPort"]);
   let token = s.token;
   if (!token) {
     token = generateToken();
     await chrome.storage.local.set({ token });
   }
-  const port = Number(s.port) || DEFAULT_PORT;
-  return { token, port };
+  // `port` is a manual override from the options page; empty means
+  // auto-discover. Sunday's daemon port is per-macOS-user (8765 + uid offset),
+  // so a hardcoded default is wrong for any secondary account.
+  const override = Number(s.port) || 0;
+  return { token, override, lastGoodPort: Number(s.lastGoodPort) || 0 };
 }
 
 // --- Connection lifecycle ----------------------------------------------------
 
+// The port Sunday actually answered on (for the popup's status detail).
+let activePort = 0;
+
+/** Ports worth probing: the override pins one; otherwise last-known-good
+ * first, then the per-user range (uid 501 → 8765, 502 → 8766, …). */
+function candidatePorts({ override, lastGoodPort }) {
+  if (override) return [override];
+  const out = [];
+  if (lastGoodPort) out.push(lastGoodPort);
+  for (let p = DEFAULT_PORT; p < DEFAULT_PORT + PORT_SCAN_SPAN; p++) {
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/** Is a Sunday daemon listening here? /v1/health is auth-exempt and instant. */
+async function portAlive(port) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      signal: AbortSignal.timeout(800),
+    });
+    return r.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** Attempt the authed WS handshake. Resolves the open socket, or null — a
+ * daemon that's alive but holds a different COCKPIT_TOKEN (another macOS
+ * user's Sunday) rejects the upgrade and lands here as null too. */
+function tryHandshake(port, token, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let socket;
+    try {
+      socket = new WebSocket(`ws://127.0.0.1:${port}/v1/cockpit/ws?token=${token}`);
+    } catch (_) {
+      return resolve(null);
+    }
+    const timer = setTimeout(() => {
+      try { socket.close(); } catch (_) {}
+      resolve(null);
+    }, timeoutMs);
+    socket.onopen = () => { clearTimeout(timer); resolve(socket); };
+    socket.onclose = () => { clearTimeout(timer); resolve(null); };
+  });
+}
+
 async function connect() {
   if (ws && (wsState === "connected" || wsState === "connecting")) return;
   clearTimeout(reconnectTimer);
-  const { token, port } = await getSettings();
+  const settings = await getSettings();
   wsState = "connecting";
   broadcastState();
 
-  let socket;
-  try {
-    socket = new WebSocket(`ws://127.0.0.1:${port}/v1/cockpit/ws?token=${token}`);
-  } catch (e) {
+  let socket = null;
+  for (const port of candidatePorts(settings)) {
+    if (!(await portAlive(port))) continue;
+    socket = await tryHandshake(port, settings.token);
+    if (socket) {
+      activePort = port;
+      chrome.storage.local.set({ lastGoodPort: port });
+      break;
+    }
+  }
+  if (!socket) {
     wsState = "disconnected";
+    broadcastState();
     scheduleReconnect();
     return;
   }
   ws = socket;
-
-  socket.onopen = () => {
-    if (ws !== socket) return;
-    wsState = "connected";
-    backoffMs = BACKOFF_MIN_MS;
-    sendEvent({
-      event: "status",
-      state: "connected",
-      version: chrome.runtime.getManifest().version,
-    });
-    startHeartbeat();
-    broadcastState();
-  };
+  wsState = "connected";
+  backoffMs = BACKOFF_MIN_MS;
 
   socket.onmessage = (e) => {
     if (ws !== socket) return;
     handleFrame(e.data);
   };
-
   socket.onclose = () => {
     if (ws !== socket) return;
     dropConnection();
     scheduleReconnect();
   };
-
   socket.onerror = () => {
     if (ws !== socket) return;
     try { socket.close(); } catch (_) {}
   };
+
+  sendEvent({
+    event: "status",
+    state: "connected",
+    version: chrome.runtime.getManifest().version,
+  });
+  startHeartbeat();
+  broadcastState();
 }
 
 function dropConnection() {
@@ -220,8 +279,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "GET_STATUS") {
-    getSettings().then(({ token, port }) => {
-      sendResponse({ state: wsState, token, port });
+    getSettings().then(({ token, override }) => {
+      sendResponse({ state: wsState, token, port: activePort || override || 0 });
     });
     return true; // async
   }
@@ -229,7 +288,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "REGENERATE_TOKEN") {
     chrome.storage.local.set({ token: generateToken() }).then(() => {
       reconnectNow();
-      getSettings().then(({ token, port }) => sendResponse({ state: wsState, token, port }));
+      getSettings().then(({ token, override }) => sendResponse({ state: wsState, token, port: activePort || override || 0 }));
     });
     return true; // async
   }
