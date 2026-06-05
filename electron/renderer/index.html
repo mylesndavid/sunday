@@ -125,51 +125,36 @@
       </div>
     </div>
 
-    <!-- SOURCES — Conversations + Meetings merged under one subtab -->
+    <!-- SOURCES — one chronological feed mixing conversations + meetings -->
     <div class="atoms-pane" id="mem-pane-sources" hidden>
-      <nav class="src-toggle" id="src-toggle" role="tablist" aria-label="Source kind">
-        <button type="button" class="src-toggle-btn active" data-src="conversations" role="tab" aria-selected="true">
-          Conversations <span class="mem-subtab-count" id="mem-conv-count" hidden></span>
-        </button>
-        <button type="button" class="src-toggle-btn" data-src="meetings" role="tab" aria-selected="false">
-          Meetings <span class="mem-subtab-count" id="mem-mtg-count" hidden></span>
-        </button>
-      </nav>
-
-      <div class="src-list-wrap" id="src-conversations">
-        <div class="atoms-empty" id="conv-empty" hidden>
-          <h2>No conversations yet</h2>
-          <p>Turn on Background listening in Settings → Voice &amp; capture and conversations will accumulate as you talk. Each one closes after ~2 minutes of silence and gets a structured summary — searchable here.</p>
+      <!-- Compact record header above the feed -->
+      <div class="mtg-record mtg-record-compact">
+        <div class="mtg-record-info">
+          <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
+          <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
         </div>
-        <ul class="conv-list" id="conv-list"></ul>
+        <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
       </div>
 
-      <div class="src-list-wrap" id="src-meetings" hidden>
-        <div class="mtg-record">
-          <div class="mtg-record-info">
-            <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
-            <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
-          </div>
-          <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
+      <div class="atoms-empty" id="src-empty" hidden>
+        <h2>Nothing recorded yet</h2>
+        <p>Nothing recorded yet — conversations and meetings land here.</p>
+      </div>
+
+      <ul class="conv-list" id="src-feed"></ul>
+
+      <!-- Full meeting view, pops over the pane; Exit to close. -->
+      <div class="mtg-view" id="mtg-view" hidden>
+        <div class="mtg-view-bar">
+          <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
+          <div class="mtg-view-title" id="mtg-view-title"></div>
+          <div class="mtg-view-time" id="mtg-view-time"></div>
         </div>
-        <ul class="conv-list" id="mtg-list"></ul>
-        <!-- Full meeting view, pops over the tab; Exit to close. -->
-        <div class="mtg-view" id="mtg-view" hidden>
-          <div class="mtg-view-bar">
-            <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
-            <div class="mtg-view-title" id="mtg-view-title"></div>
-            <div class="mtg-view-time" id="mtg-view-time"></div>
-          </div>
-          <div class="mtg-view-body">
-            <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
-            <div class="mtg-view-notes" id="mtg-view-notes"></div>
-            <h3 class="mtg-view-h">Transcript</h3>
-            <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
-          </div>
-        </div>
-        <div class="atoms-empty" id="mtg-empty" hidden>
-          <h2>No meetings yet</h2>
-          <p>Hit Start recording before your next call. Sunday captures both sides, writes you Granola-style notes, and turns the action items into things she tracks.</p>
+        <div class="mtg-view-body">
+          <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
+          <div class="mtg-view-notes" id="mtg-view-notes"></div>
+          <h3 class="mtg-view-h">Transcript</h3>
+          <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
         </div>
       </div>
     </div>
