@@ -15,7 +15,6 @@ export function init(config, refs) {
   cfg = config; els = refs;
   wireSubtabs();
   wireFacts();
-  wireSourceToggle();
   refreshAtomCount();
   refreshFactCount();
 }
@@ -50,34 +49,8 @@ function switchSubtab(name) {
 
   panes[pane].hidden = false;
   if (pane === 'atoms') loadAtoms();
-  else if (pane === 'sources') loadActiveSource();
+  else if (pane === 'sources') loadSources();
   else loadFacts();
-}
-
-// ── Sources subtab: Conversations | Meetings toggle ───────────────────────
-let _activeSource = 'conversations';
-function wireSourceToggle() {
-  document.querySelectorAll('.src-toggle-btn').forEach((b) => {
-    b.addEventListener('click', () => switchSource(b.dataset.src));
-  });
-}
-function switchSource(name) {
-  _activeSource = name === 'meetings' ? 'meetings' : 'conversations';
-  document.querySelectorAll('.src-toggle-btn').forEach((b) => {
-    const selected = b.dataset.src === _activeSource;
-    b.classList.toggle('active', selected);
-    b.setAttribute('aria-selected', selected ? 'true' : 'false');
-  });
-  const conv = document.getElementById('src-conversations');
-  const mtg = document.getElementById('src-meetings');
-  conv.hidden = _activeSource !== 'conversations';
-  mtg.hidden = _activeSource !== 'meetings';
-  if (_activeSource !== 'meetings') closeMeetingView();
-  loadActiveSource();
-}
-function loadActiveSource() {
-  if (_activeSource === 'meetings') loadMeetings();
-  else loadConversations();
 }
 
 // ── FACTS — the primary "what Sunday knows" pane ──────────────────────────
@@ -252,23 +225,24 @@ async function refreshFactCount() {
   } catch {}
 }
 
-// ── Meetings tab ─────────────────────────────────────────────────────────
+// ── Sources feed — one chronological list mixing conversations + meetings ──
 let _mtgRecording = false;
 let _mtgTimer = null;
 function fmtElapsed(secs) {
   const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
   return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
-async function loadMeetings() {
-  // Always land on the record card + list — never a stuck detail overlay. The
-  // pop-out (mtg-view) only re-hid itself on its own Exit, so opening one
-  // meeting and switching tabs left it covering the whole pane (no record
-  // button, "can't start a meeting"). Reset it on every entry.
+
+// Refresh the record header (wire button once, reflect recording state) and
+// reset the meeting overlay. Kept separate from the feed fetch so the merged
+// feed keeps all the recording/finalize plumbing intact.
+async function refreshRecordHeader() {
+  // Always land on the feed — never a stuck detail overlay. The pop-out
+  // (mtg-view) only re-hid itself on its own Exit, so opening one meeting and
+  // switching tabs left it covering the whole pane. Reset it on every entry.
   const mtgView = document.getElementById('mtg-view');
   if (mtgView) mtgView.hidden = true;
   const btn = document.getElementById('mtg-rec-btn');
-  const titleEl = document.getElementById('mtg-rec-title');
-  const subEl = document.getElementById('mtg-rec-sub');
   // Wire the record button once.
   if (btn && !btn.dataset.wired) {
     btn.dataset.wired = '1';
@@ -279,29 +253,117 @@ async function loadMeetings() {
     const st = await window.sunday.meetingState();
     setMeetingRecordingUI(!!st.recording, st.since);
   } catch {}
-  // List past meetings (conversations with category=meeting).
-  const list = document.getElementById('mtg-list');
-  const empty = document.getElementById('mtg-empty');
-  const cb = document.getElementById('mem-mtg-count');
+}
+
+let _srcShowAll = false;
+async function loadSources() {
+  await refreshRecordHeader();
+  const list = document.getElementById('src-feed');
+  const empty = document.getElementById('src-empty');
+  list.innerHTML = '';
   try {
-    const d = await (await fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&source=meeting&min_value=all`)).json();
-    const mtgs = (d.conversations || []);
-    if (cb) { if (mtgs.length) { cb.textContent = mtgs.length; cb.hidden = false; } else cb.hidden = true; }
-    if (!mtgs.length) { empty.hidden = false; list.innerHTML = ''; return; }
+    // Two data sources, merged: conversations (observer-captured, noise hidden
+    // by default) and meetings (explicitly recorded, always shown). The plain
+    // conversations list can also surface source=meeting rows, so dedupe by id.
+    const convParam = _srcShowAll ? '&min_value=all' : '';
+    const [convRes, mtgRes] = await Promise.all([
+      fetch(`${cfg.daemonHttp}/v1/conversations?limit=200${convParam}`).then((r) => r.json()),
+      fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&source=meeting&min_value=all`).then((r) => r.json()),
+    ]);
+    const hiddenLow = (convRes.hidden && convRes.hidden.low) || 0;
+    const byId = new Map();
+    // Meetings first so their source label wins on any overlapping id.
+    for (const c of (mtgRes.conversations || [])) byId.set(c.id, { ...c, _kind: 'meeting' });
+    for (const c of (convRes.conversations || [])) {
+      const kind = (c.source || '').toLowerCase() === 'meeting' ? 'meeting' : 'conversation';
+      if (byId.has(c.id)) { byId.get(c.id)._kind = byId.get(c.id)._kind || kind; continue; }
+      byId.set(c.id, { ...c, _kind: kind });
+    }
+    const rows = [...byId.values()].sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+
+    if (!rows.length) { empty.hidden = false; return; }
     empty.hidden = true;
-    list.innerHTML = mtgs.map((c) => `
-      <li class="conv-card mtg-card" data-cid="${c.id}">
-        <div class="conv-head"><div class="c-title">${esc(c.title || 'Meeting')}</div><div class="c-time">${esc(fmtTime(c.started_at))}</div></div>
-        <div class="conv-summary">${esc((c.summary || '').split('\n')[0])}</div>
-        <div class="mtg-card-open">Open meeting →</div>
-      </li>`).join('');
-    list.querySelectorAll('.mtg-card').forEach((card) => {
+
+    // "Show N hidden" disclosure when the conversation noise filter is active
+    // and there's actual junk being suppressed.
+    let headerHtml = '';
+    if (!_srcShowAll && hiddenLow > 0) {
+      headerHtml = `<li class="conv-toggle">
+        <button class="conv-toggle-btn" id="src-show-all">Show ${hiddenLow} low-value (TikToks, ambient noise, fragments)</button>
+      </li>`;
+    } else if (_srcShowAll) {
+      headerHtml = `<li class="conv-toggle">
+        <button class="conv-toggle-btn" id="src-show-all">Hide low-value</button>
+      </li>`;
+    }
+
+    list.innerHTML = headerHtml + rows.map((c) => srcRowHtml(c)).join('');
+
+    document.getElementById('src-show-all')?.addEventListener('click', () => {
+      _srcShowAll = !_srcShowAll;
+      loadSources();
+    });
+    // Meeting rows open the full meeting view.
+    list.querySelectorAll('.conv-card[data-kind="meeting"]').forEach((card) => {
       card.addEventListener('click', () => openMeetingView(card.dataset.cid));
+    });
+    // Conversation rows keep their lazy transcript disclosure.
+    list.querySelectorAll('.conv-card[data-kind="conversation"]').forEach((card) => {
+      const d = card.querySelector('details');
+      if (!d) return;
+      const pre = d.querySelector('pre');
+      d.addEventListener('toggle', async () => {
+        if (!d.open || pre.dataset.loaded === 'true') return;
+        pre.dataset.loaded = 'true';
+        try {
+          const r = await fetch(`${cfg.daemonHttp}/v1/conversations/${card.dataset.cid}`);
+          const cc = await r.json();
+          pre.textContent = cc.transcript || '(no transcript)';
+        } catch (err) { pre.textContent = `(error: ${err.message})`; }
+      });
     });
   } catch (e) {
     if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
     list.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load: ${esc(e.message)}</div></li>`;
   }
+}
+
+// One row in the merged feed. Meeting rows get a meeting chip + "open" affordance;
+// conversation rows get a conversation chip, category/people meta, and the
+// lazy-loaded transcript disclosure.
+function srcRowHtml(c) {
+  if (c._kind === 'meeting') {
+    return `
+      <li class="conv-card mtg-card" data-cid="${c.id}" data-kind="meeting">
+        <div class="conv-head">
+          <span class="src-chip" data-kind="meeting">meeting</span>
+          <div class="c-title">${esc(c.title || 'Meeting')}</div>
+          <div class="c-time">${esc(fmtTime(c.started_at))}</div>
+        </div>
+        <div class="conv-summary">${esc((c.summary || '').split('\n')[0])}</div>
+        <div class="mtg-card-open">Open meeting →</div>
+      </li>`;
+  }
+  const people = (c.participants || []).join(', ') || '—';
+  const valueDot = c.value ? `<span class="conv-value" data-v="${esc(c.value)}" title="${esc(c.value)}"></span>` : '';
+  return `
+    <li class="conv-card" data-cid="${c.id}" data-kind="conversation" data-value="${esc(c.value || '')}">
+      <div class="conv-head">
+        <span class="src-chip" data-kind="conversation">conversation</span>
+        ${valueDot}
+        <div class="c-title">${esc(c.title || 'Untitled')}</div>
+        <div class="c-time">${esc(fmtTime(c.started_at))}</div>
+      </div>
+      <div class="conv-meta">
+        <span class="conv-cat" data-c="${esc(c.category || 'unclear')}">${esc(c.category || 'unclear')}</span>
+        <span class="c-people">${esc(people)}</span>
+      </div>
+      <div class="conv-summary">${esc(c.summary || '')}</div>
+      <details class="conv-transcript">
+        <summary>Show transcript</summary>
+        <pre data-loaded="false">loading…</pre>
+      </details>
+    </li>`;
 }
 function setMeetingRecordingUI(recording, since) {
   _mtgRecording = recording;
@@ -424,7 +486,12 @@ async function stopAndFinalizeMeeting() {
   try {
     const r = await window.sunday.meetingFinalize();
     document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
-    if (r && r.ok) { loadMeetings(); }
+    if (r && r.ok) {
+      // Refresh the feed if the Sources pane is showing, so the new meeting
+      // lands in view; otherwise just leave the record header reset.
+      const srcPane = document.getElementById('mem-pane-sources');
+      if (srcPane && !srcPane.hidden) loadSources();
+    }
     else { document.getElementById('mtg-rec-sub').textContent = `Stopped — ${(r && r.error) || 'no notes produced'}.`; }
   } catch (e) {
     document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
@@ -434,94 +501,17 @@ async function stopAndFinalizeMeeting() {
 // Tray "Start/Stop meeting" lands here. Main calls this via executeJavaScript
 // with the userGesture flag set, so getDisplayMedia's transient-activation
 // requirement is satisfied even though the click was in the menu bar. Brings
-// the Meetings tab forward first so you can see the recording state.
+// the Sources feed forward first so you can see the recording state.
 window.__sundayTrayMeeting = async function () {
-  try {
-    switchSubtab('sources');
-    switchSource('meetings');
-  } catch {}
-  // Make sure the record card is wired + state is fresh, then toggle.
-  try { await loadMeetings(); } catch {}
+  try { switchSubtab('sources'); } catch {}
+  // Make sure the record button is wired + state is fresh, then toggle.
+  try { await refreshRecordHeader(); } catch {}
   return toggleMeetingRecording();
 };
 
 // The notch's stop-request comes here.
 if (window.sunday && window.sunday.onMeetingStopNow) {
   window.sunday.onMeetingStopNow(() => { if (_mtgRecording) stopAndFinalizeMeeting(); });
-}
-
-let _convShowAll = false;
-async function loadConversations() {
-  const ul = document.getElementById('conv-list');
-  const empty = document.getElementById('conv-empty');
-  ul.innerHTML = '';
-  try {
-    const param = _convShowAll ? '&min_value=all' : '';
-    const r = await fetch(`${cfg.daemonHttp}/v1/conversations?limit=200${param}`);
-    const d = await r.json();
-    const convs = d.conversations || [];
-    const hiddenLow = (d.hidden && d.hidden.low) || 0;
-    const cb = document.getElementById('mem-conv-count');
-    if (convs.length) { cb.textContent = convs.length; cb.hidden = false; } else { cb.hidden = true; }
-    if (!convs.length) { empty.hidden = false; return; }
-    empty.hidden = true;
-
-    // Header row with a "show N hidden" disclosure when the filter is active
-    // and there's actual junk being suppressed.
-    let headerHtml = '';
-    if (!_convShowAll && hiddenLow > 0) {
-      headerHtml = `<li class="conv-toggle">
-        <button class="conv-toggle-btn" id="conv-show-all">Show ${hiddenLow} low-value (TikToks, ambient noise, fragments)</button>
-      </li>`;
-    } else if (_convShowAll) {
-      headerHtml = `<li class="conv-toggle">
-        <button class="conv-toggle-btn" id="conv-show-all">Hide low-value</button>
-      </li>`;
-    }
-
-    ul.innerHTML = headerHtml + convs.map((c) => {
-      const people = (c.participants || []).join(', ') || '—';
-      const valueDot = c.value ? `<span class="conv-value" data-v="${esc(c.value)}" title="${esc(c.value)}"></span>` : '';
-      return `
-        <li class="conv-card" data-cid="${c.id}" data-value="${esc(c.value || '')}">
-          <div class="conv-head">
-            ${valueDot}
-            <div class="c-title">${esc(c.title || 'Untitled')}</div>
-            <div class="c-time">${esc(fmtTime(c.started_at))}</div>
-          </div>
-          <div class="conv-meta">
-            <span class="conv-cat" data-c="${esc(c.category || 'unclear')}">${esc(c.category || 'unclear')}</span>
-            <span class="c-people">${esc(people)}</span>
-          </div>
-          <div class="conv-summary">${esc(c.summary || '')}</div>
-          <details class="conv-transcript">
-            <summary>Show transcript</summary>
-            <pre data-loaded="false">loading…</pre>
-          </details>
-        </li>`;
-    }).join('');
-    document.getElementById('conv-show-all')?.addEventListener('click', () => {
-      _convShowAll = !_convShowAll;
-      loadConversations();
-    });
-    // Lazy-load transcript when a card's <details> is opened.
-    ul.querySelectorAll('.conv-card').forEach((card) => {
-      const d = card.querySelector('details');
-      const pre = d.querySelector('pre');
-      d.addEventListener('toggle', async () => {
-        if (!d.open || pre.dataset.loaded === 'true') return;
-        pre.dataset.loaded = 'true';
-        try {
-          const r = await fetch(`${cfg.daemonHttp}/v1/conversations/${card.dataset.cid}`);
-          const c = await r.json();
-          pre.textContent = c.transcript || '(no transcript)';
-        } catch (err) { pre.textContent = `(error: ${err.message})`; }
-      });
-    });
-  } catch (err) {
-    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
-    ul.innerHTML = `<li class="conv-card"><div class="conv-summary" style="color:var(--error)">couldn't load conversations: ${esc(err.message)}</div></li>`;
-  }
 }
 
 function fmtTime(ts) {
