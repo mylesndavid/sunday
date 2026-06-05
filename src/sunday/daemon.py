@@ -1566,12 +1566,21 @@ class Daemon:
     async def _http_cockpit_status(self, request: web.Request) -> web.Response:
         """Cockpit pairing + connection state for the Settings card.
 
-        paired    — a COCKPIT_TOKEN credential is set (the user pasted the token).
-        connected — the extension's WebSocket is live right now.
+        paired          — a COCKPIT_TOKEN credential is set (the user pasted the token).
+        connected       — the extension's WebSocket is live right now.
+        token_mismatch  — an extension knocked with a wrong/absent token in the
+                          last 60s (tokens regenerate on extension reinstall;
+                          the card uses this to say "re-copy the token").
         """
+        import time as _time
+        recent_reject = (
+            self.cockpit.last_reject > 0
+            and (_time.monotonic() - self.cockpit.last_reject) < 60
+        )
         return web.json_response({
             "paired": self.cockpit.paired(),
             "connected": self.cockpit.connected,
+            "token_mismatch": recent_reject and not self.cockpit.connected,
         })
 
     async def _start_codex_callback(self) -> None:

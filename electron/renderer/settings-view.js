@@ -445,9 +445,17 @@ async function loadCockpitStatus() {
   let d;
   try { d = await (await fetch(`${DAEMON_HTTP}/v1/cockpit/status`)).json(); }
   catch { line.dataset.state = ''; line.textContent = ''; return; }
+  if (d.connected) { line.dataset.state = 'ok'; line.textContent = 'Connected — Sunday has hands in your browser'; return; }
+  // The daemon saw a wrong-token handshake just now: the extension's token has
+  // changed (reinstall/"New token" regenerates it) — the fix is a re-copy, and
+  // without this hint the mismatch is silent forever.
+  if (d.token_mismatch) {
+    line.dataset.state = 'fail';
+    line.textContent = 'The extension is dialing with a different token — copy the token from its popup again and Connect.';
+    return;
+  }
   if (!d.paired) { line.dataset.state = ''; line.textContent = 'Not paired — extension installed? Paste its token above.'; return; }
-  if (d.connected) { line.dataset.state = 'ok'; line.textContent = 'Connected — Sunday has hands in your browser'; }
-  else { line.dataset.state = 'wait'; line.textContent = 'Token saved — waiting for the extension to dial in…'; }
+  line.dataset.state = 'wait'; line.textContent = 'Token saved — waiting for the extension to dial in…';
 }
 
 async function saveCockpitToken() {
