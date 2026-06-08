@@ -204,6 +204,7 @@
       <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
       <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
+      <button type="button" class="set-navitem" data-page="page-skills">Skills</button>
       <button type="button" class="set-navitem" data-page="page-voice">Voice &amp; capture</button>
       <button type="button" class="set-navitem" data-page="page-behavior">Behavior &amp; memory</button>
       <button type="button" class="set-navitem" data-page="page-privacy">Privacy</button>
@@ -510,6 +511,70 @@
           </div>
         </section>
 
+        <!-- ═══ SKILLS ═════════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-skills">
+          <h2>Skills</h2>
+          <p class="set-help">Reusable procedures Sunday can run. She sees this shelf every turn and loads the one that fits — installs them from the open directory, and writes new ones herself after working something out.</p>
+
+          <div class="set-panel">
+            <div class="brain-label">Installed skills</div>
+
+            <div class="skill-bar">
+              <input type="text" id="skill-search" class="field" placeholder="Filter skills" autocomplete="off" spellcheck="false" aria-label="Filter skills">
+              <button type="button" class="btn" id="skill-new">New skill</button>
+            </div>
+
+            <div class="skill-status" id="skill-status" aria-live="polite" hidden></div>
+            <ul class="skill-list conn-list" id="skill-list"></ul>
+
+            <!-- Detail / editor — read-only body by default, Edit opens the textarea -->
+            <div class="conn-card" id="skill-card" hidden>
+              <div class="conn-card-head">
+                <h3 id="skill-card-title">Skill</h3>
+                <button type="button" class="conn-card-close" id="skill-card-close" aria-label="Close">×</button>
+              </div>
+              <div class="skill-card-meta mono" id="skill-card-meta"></div>
+
+              <!-- view (read-only) -->
+              <div id="skill-view">
+                <pre class="instr-text skill-body" id="skill-body-view"></pre>
+                <div class="skill-confirm" id="skill-del-confirm" role="alertdialog" aria-label="Delete skill" hidden>
+                  <span class="set-verify">Delete this skill? Sunday will forget the procedure.</span>
+                  <button type="button" class="btn" id="skill-del-cancel">Keep it</button>
+                  <button type="button" class="btn btn-primary" id="skill-del-go">Delete</button>
+                </div>
+                <div class="set-actions">
+                  <button type="button" class="btn" id="skill-delete">Delete</button>
+                  <button type="button" class="btn btn-primary" id="skill-edit">Edit</button>
+                </div>
+              </div>
+
+              <!-- edit -->
+              <div id="skill-edit-pane" hidden>
+                <input type="text" id="skill-name" class="field" placeholder="Name" autocomplete="off" spellcheck="false" aria-label="Skill name">
+                <textarea id="skill-body-edit" class="set-textarea" spellcheck="false" placeholder="# Name&#10;&#10;A tight numbered procedure — the steps, tools, selectors, and gotchas."></textarea>
+                <div class="skill-edit-status" id="skill-edit-status" aria-live="polite"></div>
+                <div class="set-actions">
+                  <button type="button" class="btn" id="skill-edit-cancel">Cancel</button>
+                  <button type="button" class="btn btn-primary" id="skill-save">Save skill</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Find skills online -->
+          <div class="set-panel">
+            <div class="brain-label">Find skills online</div>
+            <p class="set-help set-help-tight">Search the open skills.sh directory and install one with a click.</p>
+            <div class="skill-bar">
+              <input type="text" id="skill-find-q" class="field" placeholder="e.g. gmail triage, app store, remotion" autocomplete="off" spellcheck="false" aria-label="Search the skills directory">
+              <button type="button" class="btn" id="skill-find-go">Search</button>
+            </div>
+            <div class="skill-status" id="skill-find-status" aria-live="polite" hidden></div>
+            <ul class="skill-list conn-list" id="skill-find-list"></ul>
+          </div>
+        </section>
+
         <!-- ═══ VOICE & CAPTURE ════════════════════════════════════════════ -->
         <section class="set-page" id="page-voice">
           <h2>Voice and capture</h2>
@@ -581,65 +646,8 @@
             </div>
           </div>
 
-          <!-- SKILLS -->
-          <div class="set-panel">
-            <div class="brain-label">Skills</div>
-            <p class="set-help set-help-tight">Reusable procedures Sunday can run. She sees this shelf every turn and loads the one that fits — and writes new ones herself after working something out.</p>
+          <!-- SKILLS moved to its own top-level page (page-skills). -->
 
-            <div class="skill-bar">
-              <input type="text" id="skill-search" class="field" placeholder="Filter skills" autocomplete="off" spellcheck="false" aria-label="Filter skills">
-              <button type="button" class="btn" id="skill-new">New skill</button>
-            </div>
-
-            <div class="skill-status" id="skill-status" aria-live="polite" hidden></div>
-            <ul class="skill-list conn-list" id="skill-list"></ul>
-
-            <!-- Detail / editor — read-only body by default, Edit opens the textarea -->
-            <div class="conn-card" id="skill-card" hidden>
-              <div class="conn-card-head">
-                <h3 id="skill-card-title">Skill</h3>
-                <button type="button" class="conn-card-close" id="skill-card-close" aria-label="Close">×</button>
-              </div>
-              <div class="skill-card-meta mono" id="skill-card-meta"></div>
-
-              <!-- view (read-only) -->
-              <div id="skill-view">
-                <pre class="instr-text skill-body" id="skill-body-view"></pre>
-                <div class="skill-confirm" id="skill-del-confirm" role="alertdialog" aria-label="Delete skill" hidden>
-                  <span class="set-verify">Delete this skill? Sunday will forget the procedure.</span>
-                  <button type="button" class="btn" id="skill-del-cancel">Keep it</button>
-                  <button type="button" class="btn btn-primary" id="skill-del-go">Delete</button>
-                </div>
-                <div class="set-actions">
-                  <button type="button" class="btn" id="skill-delete">Delete</button>
-                  <button type="button" class="btn btn-primary" id="skill-edit">Edit</button>
-                </div>
-              </div>
-
-              <!-- edit -->
-              <div id="skill-edit-pane" hidden>
-                <input type="text" id="skill-name" class="field" placeholder="Name" autocomplete="off" spellcheck="false" aria-label="Skill name">
-                <textarea id="skill-body-edit" class="set-textarea" spellcheck="false" placeholder="# Name&#10;&#10;A tight numbered procedure — the steps, tools, selectors, and gotchas."></textarea>
-                <div class="skill-edit-status" id="skill-edit-status" aria-live="polite"></div>
-                <div class="set-actions">
-                  <button type="button" class="btn" id="skill-edit-cancel">Cancel</button>
-                  <button type="button" class="btn btn-primary" id="skill-save">Save skill</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Find skills online -->
-            <details class="skill-find" id="skill-find">
-              <summary>Find skills online</summary>
-              <p class="set-help set-help-tight">Search the open skills.sh directory and install one with a click.</p>
-              <div class="skill-bar">
-                <input type="text" id="skill-find-q" class="field" placeholder="e.g. gmail triage, remotion" autocomplete="off" spellcheck="false" aria-label="Search the skills directory">
-                <button type="button" class="btn" id="skill-find-go">Search</button>
-              </div>
-              <div class="skill-status" id="skill-find-status" aria-live="polite" hidden></div>
-              <ul class="skill-list conn-list" id="skill-find-list"></ul>
-            </details>
-          </div>
 
           <!-- MEMORY -->
           <div class="set-panel">
