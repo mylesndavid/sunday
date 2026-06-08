@@ -174,6 +174,30 @@ class Chat:
         self._conn.commit()
         return int(n or 0)
 
+    def get(self, message_id: int) -> Message | None:
+        row = self._conn.execute(
+            "SELECT id, role, modality, content, created_at, metadata "
+            "FROM messages WHERE id = ?",
+            (message_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return Message(
+            id=row[0], role=row[1], modality=row[2], content=row[3],
+            created_at=row[4], metadata=json.loads(row[5]) if row[5] else None,
+        )
+
+    def truncate_from(self, message_id: int) -> int:
+        """Rewind: delete the message with this id and everything after it.
+        Returns how many messages were removed. Used by edit-and-rewind — the
+        edited message is re-appended fresh by the caller, then a turn re-runs."""
+        n = self._conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE id >= ?", (message_id,)
+        ).fetchone()[0]
+        self._conn.execute("DELETE FROM messages WHERE id >= ?", (message_id,))
+        self._conn.commit()
+        return int(n or 0)
+
     def recent(self, limit: int = 50) -> list[Message]:
         rows = self._conn.execute(
             "SELECT id, role, modality, content, created_at, metadata "

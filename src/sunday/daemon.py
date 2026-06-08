@@ -556,6 +556,54 @@ class Daemon:
             return web.json_response({"error": str(exc)}, status=500)
         return web.json_response(result)
 
+    async def _http_message_edit(self, request: web.Request) -> web.Response:
+        """Edit a previous USER message and rewind: drop that message and
+        everything after it, then re-run the turn from the edited text — the
+        ChatGPT/Claude "edit and branch" gesture. Only user messages; Sunday's
+        own replies aren't editable."""
+        body = await request.json()
+        try:
+            message_id = int(body.get("message_id"))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "'message_id' is required"}, status=400)
+        text = (body.get("text") or "").strip()
+        attachments = body.get("attachments")
+        if not text and not attachments:
+            return web.json_response({"error": "'text' or 'attachments' is required"}, status=400)
+
+        msg = self.chat.get(message_id)
+        if msg is None:
+            return web.json_response({"error": "no such message"}, status=404)
+        if msg.role != "user":
+            return web.json_response({"error": "only your own messages can be edited"}, status=400)
+
+        # Abort anything in flight so the rewind isn't racing a live turn.
+        if self._active_control is not None:
+            self._active_control.stop()
+
+        removed = self.chat.truncate_from(message_id)
+        # Keep the rolling summary honest: if we cut at or before the last
+        # message folded into it, the summary now describes a branch that
+        # didn't happen — reset it (it rebuilds from the new tail over time).
+        try:
+            from sunday.compaction import load_state, reset_state
+            if message_id <= int(load_state().get("through_id") or 0):
+                reset_state()
+        except Exception:  # noqa: BLE001
+            log.warning("compaction summary reset failed during edit")
+
+        await self._broadcast({"type": "rewound", "from_id": message_id, "removed": removed})
+
+        # Preserve the original message's attachments unless the edit supplies
+        # its own (text-only edits keep the images).
+        atts = attachments if isinstance(attachments, list) else (msg.metadata or {}).get("attachments")
+        try:
+            result = await self._say(text, msg.modality or "electron", atts if isinstance(atts, list) else None)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("http message edit failed")
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response({"ok": True, "removed": removed, **result})
+
     async def _http_task_stop(self, request: web.Request) -> web.Response:
         """Stop the task running right now (cleanly, at the next step boundary).
         No-op if nothing is running."""
@@ -2547,6 +2595,7 @@ class Daemon:
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
+        app.router.add_post("/v1/message/edit", self._http_message_edit)
         app.router.add_post("/v1/task/stop", self._http_task_stop)
         app.router.add_post("/v1/task/steer", self._http_task_steer)
         app.router.add_post("/v1/chat/clear", self._http_chat_clear)
