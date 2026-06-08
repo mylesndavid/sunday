@@ -112,6 +112,121 @@ async def _t_device_run_command(args: dict[str, Any], ctx: ToolContext) -> Any:
         return {"error": str(exc)}
 
 
+def _parse_btm(dump: str) -> list[dict[str, str]]:
+    """Parse `sfltool dumpbtm` into [{name, type, enabled}]. Each record is a
+    Name/Type/Disposition triple; an item auto-starts when its Disposition is
+    'enabled' and not 'disabled'."""
+    items: list[dict[str, str]] = []
+    name = typ = None
+    for line in dump.splitlines():
+        s = line.strip()
+        if s.startswith("Name:"):
+            name = s[len("Name:"):].strip()
+        elif s.startswith("Type:"):
+            typ = s[len("Type:"):].strip()
+        elif s.startswith("Disposition:"):
+            disp = s[len("Disposition:"):].strip()
+            enabled = "enabled" in disp and "disabled" not in disp
+            if name and name != "(null)":
+                items.append({"name": name, "type": (typ or "").split(" (")[0], "enabled": enabled})
+            name = typ = None
+    return items
+
+
+# Plumbing types that show in BTM but aren't "apps that launch at login" — the
+# user almost never means these when asking what auto-starts.
+_BTM_PLUMBING = {"quicklook", "spotlight", "dock tile"}
+
+
+def _agent_names(listing: str) -> list[str]:
+    """Active plist filenames → readable labels. Only real `.plist` files are
+    loaded agents — skip Apple's own, plus `.disabled` files and any non-plist
+    entries (e.g. backup folders) that aren't active."""
+    out = []
+    for line in listing.splitlines():
+        f = line.strip()
+        if not f or f.startswith("com.apple.") or not f.endswith(".plist"):
+            continue
+        out.append(f[:-6])
+    return out
+
+
+async def _t_mac_startup_items(args: dict[str, Any], ctx: ToolContext) -> Any:
+    """Report what actually auto-starts on the Mac, from the authoritative
+    sources — NOT a guess from /Applications, and NOT hand-written AppleScript."""
+    device_id, err = _resolve_device(ctx, args.get("device_id"), capability="shell")
+    if err:
+        return {"error": err}
+    # One shell round-trip, delimited sections. Login items + LaunchAgents/
+    # Daemons need no admin and always work; sfltool dumpbtm (the full
+    # Background Task Management registry) is richer but needs admin auth, so
+    # it's a bonus when available, never relied on.
+    script = (
+        'echo "===LOGIN==="; osascript -e '
+        "'tell application \"System Events\" to get the name of every login item' 2>/dev/null; "
+        'echo "===UAGENTS==="; ls -1 "$HOME/Library/LaunchAgents" 2>/dev/null; '
+        'echo "===SAGENTS==="; ls -1 /Library/LaunchAgents 2>/dev/null; '
+        'echo "===SDAEMONS==="; ls -1 /Library/LaunchDaemons 2>/dev/null; '
+        'echo "===BTM==="; sfltool dumpbtm 2>/dev/null'
+    )
+    try:
+        res = await _devices_manager(ctx).command(
+            str(device_id), "run_command", {"command": script, "timeout": 30}, timeout=40,
+        )
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    out = (res or {}).get("stdout") or ""
+    if not out and (res or {}).get("error"):
+        return {"error": res["error"]}
+
+    sections: dict[str, str] = {}
+    cur = None
+    for line in out.splitlines():
+        if line.startswith("===") and line.endswith("==="):
+            cur = line.strip("= ")
+            sections[cur] = ""
+        elif cur:
+            sections[cur] += line + "\n"
+
+    login_items = [n.strip() for n in (sections.get("LOGIN", "").replace("\n", ",")).split(",") if n.strip()]
+    user_agents = _agent_names(sections.get("UAGENTS", ""))
+    sys_agents = _agent_names(sections.get("SAGENTS", ""))
+    sys_daemons = _agent_names(sections.get("SDAEMONS", ""))
+
+    btm = _parse_btm(sections.get("BTM", ""))
+    btm_available = bool(btm)
+    btm_launches = sorted({b["name"] for b in btm if b["enabled"] and b["type"] not in _BTM_PLUMBING})
+
+    result = {
+        "login_items": login_items,
+        "user_launch_agents": user_agents,
+        "system_launch_agents": sys_agents,
+        "system_launch_daemons": sys_daemons,
+    }
+    if btm_available:
+        result["background_task_manager"] = btm_launches
+        result["note"] = (
+            "login_items = apps set to open at login. The launch_agents/daemons "
+            "are background services that start automatically (user agents need "
+            "no sudo to disable — move the plist out of ~/Library/LaunchAgents; "
+            "system ones need sudo). background_task_manager is the full macOS "
+            "BTM registry (admin was available this time). To disable login "
+            "items: System Settings → General → Login Items."
+        )
+    else:
+        result["note"] = (
+            "This is the no-admin view: login_items (apps set to open at login) "
+            "plus the launch agents/daemons that start background services. The "
+            "full Background Task Management registry (every app-registered "
+            "background item) needs admin via `sudo sfltool dumpbtm` — offer "
+            "that to the user if they want the exhaustive list. Disable a user "
+            "agent by moving its plist out of ~/Library/LaunchAgents (no sudo); "
+            "system agents/daemons need sudo; login items toggle in System "
+            "Settings → General → Login Items."
+        )
+    return result
+
+
 _SCREENSHOT_PARAMS = {
     "type": "object",
     "properties": {**_DEVICE_ID_PARAM},
@@ -574,6 +689,20 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         description="Run a shell command on a specific connected device. Returns stdout/stderr/exit_code.",
         parameters=_RUN_COMMAND_PARAMS,
         run=_t_device_run_command,
+    ))
+    registry.register(Tool(
+        name="mac_startup_items",
+        description=(
+            "List what actually auto-starts / launches at login on the Mac — "
+            "login items, startup apps, background agents and daemons. Reads the "
+            "authoritative macOS Background Task Management database (sfltool "
+            "dumpbtm) plus LaunchAgents/Daemons, and returns a clean structured "
+            "list. USE THIS for any 'what starts when I boot / what's set to "
+            "auto-start / login items / startup programs' question — do NOT list "
+            "/Applications (that's just installed apps) or hand-write AppleScript."
+        ),
+        parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM}},
+        run=_t_mac_startup_items,
     ))
     registry.register(Tool(
         name="device_screenshot",
