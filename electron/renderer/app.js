@@ -278,6 +278,7 @@ function appendMessage(m) {
 
   const wrap = document.createElement('div');
   wrap.className = `msg ${role}`;
+  if (typeof m.id === 'number') wrap.dataset.mid = m.id;
 
   if (content) {
     const bubble = document.createElement('div');
@@ -288,6 +289,15 @@ function appendMessage(m) {
     copy.innerHTML = copyIcon();
     copy.onclick = () => navigator.clipboard.writeText(m.content || '').then(() => { copy.innerHTML = checkIcon(); setTimeout(() => copy.innerHTML = copyIcon(), 1300); });
     bubble.appendChild(copy);
+    // Edit + rewind, ChatGPT-style — your messages only, and only real
+    // (persisted) ones with an id, not the optimistic pending bubble.
+    if (role === 'user' && typeof m.id === 'number') {
+      const edit = document.createElement('button');
+      edit.className = 'bubble-edit'; edit.title = 'Edit'; edit.setAttribute('aria-label', 'Edit');
+      edit.innerHTML = editIcon();
+      edit.onclick = () => beginEdit(wrap, m);
+      bubble.appendChild(edit);
+    }
     wrap.appendChild(bubble);
   }
 
@@ -383,6 +393,73 @@ function mdLite(raw) {
 }
 function copyIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`; }
 function checkIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`; }
+function editIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`; }
+
+// ── edit + rewind ───────────────────────────────────────────────────────────
+// Edit a previous user message; on save, the daemon drops that message and
+// everything after it and re-runs from the new text — the conversation branches
+// from there. Mirrors ChatGPT/Claude. One edit at a time.
+let editingMid = null;
+function beginEdit(wrap, m) {
+  if (editingMid !== null) return;            // already editing something
+  editingMid = m.id;
+  const original = wrap.innerHTML;
+  wrap.classList.add('editing');
+  wrap.innerHTML = '';
+
+  const box = document.createElement('div');
+  box.className = 'edit-box';
+  const ta = document.createElement('textarea');
+  ta.className = 'edit-area'; ta.value = m.content || '';
+  const row = document.createElement('div'); row.className = 'edit-actions';
+  const save = document.createElement('button'); save.className = 'btn btn-primary edit-save'; save.textContent = 'Save & submit';
+  const cancel = document.createElement('button'); cancel.className = 'btn edit-cancel'; cancel.textContent = 'Cancel';
+  row.append(cancel, save);
+  box.append(ta, row);
+  wrap.appendChild(box);
+
+  const fit = () => { ta.style.height = 'auto'; ta.style.height = Math.min(320, ta.scrollHeight) + 'px'; };
+  ta.addEventListener('input', fit);
+  requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); fit(); });
+
+  const restore = () => { editingMid = null; wrap.classList.remove('editing'); wrap.innerHTML = original;
+    // re-bind the buttons the innerHTML snapshot lost
+    const c = wrap.querySelector('.bubble-copy'); if (c) c.onclick = () => navigator.clipboard.writeText(m.content || '').then(() => { c.innerHTML = checkIcon(); setTimeout(() => c.innerHTML = copyIcon(), 1300); });
+    const e = wrap.querySelector('.bubble-edit'); if (e) e.onclick = () => beginEdit(wrap, m);
+  };
+  cancel.onclick = restore;
+  ta.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); restore(); }
+    else if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); save.click(); }
+  });
+  save.onclick = () => submitEdit(wrap, m, ta.value.trim(), restore);
+}
+
+async function submitEdit(wrap, m, text, restore) {
+  if (!text) { restore(); return; }
+  // Optimistically rewind the DOM: drop the edited row and everything below it,
+  // forget those ids so refreshLog re-renders the branch, then show the edited
+  // text + a thinking placeholder while the new turn streams in over the WS.
+  let n = wrap;
+  while (n) { const next = n.nextElementSibling; const mid = n.dataset && n.dataset.mid; if (mid) renderedIds.delete(Number(mid)); n.remove(); n = next; }
+  editingMid = null;
+  appendMessage({ id: undefined, role: 'user', content: text, created_at: Date.now() / 1000, modality: 'electron' });
+  const w = chatEl.lastElementChild; if (w) w.classList.add('pending');
+  scrollToEnd();
+
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/message/edit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message_id: m.id, text }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { appendMessage({ role: 'system', content: `Edit failed: ${d.error || res.status}`, created_at: Date.now() / 1000 }); }
+  } catch (err) {
+    appendMessage({ role: 'system', content: `Edit failed: ${err.message}`, created_at: Date.now() / 1000 });
+  } finally {
+    setTimeout(refreshLog, 50);
+  }
+}
 
 // time
 function fmtClock(e) { return new Date(e * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }

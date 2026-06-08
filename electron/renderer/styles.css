@@ -124,6 +124,34 @@ body { display: flex; flex-direction: column; }
 .msg:hover .bubble-copy { opacity: 1; }
 .bubble-copy:hover { background: var(--surface-2); }
 
+/* per-bubble edit (user messages) — sits just inside the copy button */
+.bubble-edit {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--text-2);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; opacity: 0;
+  transition: opacity var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+  box-shadow: var(--shadow-1);
+}
+.msg.user .bubble-edit { left: -66px; }
+.msg:hover .bubble-edit { opacity: 1; }
+.bubble-edit:hover { background: var(--surface-2); }
+
+/* inline edit box (replaces the bubble while editing) */
+.msg.editing { max-width: 78%; }
+.edit-box { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.edit-area {
+  width: 100%; min-height: 44px; resize: none;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--accent); border-radius: 12px;
+  padding: 10px 12px; font: inherit; line-height: 1.5; outline: none;
+  box-shadow: var(--shadow-1);
+}
+.edit-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.edit-actions .btn { padding: 6px 12px; font-size: 12px; }
+
 /* reasoning disclosure — a quiet step in the turn */
 .reasoning { margin: 2px 4px; max-width: 74%; align-self: flex-start; }
 .reasoning summary { list-style: none; cursor: pointer; font: 500 11px/1 var(--font-mono); color: var(--text-3); display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; }
