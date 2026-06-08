@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('sunday', {
   argusStatus: () => ipcRenderer.invoke('sunday:argus-status'),
   setArgus: (enabled) => ipcRenderer.invoke('sunday:argus-set', enabled),
   openArgus: () => ipcRenderer.invoke('sunday:argus-open'),
+  loginItemGet: () => ipcRenderer.invoke('sunday:login-item-get'),
+  loginItemSet: (enabled) => ipcRenderer.invoke('sunday:login-item-set', enabled),
   setOverlayState: (state) => ipcRenderer.send('sunday:overlay-state', state),
   onOverlayState: (handler) => {
     ipcRenderer.on('sunday:overlay-state', (_evt, state) => handler(state));

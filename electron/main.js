@@ -1563,6 +1563,21 @@ ipcMain.handle('sunday:argus-set', async (_evt, enabled) => {
 });
 ipcMain.handle('sunday:argus-open', () => { try { shell.openExternal(ARGUS_URL); return { ok: true }; } catch (e) { return { ok: false, error: String(e) }; } });
 
+// Start-at-login. app.setLoginItemSettings registers via the same macOS
+// Background Task Management database as System Settings → Login Items, so the
+// toggle stays in sync both ways. openAsHidden launches her to the menu bar /
+// background rather than popping a window in your face every boot.
+ipcMain.handle('sunday:login-item-get', () => {
+  try { return { ok: true, openAtLogin: !!app.getLoginItemSettings().openAtLogin }; }
+  catch (e) { return { ok: false, error: String(e) }; }
+});
+ipcMain.handle('sunday:login-item-set', (_evt, enabled) => {
+  try {
+    app.setLoginItemSettings({ openAtLogin: !!enabled, openAsHidden: true });
+    return { ok: true, openAtLogin: !!app.getLoginItemSettings().openAtLogin };
+  } catch (e) { return { ok: false, error: String(e) }; }
+});
+
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();
 });

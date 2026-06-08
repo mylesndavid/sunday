@@ -1752,6 +1752,27 @@ function wireArgus() {
   });
   $('#set-argus-open')?.addEventListener('click', () => window.sunday.openArgus());
   refreshArgusUI();
+
+  // Start-at-login toggle (mirrors the BTM login-item state both ways).
+  async function refreshLoginUI() {
+    const statusEl = $('#set-login-status');
+    const btn = $('#set-login-toggle');
+    if (!statusEl || !btn) return;
+    let s; try { s = await window.sunday.loginItemGet(); } catch { return; }
+    if (!s.ok) { statusEl.dataset.state = 'fail'; statusEl.textContent = s.error || 'unavailable'; btn.disabled = true; return; }
+    btn.disabled = false;
+    btn.textContent = s.openAtLogin ? 'Turn off' : 'Turn on';
+    statusEl.dataset.state = s.openAtLogin ? 'ok' : '';
+    statusEl.textContent = s.openAtLogin ? 'on — opens when you log in' : 'off';
+  }
+  $('#set-login-toggle')?.addEventListener('click', async () => {
+    const btn = $('#set-login-toggle'); btn.disabled = true;
+    try {
+      const cur = await window.sunday.loginItemGet();
+      await window.sunday.loginItemSet(!cur.openAtLogin);
+    } finally { await refreshLoginUI(); }
+  });
+  refreshLoginUI();
 }
 
 // ── permissions ─────────────────────────────────────────────────────────────
