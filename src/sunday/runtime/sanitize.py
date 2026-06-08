@@ -130,18 +130,57 @@ def repair_message_sequence(messages: list) -> int:
     """Collapse malformed role-alternation in the live history. Returns
     repair count.
 
+    - Heals an assistant message whose `tool_calls` were never answered —
+      a daemon crash mid-turn leaves tool_calls with no following tool
+      results, which providers 400 ("tool_calls must be followed by tool
+      messages"), wedging EVERY future turn until the bad message ages out.
+      Strips the unanswered tool_calls (keeping any text); drops the message
+      if nothing's left.
     - Drops stray `tool` messages whose tool_call_id doesn't match any
       preceding assistant tool_call.
     - Merges consecutive `user` messages with a blank line separator
       so no user input is lost.
-
-    Does NOT rewind orphan assistant(tool_calls)+tool pairs that precede
-    a user message — that pattern is valid mid-dialog.
     """
     if not messages:
         return 0
 
     repairs = 0
+
+    # Pass 0: heal assistant messages with unanswered tool_calls. The tool
+    # results for an assistant(tool_calls) message arrive as the run of `tool`
+    # messages immediately after it; if any required tool_call_id is missing
+    # from that run, the request is malformed (crash mid-turn). Strip the
+    # tool_calls so the turn can proceed; Pass 1 then sweeps any now-orphaned
+    # tool results.
+    healed: list[Any] = []
+    i, n = 0, len(messages)
+    while i < n:
+        msg = messages[i]
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
+            answered: set[str] = set()
+            j = i + 1
+            while j < n and isinstance(messages[j], dict) and messages[j].get("role") == "tool":
+                tid = messages[j].get("tool_call_id")
+                if tid:
+                    answered.add(tid)
+                j += 1
+            required = {
+                tc.get("id") for tc in msg["tool_calls"]
+                if isinstance(tc, dict) and tc.get("id")
+            }
+            if not required.issubset(answered):
+                repairs += 1
+                stripped = {k: v for k, v in msg.items() if k != "tool_calls"}
+                content = stripped.get("content")
+                if (isinstance(content, str) and content.strip()) or (isinstance(content, list) and content):
+                    healed.append(stripped)
+                # else: assistant had nothing but the dead tool_calls — drop it
+                i += 1
+                continue
+        healed.append(msg)
+        i += 1
+    if repairs:
+        messages[:] = healed
 
     # Pass 1: drop stray tool messages without a matching assistant
     known_tool_ids: set[str] = set()
