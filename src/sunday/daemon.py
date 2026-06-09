@@ -1611,6 +1611,33 @@ class Daemon:
             self._gmail_login_ok = {"address": address, "ok": True}
         return web.json_response({"configured": True, "address": address, "ok": ok})
 
+    async def _http_telegram_status(self, request: web.Request) -> web.Response:
+        """Report whether the Telegram bot is configured and the token works.
+
+        Calls getMe once (cached after success) to confirm the token and pull
+        the bot's @username so the card can show 'connected as @YourBot'. Never
+        throws — a flaky network must not 500 the Settings page.
+        {configured, ok, username}."""
+        from sunday.credentials import get_credential
+        token = get_credential("TELEGRAM_BOT_TOKEN")
+        if not token:
+            return web.json_response({"configured": False, "ok": False, "username": None})
+        cache = getattr(self, "_telegram_me", None)
+        if cache and cache.get("token") == token and cache.get("ok"):
+            return web.json_response({"configured": True, "ok": True, "username": cache.get("username")})
+        username, ok = None, False
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=4) as client:
+                res = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+            if res.status_code == 200 and res.json().get("ok"):
+                ok = True
+                username = (res.json().get("result") or {}).get("username")
+                self._telegram_me = {"token": token, "ok": True, "username": username}
+        except Exception:  # noqa: BLE001 — never throw out of a status probe
+            ok = False
+        return web.json_response({"configured": True, "ok": ok, "username": username})
+
     async def _http_cockpit_status(self, request: web.Request) -> web.Response:
         """Cockpit pairing + connection state for the Settings card.
 
@@ -2631,6 +2658,7 @@ class Daemon:
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
+        app.router.add_get("/v1/telegram/status", self._http_telegram_status)
         app.router.add_get("/v1/cockpit/status", self._http_cockpit_status)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)

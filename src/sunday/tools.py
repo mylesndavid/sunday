@@ -229,6 +229,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.coder",
         "sunday.channels.messages_local",
         "sunday.channels.sendblue",
+        "sunday.channels.telegram",
         "sunday.channels.vapi",
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",

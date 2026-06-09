@@ -441,6 +441,26 @@
             </div>
           </div>
 
+          <!-- TELEGRAM (bot API — long-polling, no webhook) -->
+          <div class="set-panel">
+            <div class="brain-label">Telegram</div>
+            <div class="mcp-bi" id="telegram-card">
+              <p class="set-help set-help-tight">Chat with Sunday from Telegram. Message <a href="#" id="telegram-botfather-link" class="mcp-bi-link">@BotFather</a> → <code>/newbot</code> → paste the token it gives you. Then DM your bot — the first chat to message becomes the owner.</p>
+              <label class="set-field">
+                <span class="set-field-l">Bot token</span>
+                <input type="password" id="telegram-token" class="field mono" placeholder="123456789:ABCdef..." autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">Allowed chat IDs <span class="set-field-opt">optional</span></span>
+                <input type="text" id="telegram-allowed" class="field mono" placeholder="leave empty to auto-bind the first sender" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="telegram-save">Save</button>
+                <span class="set-verify" id="telegram-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
           <!-- CONNECTED SERVICES -->
           <div class="set-panel">
             <div class="brain-label">Connected services</div>
