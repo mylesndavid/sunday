@@ -75,6 +75,7 @@ export async function loadAll() {
   loadConnections();
   loadMcp();
   loadGmailStatus();
+  loadTelegramStatus();
   loadCockpitStatus();
   loadMemorySummary();
   loadSkills();
@@ -425,6 +426,38 @@ async function saveGmailCreds() {
     await saveBrain({ credentials: { GMAIL_ADDRESS: address, GMAIL_APP_PASSWORD: password } });
     if ($('#gmail-password')) $('#gmail-password').value = '';   // don't keep the secret on screen
     await loadGmailStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+// Telegram (bot API). Saves TELEGRAM_BOT_TOKEN (+ optional allowlist) through
+// the same saveBrain({credentials}) path; status reflects a getMe probe. The
+// poller picks up the new token on the next daemon restart.
+async function loadTelegramStatus() {
+  const line = $('#telegram-status'); if (!line) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/telegram/status`)).json(); }
+  catch { line.dataset.state = ''; line.textContent = ''; return; }
+  if (!d.configured) { line.dataset.state = ''; line.textContent = 'Not connected'; return; }
+  if (d.ok) { line.dataset.state = 'ok'; line.textContent = d.username ? `connected as @${d.username} — DM your bot to start` : 'connected — DM your bot to start'; }
+  else { line.dataset.state = 'fail'; line.textContent = "saved, but the token didn't work — re-check it with @BotFather"; }
+}
+
+async function saveTelegramCreds() {
+  const token = $('#telegram-token')?.value.trim() || '';
+  const allowed = $('#telegram-allowed')?.value.trim() || '';
+  const line = $('#telegram-status');
+  if (!token) {
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'Paste the bot token from @BotFather.'; }
+    return;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  try {
+    await saveBrain({ credentials: { TELEGRAM_BOT_TOKEN: token, TELEGRAM_ALLOWED_CHAT_IDS: allowed } });
+    if ($('#telegram-token')) $('#telegram-token').value = '';   // don't keep the secret on screen
+    await loadTelegramStatus();
+    if (line) line.textContent += ' (restart Sunday to start listening)';
   } catch (err) {
     if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
   }
@@ -1313,6 +1346,13 @@ function wire() {
   $('#gmail-save')?.addEventListener('click', () => saveGmailCreds());
   ['#gmail-address', '#gmail-password'].forEach((sel) => {
     $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveGmailCreds(); } });
+  });
+
+  // Telegram card — open @BotFather, save the token (Enter works too).
+  $('#telegram-botfather-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://t.me/BotFather'); });
+  $('#telegram-save')?.addEventListener('click', () => saveTelegramCreds());
+  ['#telegram-token', '#telegram-allowed'].forEach((sel) => {
+    $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveTelegramCreds(); } });
   });
 
   // Cockpit (browser extension) card — the full pairing flow lives here:
