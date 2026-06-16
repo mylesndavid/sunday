@@ -1286,6 +1286,20 @@ async function copyWebhook() {
   } catch { /* clipboard blocked — the field is selectable as a fallback */ }
 }
 
+async function sendTestText() {
+  const to = $('#sb-test-to')?.value.trim() || '';
+  const line = $('#sb-test-status');
+  if (!to) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter your phone number.'; } return; }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'sending…'; }
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/channels/sendblue/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }),
+    })).json();
+    if (d.ok) { line.dataset.state = 'ok'; line.textContent = 'sent — check your phone, then reply to test inbound'; }
+    else { line.dataset.state = 'fail'; line.textContent = d.error || 'send failed'; }
+  } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
+}
+
 function wire() {
   // ── nav ──
   document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.page)));
@@ -1410,6 +1424,8 @@ function wire() {
   $('#sb-save')?.addEventListener('click', () => saveSendblue());
   ['#sb-key-id', '#sb-secret'].forEach((sel) => $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveSendblue(); } }));
   $('#sb-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://sendblue.co'); });
+  $('#sb-test-send')?.addEventListener('click', () => sendTestText());
+  $('#sb-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendTestText(); } });
 
   // Ollama wizard buttons
   $('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));

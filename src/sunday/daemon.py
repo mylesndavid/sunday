@@ -2628,6 +2628,27 @@ class Daemon:
             "webhook_url": public_webhook_url(ts.get("dns_name")),
         })
 
+    async def _http_sendblue_test(self, request: web.Request) -> web.Response:
+        """Send a test iMessage so the whole texting round-trip can be proven
+        from the desktop: Sunday texts you, you reply, it lands in the one chat."""
+        from sunday.channels.sendblue import _send_sendblue, _sendblue_headers
+        if _sendblue_headers() is None:
+            return web.json_response({"ok": False, "error": "Sendblue keys not set yet"}, status=400)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+        to = (body.get("to") or "").strip()
+        if not to:
+            return web.json_response({"ok": False, "error": "enter your phone number"}, status=400)
+        msg = "Test from Sunday — texting is wired up. Reply to this and it lands in your chat."
+        try:
+            result = await _send_sendblue(to, msg)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=502)
+        ok = bool(result) and not (isinstance(result, dict) and result.get("error"))
+        return web.json_response({"ok": ok, "result": result})
+
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
@@ -2666,6 +2687,7 @@ class Daemon:
         app.router.add_post("/v1/config", self._http_post_config)
         app.router.add_get("/v1/net/status", self._http_net_status)
         app.router.add_post("/v1/net/configure", self._http_net_configure)
+        app.router.add_post("/v1/channels/sendblue/test", self._http_sendblue_test)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
