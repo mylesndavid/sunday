@@ -31,7 +31,7 @@ from aiohttp import web
 
 from sunday.brain import respond
 from sunday.config import SundayConfig
-from sunday.credentials import get_credential
+from sunday.credentials import get_credential, set_credential
 from sunday.tools import Tool, ToolContext, ToolRegistry
 
 log = structlog.get_logger("sunday.channel.sendblue")
@@ -65,6 +65,43 @@ def _sendblue_headers() -> dict[str, str] | None:
         "sb-api-secret-key": api_secret,
         "Content-Type": "application/json",
     }
+
+
+# ─── webhook secret ───────────────────────────────────────────────────────
+# The inbound webhook is auth-exempt (external services can't carry our bearer
+# token). When the brain runs on a private box reached via Tailscale Funnel,
+# Funnel exposes ONLY /webhooks/sendblue/<secret> to the public internet — so
+# the unguessable secret in the path IS the bearer token. The bare
+# /webhooks/sendblue path stays registered for tailnet/local callers but is
+# never funneled.
+
+def _webhook_secret() -> str | None:
+    return get_credential("SENDBLUE_WEBHOOK_SECRET")
+
+
+def get_or_create_webhook_secret() -> str:
+    """Stable, unguessable path segment that gates the public webhook.
+    Generated once and persisted to ~/.sunday/credentials.env."""
+    existing = _webhook_secret()
+    if existing:
+        return existing
+    import secrets as _secrets
+    token = _secrets.token_urlsafe(24)
+    set_credential("SENDBLUE_WEBHOOK_SECRET", token)
+    return token
+
+
+def webhook_path() -> str:
+    """The secret-gated inbound path, e.g. /webhooks/sendblue/<secret>."""
+    return f"/webhooks/sendblue/{get_or_create_webhook_secret()}"
+
+
+def public_webhook_url(dns_name: str | None) -> str | None:
+    """The full https URL to paste into Sendblue, given the node's MagicDNS
+    name. None when Tailscale isn't up yet (no public host to point at)."""
+    if not dns_name:
+        return None
+    return f"https://{dns_name}{webhook_path()}"
 
 
 def _extract_messages(payload: Any) -> list[dict[str, Any]]:
@@ -228,6 +265,9 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
     except Exception:  # noqa: BLE001
         return web.json_response({"error": "invalid JSON"}, status=400)
 
+    if request.path == "/webhooks/sendblue" and _webhook_secret():
+        log.warning("sendblue hit on legacy unsecured path — point Sendblue at the secret webhook URL")
+
     if body.get("is_outbound"):
         return web.json_response({"ok": True, "skipped": "outbound receipt"})
     status = (body.get("status") or "").upper()
@@ -372,7 +412,13 @@ async def _t_sendblue_send(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
     from sunday.daemon import register_webhook, register_background_task
+    # Secret-gated path is the one we expose publicly via Funnel. The bare path
+    # stays for tailnet/local callers (and back-compat with VPS deployments that
+    # already point Sendblue at it) but is never funneled.
+    secret_path = webhook_path()
+    register_webhook(secret_path, _webhook_handler)
     register_webhook("/webhooks/sendblue", _webhook_handler)
+    log.info("sendblue webhook registered", secured_path_len=len(secret_path))
     register_background_task(_init_seen_uids_then_poll)
 
     registry.register(Tool(

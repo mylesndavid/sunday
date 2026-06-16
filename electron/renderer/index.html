@@ -203,6 +203,7 @@
     <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings">
       <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
       <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
+      <button type="button" class="set-navitem" data-page="page-texting">Texting</button>
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
       <button type="button" class="set-navitem" data-page="page-skills">Skills</button>
       <button type="button" class="set-navitem" data-page="page-voice">Voice &amp; capture</button>
@@ -386,6 +387,60 @@
           <div class="set-panel set-impact">
             <div class="brain-label">Privacy impact</div>
             <p class="set-impact-line" id="set-impact" aria-live="polite">—</p>
+          </div>
+        </section>
+
+        <!-- ═══ TEXTING ════════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-texting">
+          <h2>Texting</h2>
+          <p class="set-help">Text Sunday from your phone — she answers on her own number, in the same one chat. This is set up on the brain: the always-on Mac she lives on.</p>
+
+          <!-- REACHABILITY (Tailscale) -->
+          <div class="set-panel">
+            <div class="brain-label">Reachability</div>
+            <p class="set-help set-help-tight">For texts to land instantly, the brain needs exactly one public path — just the inbound webhook — over Tailscale Funnel. Everything else stays private on your tailnet.</p>
+            <dl class="ov-rows" id="net-rows" aria-live="polite">
+              <div class="ov-row"><dt>Tailscale</dt><dd id="net-ts">—</dd></div>
+              <div class="ov-row"><dt>This brain</dt><dd id="net-host" class="mono">—</dd></div>
+              <div class="ov-row"><dt>Public webhook</dt><dd id="net-funnel">—</dd></div>
+            </dl>
+            <div class="set-actions">
+              <span class="set-verify" id="net-status" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="net-setup">Set up texting</button>
+            </div>
+            <!-- Manual fallback, shown only when auto-config can't run -->
+            <div class="set-manual" id="net-manual" hidden>
+              <p class="set-help set-help-tight">Funnel couldn't be configured automatically. Enable Funnel for this machine in the Tailscale admin console, then run these on the brain:</p>
+              <pre class="instr-text mono" id="net-manual-cmds"></pre>
+            </div>
+          </div>
+
+          <!-- WEBHOOK URL — the one thing you paste into Sendblue -->
+          <div class="set-panel" id="net-webhook-panel" hidden>
+            <div class="brain-label">Sendblue webhook URL</div>
+            <p class="set-help set-help-tight">Paste this into Sendblue → your number → inbound webhook. The secret in the path is the only thing that makes it public — keep it private.</p>
+            <div class="net-url-row">
+              <input type="text" id="net-webhook-url" class="field mono" readonly aria-label="Sendblue webhook URL">
+              <button type="button" class="btn" id="net-webhook-copy">Copy</button>
+            </div>
+          </div>
+
+          <!-- SENDBLUE ACCOUNT -->
+          <div class="set-panel">
+            <div class="brain-label">Sendblue account</div>
+            <p class="set-help set-help-tight">Sunday's iMessage-capable number lives at Sendblue. Paste the API keys from your dashboard. <a href="#" id="sb-keys-link" class="mcp-bi-link">Open Sendblue</a></p>
+            <label class="set-field">
+              <span class="set-field-l">API key ID</span>
+              <input type="text" id="sb-key-id" class="field mono" placeholder="sb-…" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="set-field">
+              <span class="set-field-l">API secret key</span>
+              <input type="password" id="sb-secret" class="field mono" placeholder="paste your secret key" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="set-actions">
+              <span class="set-verify" id="sb-status" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="sb-save">Save</button>
+            </div>
           </div>
         </section>
 

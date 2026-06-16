@@ -2592,6 +2592,42 @@ class Daemon:
             return web.json_response({"ok": True})
         return web.json_response({"ok": False, "error": "invalid token"}, status=401)
 
+    # ─── network / channel setup (server-role config surface) ────────────
+    # These power the desktop's server-side Network + Texting settings. They're
+    # auth-gated /v1 routes, so only a paired client (or the local app) can read
+    # the box's path or rewire Funnel — config lives on the brain, by design.
+
+    async def _http_net_status(self, request: web.Request) -> web.Response:
+        """Tailscale reachability + the ready-to-paste Sendblue webhook URL."""
+        from sunday.net import tailscale
+        from sunday.channels.sendblue import webhook_path, public_webhook_url
+        from sunday.credentials import credential_present
+        ts = tailscale.status()
+        return web.json_response({
+            "tailscale": ts,
+            "port": self.config.server.port,
+            "sendblue": {
+                "configured": credential_present("SENDBLUE_API_KEY_ID")
+                              and credential_present("SENDBLUE_API_SECRET_KEY"),
+                "webhook_path": webhook_path(),
+                "webhook_url": public_webhook_url(ts.get("dns_name")),
+            },
+        })
+
+    async def _http_net_configure(self, request: web.Request) -> web.Response:
+        """Run `tailscale serve`+`funnel` for just the webhook path, giving the
+        private box exactly one public ingress. Returns the URL to paste into
+        Sendblue, plus manual commands if the auto path hit a version quirk."""
+        from sunday.net import tailscale
+        from sunday.channels.sendblue import webhook_path, public_webhook_url
+        result = tailscale.configure_funnel(self.config.server.port, webhook_path())
+        ts = tailscale.status()
+        return web.json_response({
+            "result": result,
+            "tailscale": ts,
+            "webhook_url": public_webhook_url(ts.get("dns_name")),
+        })
+
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
@@ -2628,6 +2664,8 @@ class Daemon:
         app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/config", self._http_get_config)
         app.router.add_post("/v1/config", self._http_post_config)
+        app.router.add_get("/v1/net/status", self._http_net_status)
+        app.router.add_post("/v1/net/configure", self._http_net_configure)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
@@ -2685,7 +2723,10 @@ class Daemon:
         app.router.add_get("/v1/cockpit/ws", self.cockpit.handle_ws)
         app.router.add_get("/v1/cockpit/precheck", self.cockpit.handle_precheck)
         # Catch-all webhook dispatcher — modules register paths in _webhooks.
-        app.router.add_post("/webhooks/{name}", self._webhook_dispatch)
+        # `{name:.*}` so multi-segment secret paths (e.g.
+        # /webhooks/sendblue/<secret>) route here; _webhook_dispatch then
+        # exact-matches request.path against the registry.
+        app.router.add_post("/webhooks/{name:.*}", self._webhook_dispatch)
         return app
 
     # ─── lifecycle ───────────────────────────────────────────────────────

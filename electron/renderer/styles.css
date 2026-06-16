@@ -597,6 +597,12 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .set-prompt-meta { display: flex; justify-content: space-between; margin-top: 8px; font: 11px/1 var(--font-mono); color: var(--text-3); }
 .set-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 16px; }
 
+/* Texting — webhook URL row + manual-command fallback */
+.net-url-row { display: flex; gap: 8px; align-items: center; }
+.net-url-row .field { flex: 1; min-width: 0; }
+.set-manual { margin-top: 12px; }
+.set-manual pre { margin: 8px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: var(--r-md); font: 12px/1.6 var(--font-mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+
 /* Transcription mode block under the observer toggle. */
 .set-trans { margin-top: 14px; font-size: 13px; }
 .set-trans-on { color: var(--ok); font-weight: 500; padding: 8px 12px; background: var(--ok-tint); border-radius: var(--r-md); display: inline-block; }

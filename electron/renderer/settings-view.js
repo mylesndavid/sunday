@@ -76,6 +76,7 @@ export async function loadAll() {
   loadMcp();
   loadGmailStatus();
   loadCockpitStatus();
+  loadNet();
   loadMemorySummary();
   loadSkills();
   updateOverview();
@@ -1212,6 +1213,79 @@ function updatePrivacy() {
 // ── update state (About) — tracked for the Overview attention block ──────────
 let _updateReady = false;
 
+// ── Texting (Sendblue over Tailscale) ───────────────────────────────────────
+// All server-side: these read /v1/net/status and POST /v1/net/configure on the
+// brain. Sendblue keys save through the standard saveBrain({credentials}) path,
+// same as Gmail/Cockpit. The webhook URL carries a path secret so Funnel can
+// expose just that one route publicly.
+async function loadNet() {
+  const tsEl = $('#net-ts'); if (!tsEl) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/net/status`)).json(); }
+  catch { tsEl.textContent = 'unavailable'; return; }
+  const ts = d.tailscale || {};
+  if (!ts.installed) tsEl.textContent = 'not installed on the brain';
+  else if (!ts.running) tsEl.textContent = `installed, not running${ts.error ? ` — ${ts.error}` : ''}`;
+  else tsEl.textContent = `connected · ${ts.tailnet || 'tailnet'}`;
+  $('#net-host').textContent = ts.dns_name || '—';
+  const funnelEl = $('#net-funnel');
+  if (ts.funnel_capable === true) funnelEl.textContent = 'available';
+  else if (ts.funnel_capable === false) funnelEl.textContent = 'not enabled for this node';
+  else funnelEl.textContent = '—';
+
+  const sb = d.sendblue || {};
+  const panel = $('#net-webhook-panel');
+  if (sb.webhook_url) { $('#net-webhook-url').value = sb.webhook_url; if (panel) panel.hidden = false; }
+  else if (panel) { panel.hidden = true; }
+
+  const sbLine = $('#sb-status');
+  if (sbLine) {
+    if (sb.configured) { sbLine.dataset.state = 'ok'; sbLine.textContent = 'keys saved'; }
+    else { sbLine.dataset.state = ''; sbLine.textContent = 'no keys yet'; }
+  }
+}
+
+async function setupTexting() {
+  const line = $('#net-status'); const manual = $('#net-manual');
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'configuring Tailscale Funnel…'; }
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/net/configure`, { method: 'POST' })).json(); }
+  catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } return; }
+  const r = d.result || {};
+  if (r.ok) {
+    if (line) { line.dataset.state = 'ok'; line.textContent = 'texting is live — paste the webhook URL into Sendblue'; }
+    if (manual) manual.hidden = true;
+  } else {
+    if (line) { line.dataset.state = 'fail'; line.textContent = r.error || "couldn't auto-configure — use the commands below"; }
+    if (manual && Array.isArray(r.manual)) { $('#net-manual-cmds').textContent = r.manual.join('\n'); manual.hidden = false; }
+  }
+  await loadNet();
+}
+
+async function saveSendblue() {
+  const id = $('#sb-key-id')?.value.trim() || '';
+  const secret = $('#sb-secret')?.value.trim() || '';
+  const line = $('#sb-status');
+  if (!id || !secret) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter both keys.'; } return; }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  try {
+    await saveBrain({ credentials: { SENDBLUE_API_KEY_ID: id, SENDBLUE_API_SECRET_KEY: secret } });
+    if ($('#sb-secret')) $('#sb-secret').value = '';   // don't keep the secret on screen
+    await loadNet();
+    if (line) { line.dataset.state = 'ok'; line.textContent = 'keys saved'; }
+  } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
+}
+
+async function copyWebhook() {
+  const url = $('#net-webhook-url')?.value || '';
+  if (!url) return;
+  const btn = $('#net-webhook-copy');
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = t; }, 1200); }
+  } catch { /* clipboard blocked — the field is selectable as a fallback */ }
+}
+
 function wire() {
   // ── nav ──
   document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.page)));
@@ -1329,6 +1403,13 @@ function wire() {
   });
   $('#cockpit-connect')?.addEventListener('click', () => saveCockpitToken());
   $('#cockpit-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveCockpitToken(); } });
+
+  // Texting (Sendblue over Tailscale)
+  $('#net-setup')?.addEventListener('click', () => setupTexting());
+  $('#net-webhook-copy')?.addEventListener('click', () => copyWebhook());
+  $('#sb-save')?.addEventListener('click', () => saveSendblue());
+  ['#sb-key-id', '#sb-secret'].forEach((sel) => $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveSendblue(); } }));
+  $('#sb-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://sendblue.co'); });
 
   // Ollama wizard buttons
   $('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));
