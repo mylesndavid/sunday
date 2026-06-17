@@ -186,7 +186,12 @@ async function startEmbeddedDaemon() {
   // SERVER role (packaged): launchd owns the daemon so it outlives the GUI —
   // survives app quit, crash, and reboot. We install/refresh the agent and wait
   // for health; we never spawn an app-child or pkill (KeepAlive would fight it).
-  if (wantsLaunchdDaemon()) return installServerDaemon();
+  // SAFETY NET: if launchd can't bring the daemon up, fall through to the
+  // app-child path so the brain is never left dead — a child beats no brain.
+  if (wantsLaunchdDaemon()) {
+    if (await installServerDaemon()) return true;
+    console.warn('launchd daemon failed to come up — falling back to an app-child daemon');
+  }
   const token = localAuthToken();
   // Reuse an already-running local daemon ONLY if it accepts our token AND runs
   // our version; otherwise it's stale (bad token, or old code left over from a
@@ -302,29 +307,39 @@ async function installServerDaemon() {
   const uid = os.userInfo().uid ?? 501;
   const domain = `gui/${uid}`, target = `${domain}/${SERVER_DAEMON_LABEL}`;
   const plist = serverDaemonPlistPath();
+  // Decide BEFORE touching anything: is a healthy, current daemon already serving?
+  // If so we must NOT bootout — bootout-then-bootstrap can race and leave the
+  // brain dead (the 0.4.76 relaunch bug). Only reload when we actually need to:
+  // the daemon is down, or it's stale (old code left over after an auto-update).
+  const alreadyGood = await daemonHealthy() && await daemonAcceptsToken(token) && await daemonMatchesVersion();
   try {
     fs.mkdirSync(path.dirname(plist), { recursive: true });
     fs.mkdirSync(path.join(os.homedir(), '.sunday', 'logs'), { recursive: true });
     // 0600 — the plist embeds the bearer token, so keep it owner-only.
     fs.writeFileSync(plist, _serverDaemonPlistXml(bin, token), { mode: 0o600 });
   } catch (e) { console.warn('write daemon plist failed', e?.message); return false; }
-  // bootout first so bootstrap re-reads the (possibly changed) plist. Between the
-  // two, clear any NON-launchd squatter on the port — once we've booted our own
-  // agent out, nothing launchd-managed is there for KeepAlive to fight.
+  if (alreadyGood) return true;   // serving and current — leave it running, just refresh the plist on disk
+  // Reload. bootout first so bootstrap re-reads the (possibly changed) plist;
+  // wait long enough for it to FULLY exit (a short wait was the race that killed
+  // the brain), clear any non-launchd squatter, then bootstrap with retries and
+  // verify health each round.
   _launchctl(['bootout', target]);
-  await new Promise((r) => setTimeout(r, 400));
+  await new Promise((r) => setTimeout(r, 1200));
   try {
     require('node:child_process').execSync(
       `lsof -ti tcp:${LOCAL_PORT} -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null`,
       { stdio: 'ignore', shell: '/bin/bash' });
   } catch {}
-  if (!_launchctl(['bootstrap', domain, plist])) {
-    // Already bootstrapped, or bootstrap unsupported on this macOS — hard-restart.
-    _launchctl(['kickstart', '-k', target]);
-  }
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('launchd daemon healthy'); return true; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // bootstrap loads + starts (RunAtLoad); if it's somehow already loaded, kickstart restarts it.
+    if (!_launchctl(['bootstrap', domain, plist])) _launchctl(['kickstart', '-k', target]);
+    for (let i = 0; i < 24; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('launchd daemon healthy'); return true; }
+    }
+    console.warn(`launchd daemon not healthy (attempt ${attempt + 1}/3) — booting out and retrying`);
+    _launchctl(['bootout', target]);
+    await new Promise((r) => setTimeout(r, 1500));
   }
   console.warn('launchd daemon never became healthy');
   return false;
