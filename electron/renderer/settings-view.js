@@ -13,6 +13,7 @@ let sysTimer = null;
 // Overview + Privacy generated sentences read from here.
 let live = {
   local: true,
+  role: 'server',
   provider: 'openrouter',
   model: '',
   voiceProvider: 'openai',
@@ -853,6 +854,7 @@ async function refreshRunMode() {
   try {
     const m = await window.sunday.runMode();
     live.local = !!m.local;
+    live.role = m.role || (m.local ? 'server' : 'satellite');
     paintRuntime();
     // ChatGPT (Codex) only works on This Mac — reflect that in the provider row.
     const codexRow = document.querySelector('#set-prov-list [data-provider="codex"]');
@@ -1176,6 +1178,9 @@ function voiceSentence() {
 
 function updateOverview() {
   if (!$('#ov-runtime')) return;
+  $('#ov-role').textContent = live.role === 'server'
+    ? 'Server · this Mac is the brain'
+    : 'Satellite · a window onto the brain';
   $('#ov-runtime').textContent = live.local ? 'This Mac' : (DAEMON_HTTP || 'remote daemon');
   $('#ov-thinking').textContent = `${provLabel(live.provider)}${live.model ? ` · ${live.model.split('/').slice(-1)[0]}` : ''}`;
   $('#ov-datapath').textContent = chatDestSentence();

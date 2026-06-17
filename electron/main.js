@@ -85,6 +85,18 @@ function resolveDaemon() {
   };
 }
 
+// This machine's role in the topology: "server" (this Mac IS the brain — daemon
+// always-on, owns the one chat, reachable over Tailscale) or "satellite" (a
+// window onto a brain that lives elsewhere). An explicit prefs.role wins;
+// otherwise derive it from where the daemon lives — a local brain IS the server,
+// a remote one makes this a satellite. Role is the topology concept; the
+// local/cloud mechanism it derives from stays underneath it.
+function resolveRole() {
+  const prefs = loadPrefs();
+  if (prefs.role === 'server' || prefs.role === 'satellite') return prefs.role;
+  return isLocalDaemon() ? 'server' : 'satellite';
+}
+
 
 // Auth helper for main-process fetches against the daemon. Returns the
 // headers to merge into a fetch call so we always carry the bearer.
@@ -410,7 +422,7 @@ function localDaemonToken() {
 
 ipcMain.handle('sunday:run-mode', () => {
   const prefs = loadPrefs();
-  return { local: isLocalDaemon(), cloudHttp: prefs.cloudDaemonHttp || (isLocalDaemon() ? '' : prefs.daemonHttp) || '' };
+  return { local: isLocalDaemon(), role: resolveRole(), cloudHttp: prefs.cloudDaemonHttp || (isLocalDaemon() ? '' : prefs.daemonHttp) || '' };
 });
 
 ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
@@ -425,11 +437,13 @@ ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
       savePrefs({ daemonHttp: prefs.daemonHttp, daemonWs: prefs.daemonWs, daemonToken: prefs.daemonToken });
       return { ok: false, error: "the local brain didn't start on this Mac — still on cloud" };
     }
-    savePrefs({ daemonToken: localDaemonToken() });
+    // The local brain IS the server — record the role explicitly so the rest of
+    // the app (tray, settings, future always-on launchd) reads it directly.
+    savePrefs({ daemonToken: localDaemonToken(), role: 'server' });
   } else {
     const ch = prefs.cloudDaemonHttp, cw = prefs.cloudDaemonWs;
     if (!ch) return { ok: false, error: 'no cloud daemon saved to switch back to' };
-    savePrefs({ daemonHttp: ch, daemonWs: cw, daemonToken: prefs.cloudDaemonToken || prefs.daemonToken || '' });
+    savePrefs({ daemonHttp: ch, daemonWs: cw, daemonToken: prefs.cloudDaemonToken || prefs.daemonToken || '', role: 'satellite' });
     stopEmbeddedDaemon();
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
@@ -460,7 +474,7 @@ ipcMain.handle('sunday:migrate-to-local', async () => {
       fs.writeFileSync(dst, buf);
     }
     savePrefs({ cloudDaemonHttp: daemonHttp, cloudDaemonWs: daemonWs, cloudDaemonToken: loadPrefs().daemonToken,
-                daemonHttp: LOCAL_HTTP, daemonWs: LOCAL_WS });
+                daemonHttp: LOCAL_HTTP, daemonWs: LOCAL_WS, role: 'server' });
     await startEmbeddedDaemon();
     savePrefs({ daemonToken: localDaemonToken() });
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
@@ -719,9 +733,13 @@ function rebuildTrayMenu() {
   const { daemonHttp, onboarded } = resolveDaemon();
   const prefs = loadPrefs();
   const version = app.getVersion();
+  const role = resolveRole();
+  const roleLine = role === 'server'
+    ? 'Server · this Mac is the brain'
+    : `Satellite · ${prefs.label || daemonHttp}`;
   const menu = Menu.buildFromTemplate([
     { label: `Sunday ${version}`, enabled: false },
-    { label: `${prefs.label || daemonHttp}`, enabled: false },
+    { label: roleLine, enabled: false },
     { type: 'separator' },
     { label: 'Chat',     accelerator: 'Command+1', click: () => switchToView('chat') },
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
