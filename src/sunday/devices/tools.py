@@ -12,6 +12,7 @@ treat them as image content for vision-capable models.
 from __future__ import annotations
 
 import base64
+import re
 import time
 import uuid
 from typing import Any
@@ -90,10 +91,50 @@ _RUN_COMMAND_PARAMS = {
 }
 
 
+# Process-control verbs that, aimed at Sunday's own launchd label, would SIGTERM
+# the daemon running THIS turn — so the reply never sends.
+_TEARDOWN_VERBS = ("bootout", "unload", "remove", "kickstart", "stop", "disable")
+# Known setup scripts whose whole job is to bootout + re-bootstrap the daemon.
+_SELF_KILL_SCRIPTS = ("imessage-doctor.sh", "sunday-imessage-setup.sh")
+
+
+def _would_self_destruct(command: str) -> bool:
+    """True if `command` would tear down Sunday's own daemon — the process
+    handling this very turn.
+
+    The brain must never be able to kill itself mid-reply. A texted "restart
+    yourself" or a pasted setup script once SIGTERM'd the daemon right after the
+    `device_run_command` call, so "sunday down" landed before the answer could
+    send and the text silently never arrived. Read-only inspection
+    (`launchctl list | grep sunday`) stays allowed; only teardown verbs aimed at
+    our own label/binary are refused."""
+    c = " ".join(command.lower().split())  # collapse whitespace/newlines
+    if any(s in c for s in _SELF_KILL_SCRIPTS):
+        return True
+    if ("pkill" in c or "killall" in c) and "sunday-daemon" in c:
+        return True
+    if "pkill" in c and "-f" in c and "sunday" in c:
+        return True
+    # launchctl teardown/restart of our own label (com.sunday.*)
+    if re.search(r"com\.sunday|sunday\.daemon|sunday\.imessage", c):
+        if any(v in c for v in _TEARDOWN_VERBS):
+            return True
+    return False
+
+
 async def _t_device_run_command(args: dict[str, Any], ctx: ToolContext) -> Any:
     command = args.get("command")
     if not command:
         return {"error": "'command' is required"}
+    if _would_self_destruct(str(command)):
+        log.warning("refused self-destruct command", command=str(command)[:200])
+        return {"error": (
+            "Refused — that command would terminate Sunday's own daemon (the "
+            "process handling this conversation), so your reply would never "
+            "send. Do not try to restart or bootout Sunday from inside a turn. "
+            "If a restart is genuinely needed, ask the user to do it. Answer in "
+            "words instead."
+        )}
     device_id, err = _resolve_device(ctx, args.get("device_id"), capability="shell")
     if err:
         return {"error": err}
