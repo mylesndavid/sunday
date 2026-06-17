@@ -116,14 +116,24 @@ class OpenAICompatProvider:
             kwargs["tools"] = tools_schema
             kwargs["tool_choice"] = "auto"
 
-        # OpenRouter: pin latency-sorted provider routing. Default routing sends
-        # the request to a rotating set of backends with wildly variable TTFT
-        # (measured 0.4–14s); sort=latency holds it to the fastest backend and
-        # cuts the tail dramatically (measured a tight 0.56–0.75s). Harmless on
-        # non-OpenRouter base URLs (they ignore unknown extra_body keys, but we
-        # only attach it for OpenRouter to be safe).
+        # OpenRouter: pin provider routing to tame the TTFT tail. sort=latency
+        # alone still let requests land on slow backends (measured 7-37s on
+        # texting, with a 14s outlier on the SMALLEST request). When the model
+        # config names specific providers, pin them in order with fallbacks off
+        # so only the benchmarked-fast set serves the request; otherwise fall
+        # back to sort=latency (correct for any non-deepseek model swap).
+        # Harmless on non-OpenRouter base URLs (they ignore unknown extra_body
+        # keys, but we only attach it for OpenRouter to be safe).
         if "openrouter" in (self.config.model.base_url or ""):
-            extra: dict[str, Any] = {"provider": {"sort": "latency"}}
+            pinned = list(getattr(self.config.model, "providers", None) or [])
+            if pinned:
+                prov: dict[str, Any] = {
+                    "order": pinned,
+                    "allow_fallbacks": bool(getattr(self.config.model, "allow_fallbacks", False)),
+                }
+            else:
+                prov = {"sort": "latency"}
+            extra: dict[str, Any] = {"provider": prov}
             # Actually ENABLE reasoning when config asks for it. The flag existed
             # but was never sent — so the model ran with reasoning off and flailed
             # on multi-step tool routing. OpenRouter's unified param turns it on.

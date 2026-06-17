@@ -35,6 +35,15 @@ class ModelConfig:
     # Reasoning costs latency but cleans up multi-step thinking and tool routing.
     # On by default; turn off for ambient conversational replies if it becomes a problem.
     reasoning: bool = True
+    # OpenRouter provider pin. Default routing (even sort:latency) lets requests
+    # land on slow backends — measured a 7-37s TTFT tail on texting. These three
+    # benchmarked fastest + most consistent for deepseek-v4-flash (WandB ~1.0s,
+    # Alibaba ~0.9s, DeepSeek first-party ~1.7s as a reliable anchor). Tried in
+    # order; allow_fallbacks=False keeps the long tail of the other 15 providers
+    # out, but the list still gives redundancy if one is down. Empty list ->
+    # fall back to sort:latency (correct for any non-deepseek model swap).
+    providers: list[str] = field(default_factory=lambda: ["WandB", "Alibaba", "DeepSeek"])
+    allow_fallbacks: bool = False
 
 
 @dataclass
