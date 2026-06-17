@@ -1249,8 +1249,11 @@ async function loadNet() {
 
   const sb = d.sendblue || {};
   const panel = $('#net-webhook-panel');
-  if (sb.webhook_url) { $('#net-webhook-url').value = sb.webhook_url; if (panel) panel.hidden = false; }
-  else if (panel) { panel.hidden = true; }
+  // The webhook is registered with Sendblue automatically over its API now, so
+  // this panel is just a manual fallback — keep the URL populated but hidden
+  // unless auto-registration actually fails (applyWebhookResult reveals it).
+  if (sb.webhook_url && $('#net-webhook-url')) $('#net-webhook-url').value = sb.webhook_url;
+  if (panel) panel.hidden = true;
 
   const sbLine = $('#sb-status');
   if (sbLine) {
@@ -1275,13 +1278,48 @@ async function setupTexting() {
   catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } return; }
   const r = d.result || {};
   if (r.ok) {
-    if (line) { line.dataset.state = 'ok'; line.textContent = 'texting is live — paste the webhook URL into Sendblue'; }
+    const sw = d.sendblue_webhook;
+    if (sw && sw.ok) {
+      if (line) { line.dataset.state = 'ok'; line.textContent = sw.already ? 'texting is live — webhook already registered with Sendblue' : 'texting is live — webhook registered with Sendblue automatically'; }
+    } else if (sw && sw.error && !/not set|Funnel first/i.test(sw.error)) {
+      // Funnel's up but the webhook POST failed — fall back to manual paste.
+      applyWebhookResult(sw, { silent: false });
+    } else {
+      // Funnel's up, but the Sendblue keys aren't entered yet — say what's next.
+      if (line) { line.dataset.state = 'ok'; line.textContent = 'reachable — add your Sendblue keys below and the webhook registers itself'; }
+    }
     if (manual) manual.hidden = true;
   } else {
     if (line) { line.dataset.state = 'fail'; line.textContent = r.error || "couldn't auto-configure — use the commands below"; }
     if (manual && Array.isArray(r.manual)) { $('#net-manual-cmds').textContent = r.manual.join('\n'); manual.hidden = false; }
   }
   await loadNet();
+}
+
+// Point Sendblue's inbound webhook at our Funnel URL over the API — the owner
+// never pastes it into the dashboard. Best-effort: needs both the keys saved
+// and Funnel up. Reveals the manual-paste fallback only on a genuine failure.
+async function registerWebhook({ silent = false } = {}) {
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/channels/sendblue/register-webhook`, { method: 'POST' })).json(); }
+  catch { return false; }
+  applyWebhookResult(d, { silent });
+  return !!(d && d.ok);
+}
+
+function applyWebhookResult(d, { silent = false } = {}) {
+  const line = $('#net-status');
+  const panel = $('#net-webhook-panel');
+  if (d && d.ok) {
+    if (panel) panel.hidden = true;   // registered for us — nothing to paste
+    if (line && !silent) { line.dataset.state = 'ok'; line.textContent = d.already ? 'texting is live — webhook already registered with Sendblue' : 'texting is live — webhook registered with Sendblue automatically'; }
+  } else if (d && d.error && !/not set|Funnel first/i.test(d.error)) {
+    // Genuine failure (keys present, Funnel up, but the API rejected it) —
+    // surface the URL so the owner can paste it by hand as an escape hatch.
+    if (d.url && $('#net-webhook-url')) $('#net-webhook-url').value = d.url;
+    if (panel) panel.hidden = false;
+    if (line && !silent) { line.dataset.state = 'fail'; line.textContent = `couldn't register the webhook automatically — paste it into Sendblue (${d.error})`; }
+  }
 }
 
 async function saveSendblue() {
@@ -1295,6 +1333,10 @@ async function saveSendblue() {
     if ($('#sb-secret')) $('#sb-secret').value = '';   // don't keep the secret on screen
     await loadNet();
     if (line) { line.dataset.state = 'ok'; line.textContent = 'keys saved'; }
+    // Keys are in — if Funnel's already up, point Sendblue at our webhook now
+    // (silent: a "Funnel not up yet" no-op shouldn't read as a failure here).
+    const registered = await registerWebhook({ silent: true });
+    if (registered && line) { line.textContent = 'keys saved — webhook registered with Sendblue'; }
   } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
 }
 
@@ -1459,7 +1501,7 @@ function wire() {
   $('#net-webhook-copy')?.addEventListener('click', () => copyWebhook());
   $('#sb-save')?.addEventListener('click', () => saveSendblue());
   ['#sb-key-id', '#sb-secret'].forEach((sel) => $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveSendblue(); } }));
-  $('#sb-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://sendblue.co'); });
+  $('#sb-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://dashboard.sendblue.com'); });
   $('#sb-test-send')?.addEventListener('click', () => sendTestText());
   $('#sb-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendTestText(); } });
 

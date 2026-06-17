@@ -440,10 +440,11 @@
             </div>
           </div>
 
-          <!-- WEBHOOK URL — the one thing you paste into Sendblue -->
+          <!-- WEBHOOK URL — fallback only; Sunday registers this with Sendblue
+               over the API automatically. Shown only if that ever fails. -->
           <div class="set-panel" id="net-webhook-panel" hidden>
-            <div class="brain-label">Sendblue webhook URL</div>
-            <p class="set-help set-help-tight">Paste this into Sendblue → your number → inbound webhook. The secret in the path is the only thing that makes it public — keep it private.</p>
+            <div class="brain-label">Webhook URL (manual fallback)</div>
+            <p class="set-help set-help-tight">Sunday registers this with Sendblue automatically. If that ever fails, paste it into Sendblue → your number → inbound webhook by hand. The secret in the path is what makes it public — keep it private.</p>
             <div class="net-url-row">
               <input type="text" id="net-webhook-url" class="field mono" readonly aria-label="Sendblue webhook URL">
               <button type="button" class="btn" id="net-webhook-copy">Copy</button>
@@ -453,7 +454,7 @@
           <!-- SENDBLUE ACCOUNT -->
           <div class="set-panel">
             <div class="brain-label">Sendblue account</div>
-            <p class="set-help set-help-tight">Sunday's iMessage-capable number lives at Sendblue. Paste the API keys from your dashboard. <a href="#" id="sb-keys-link" class="mcp-bi-link">Open Sendblue</a></p>
+            <p class="set-help set-help-tight">Sunday's iMessage-capable number lives at Sendblue. Copy the two API keys once from your dashboard — Sunday wires up the inbound webhook itself, so there's nothing to paste back. <a href="#" id="sb-keys-link" class="mcp-bi-link">Open Sendblue dashboard</a></p>
             <label class="set-field">
               <span class="set-field-l">API key ID</span>
               <input type="text" id="sb-key-id" class="field mono" placeholder="sb-…" autocomplete="off" spellcheck="false">

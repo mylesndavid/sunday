@@ -40,6 +40,7 @@ SENDBLUE_API_BASE = "https://api.sendblue.com/api"
 SENDBLUE_SEND     = f"{SENDBLUE_API_BASE}/send-message"
 SENDBLUE_TYPING   = f"{SENDBLUE_API_BASE}/send-typing-indicator"
 SENDBLUE_MESSAGES = "https://api.sendblue.com/accounts/messages"
+SENDBLUE_WEBHOOKS = f"{SENDBLUE_API_BASE}/account/webhooks"
 
 # Polling cadence for the inbound backup loop.
 POLL_INTERVAL_SECONDS = 30
@@ -102,6 +103,77 @@ def public_webhook_url(dns_name: str | None) -> str | None:
     if not dns_name:
         return None
     return f"https://{dns_name}{webhook_path()}"
+
+
+# ─── webhook registration (no dashboard paste) ────────────────────────────
+# Sendblue exposes account-level webhook management at /api/account/webhooks
+# (GET list, POST append, PUT replace-all, DELETE). We use it to point the
+# inbound "receive" event at our public Funnel URL over the API, so the owner
+# never copies a webhook into the Sendblue dashboard. The API key + secret
+# themselves can't be minted programmatically — those are still copied once
+# from dashboard.sendblue.com — but everything after that is hands-off.
+
+def _receive_webhook_urls(payload: Any) -> list[str]:
+    """Extract the currently-registered 'receive' webhook URLs from a
+    GET /account/webhooks response. Tolerates both shapes Sendblue's docs
+    show: {"webhooks": {"receive": [...]}} and a flat list of {url, type}."""
+    if not isinstance(payload, dict):
+        return []
+    hooks = payload.get("webhooks")
+    out: list[str] = []
+    if isinstance(hooks, dict):
+        recv = hooks.get("receive")
+        if isinstance(recv, list):
+            for item in recv:
+                if isinstance(item, str):
+                    out.append(item)
+                elif isinstance(item, dict) and item.get("url"):
+                    out.append(str(item["url"]))
+    elif isinstance(hooks, list):
+        for item in hooks:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict) and item.get("url") and item.get("type", "receive") == "receive":
+                out.append(str(item["url"]))
+    return out
+
+
+async def register_receive_webhook(dns_name: str | None) -> dict[str, Any]:
+    """Point Sendblue's inbound 'receive' webhook at our public Funnel URL over
+    the API, so the owner never pastes it into the dashboard.
+
+    Idempotent: GET the current webhooks first and skip the POST if our exact
+    URL is already registered — Sendblue's POST *appends*, so without this we'd
+    accumulate duplicate hooks every time setup runs. Returns:
+      {"ok": True,  "url": ..., "already": bool}
+      {"ok": False, "error": ..., "url": ...|None}
+    """
+    headers = _sendblue_headers()
+    if headers is None:
+        return {"ok": False, "error": "Sendblue API key/secret not set", "url": None}
+    url = public_webhook_url(dns_name)
+    if not url:
+        return {"ok": False, "error": "no public webhook URL yet — set up Tailscale Funnel first", "url": None}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            try:
+                cur = await client.get(SENDBLUE_WEBHOOKS, headers=headers)
+                if cur.status_code == 200 and url in _receive_webhook_urls(cur.json()):
+                    log.info("sendblue webhook already registered", url=url)
+                    return {"ok": True, "url": url, "already": True}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("sendblue webhook GET failed, posting anyway", error=str(exc))
+            res = await client.post(
+                SENDBLUE_WEBHOOKS, headers=headers,
+                json={"webhooks": [url], "type": "receive"},
+            )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "url": url}
+    if res.status_code >= 400:
+        log.warning("sendblue webhook register failed", status=res.status_code, body=res.text[:200])
+        return {"ok": False, "error": f"sendblue {res.status_code}: {res.text[:160]}", "url": url}
+    log.info("sendblue webhook registered via API", url=url)
+    return {"ok": True, "url": url, "already": False}
 
 
 def _extract_messages(payload: Any) -> list[dict[str, Any]]:

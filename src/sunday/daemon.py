@@ -2616,17 +2616,36 @@ class Daemon:
 
     async def _http_net_configure(self, request: web.Request) -> web.Response:
         """Run `tailscale serve`+`funnel` for just the webhook path, giving the
-        private box exactly one public ingress. Returns the URL to paste into
-        Sendblue, plus manual commands if the auto path hit a version quirk."""
+        private box exactly one public ingress. Once Funnel's up, register that
+        URL with Sendblue over its API so the owner never pastes a webhook into
+        the dashboard. Returns the URL (manual fallback) + the registration
+        result, plus manual commands if the Funnel auto path hit a quirk."""
         from sunday.net import tailscale
-        from sunday.channels.sendblue import webhook_path, public_webhook_url
+        from sunday.channels.sendblue import webhook_path, public_webhook_url, register_receive_webhook
         result = tailscale.configure_funnel(self.config.server.port, webhook_path())
         ts = tailscale.status()
+        url = public_webhook_url(ts.get("dns_name"))
+        # Funnel's up and we have a public URL — point Sendblue at it over the
+        # API. Skips silently (ok:false, benign error) if keys aren't set yet.
+        sendblue_webhook = None
+        if isinstance(result, dict) and result.get("ok") and url:
+            sendblue_webhook = await register_receive_webhook(ts.get("dns_name"))
         return web.json_response({
             "result": result,
             "tailscale": ts,
-            "webhook_url": public_webhook_url(ts.get("dns_name")),
+            "webhook_url": url,
+            "sendblue_webhook": sendblue_webhook,
         })
+
+    async def _http_sendblue_register_webhook(self, request: web.Request) -> web.Response:
+        """Register (or confirm) Sunday's inbound webhook URL on Sendblue over
+        the API — the owner never copies it into the dashboard. Called after the
+        keys are saved, in case they're entered once Funnel is already up."""
+        from sunday.net import tailscale
+        from sunday.channels.sendblue import register_receive_webhook
+        ts = tailscale.status()
+        result = await register_receive_webhook(ts.get("dns_name"))
+        return web.json_response(result, status=200 if result.get("ok") else 400)
 
     async def _http_sendblue_test(self, request: web.Request) -> web.Response:
         """Send a test iMessage so the whole texting round-trip can be proven
@@ -2687,6 +2706,7 @@ class Daemon:
         app.router.add_post("/v1/config", self._http_post_config)
         app.router.add_get("/v1/net/status", self._http_net_status)
         app.router.add_post("/v1/net/configure", self._http_net_configure)
+        app.router.add_post("/v1/channels/sendblue/register-webhook", self._http_sendblue_register_webhook)
         app.router.add_post("/v1/channels/sendblue/test", self._http_sendblue_test)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
