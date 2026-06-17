@@ -504,24 +504,35 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
     if status and status not in ("RECEIVED", "DELIVERED"):
         return web.json_response({"ok": True, "skipped": f"status={status}"})
 
+    # Sendblue's RECEIVE webhook payload is NOT shaped like the message object
+    # the poller fetches. Real field names (captured from a live delivery):
+    #   number / from_number  -> the SENDER (both hold the sender's number)
+    #   to_number / sendblue_number -> Sunday's own line  (use THIS as "from")
+    #   message_handle        -> the dedup id (== the message `uuid` the poller
+    #                            sees, so the two paths dedup against each other)
     sender        = body.get("number") or ""
-    sunday_number = body.get("from_number") or ""
+    sunday_number = body.get("to_number") or body.get("sendblue_number") or ""
     text          = body.get("content") or ""
     media_url     = body.get("media_url")
-    uid           = body.get("uuid") or body.get("externalId")
+    uid           = body.get("message_handle") or body.get("uuid") or body.get("externalId")
 
     if not text and media_url:
         text = f"(media: {media_url})"
     if not sender or not text:
         return web.json_response({"ok": True, "skipped": "missing sender/content"})
 
+    # Dedup against the poller. message_handle == the poll's uuid, so whichever
+    # path sees the message first marks it seen and the other skips. The webhook
+    # MUST check too: the 30s poll can win the race (it did in testing), and
+    # without this check the webhook would re-run the brain and send a 2nd reply.
+    if uid and uid in daemon._sendblue_seen_uids:
+        return web.json_response({"ok": True, "skipped": "already processed"})
+    if uid:
+        daemon._sendblue_seen_uids.add(uid)
+
     # First action, before anything else: ack the message (read receipt +
     # typing) so the sender gets instant feedback while the brain runs.
     await _ack_inbound(sender, sunday_number, "webhook")
-
-    # Mark UID seen so the poller doesn't double-process this in 30s.
-    if uid:
-        daemon._sendblue_seen_uids.add(uid)
 
     log.info("sendblue webhook hit", uid=uid, sender=sender)
     await _process_inbound(daemon, sender, sunday_number, text, media_url, "webhook", uid)

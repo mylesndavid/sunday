@@ -150,10 +150,18 @@ def status() -> dict:
 
 def manual_commands(port: int, path: str) -> list[str]:
     """The exact commands a user can paste to expose just `path` publicly.
-    Always shown alongside the auto attempt so setup never dead-ends."""
+    Always shown alongside the auto attempt so setup never dead-ends.
+
+    The proxy target MUST include `path`. `--set-path <path> <port>` strips the
+    mount prefix before proxying, so the daemon would receive `/` instead of
+    the secret webhook path — unauthenticated (401) and unrouteable. Giving the
+    target the full URL (`http://127.0.0.1:<port><path>`) preserves the path.
+    This is why the Sendblue webhook silently never fired and every inbound
+    text fell back to the 30s poller."""
+    target = f"http://127.0.0.1:{port}{path}"
     return [
-        f"tailscale serve --bg --set-path {path} {port}",
-        f"tailscale funnel --bg --set-path {path} {port}",
+        f"tailscale serve --bg --set-path {path} {target}",
+        f"tailscale funnel --bg --set-path {path} {target}",
     ]
 
 
@@ -172,9 +180,13 @@ def configure_funnel(port: int, path: str) -> dict:
             "manual": manual_commands(port, path),
         }
 
+    # Target includes the path so Tailscale doesn't strip the mount prefix —
+    # see manual_commands() for the full why. Stripping was the root cause of
+    # the webhook 401'ing every Sendblue delivery.
+    target = f"http://127.0.0.1:{port}{path}"
     plan = [
-        ["serve", "--bg", "--set-path", path, str(port)],
-        ["funnel", "--bg", "--set-path", path, str(port)],
+        ["serve", "--bg", "--set-path", path, target],
+        ["funnel", "--bg", "--set-path", path, target],
     ]
     steps = []
     ok = True
