@@ -27,9 +27,22 @@ from typing import Any
 import structlog
 
 from sunday.brain import respond
+from sunday.config import SundayConfig
 from sunday.devices import imessage_macos as im
+from sunday.tools import ToolRegistry
 
 log = structlog.get_logger("sunday.channel.imessage")
+
+
+def register(registry: ToolRegistry, config: SundayConfig) -> None:
+    """Channel entry point (called by tools.py at daemon boot). Registers the
+    inbound watcher as a background task only when the native channel is on —
+    otherwise this module is inert, so it never double-answers with Sendblue."""
+    if not getattr(config, "imessage_native", False):
+        return
+    from sunday.daemon import register_background_task
+    register_background_task(start_imessage_watcher)
+    log.info("native imessage channel enabled — watching local chat.db")
 
 # How often to check chat.db for new rows. Local SQLite read is cheap, and this
 # is the whole latency budget for "seen" — keep it tight.

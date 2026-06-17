@@ -122,6 +122,12 @@ class SundayConfig:
     hermes: HermesConfig = field(default_factory=HermesConfig)
     cloudflare: CloudflareConfig = field(default_factory=CloudflareConfig)
     vapi: VapiConfig = field(default_factory=VapiConfig)
+    # Native iMessage channel: when on, the daemon watches this machine's own
+    # Messages chat.db for inbound and replies via AppleScript — no Sendblue,
+    # no send queue. Off by default; intended for the dedicated "Sunday"
+    # macOS-user/Apple-ID box. Enable via SUNDAY_IMESSAGE_NATIVE=1. Keep this
+    # OR Sendblue answering, never both on the same number/account.
+    imessage_native: bool = False
 
     def ensure_home(self) -> Path:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -146,4 +152,6 @@ def load_config() -> SundayConfig:
             cfg.server.port = int(port)
         except ValueError:
             pass
+    if os.environ.get("SUNDAY_IMESSAGE_NATIVE", "").strip().lower() in ("1", "true", "yes", "on"):
+        cfg.imessage_native = True
     return cfg

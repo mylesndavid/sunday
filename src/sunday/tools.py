@@ -240,6 +240,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.subagents.hermes",
         "sunday.coder",
         "sunday.channels.messages_local",
+        "sunday.channels.imessage_watch",
         "sunday.channels.sendblue",
         "sunday.channels.vapi",
         "sunday.cloud.cloudflare",
