@@ -128,6 +128,15 @@ class SundayConfig:
     # macOS-user/Apple-ID box. Enable via SUNDAY_IMESSAGE_NATIVE=1. Keep this
     # OR Sendblue answering, never both on the same number/account.
     imessage_native: bool = False
+    # Real-app typing + read receipts for the native channel. AppleScript `send`
+    # is headless (no typing/read), so these are produced by GUI-driving the
+    # actual Messages app — which only works when the Sunday account is the
+    # FOREGROUND/displayed session (a background fast-user-switched session never
+    # renders the window, so it's a no-op there). Off by default; strictly
+    # best-effort — a failure never blocks the reply. Enable on the dedicated
+    # always-on Mac (where Sunday is the logged-in user) via
+    # SUNDAY_IMESSAGE_INDICATORS=1.
+    imessage_indicators: bool = False
 
     def ensure_home(self) -> Path:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -154,4 +163,6 @@ def load_config() -> SundayConfig:
             pass
     if os.environ.get("SUNDAY_IMESSAGE_NATIVE", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.imessage_native = True
+    if os.environ.get("SUNDAY_IMESSAGE_INDICATORS", "").strip().lower() in ("1", "true", "yes", "on"):
+        cfg.imessage_indicators = True
     return cfg

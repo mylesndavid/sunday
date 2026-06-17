@@ -141,6 +141,12 @@ async def _dispatch(daemon: Any, sender: str, text: str) -> None:
     one person texts this handle, so a follow-up is always a steer for the same
     conversation, never a different sender bleeding in."""
     t0 = time.perf_counter()
+    # Real-app read receipt + 'typing…', flag-gated and best-effort. Fire it the
+    # instant we see the text so the indicator shows while the brain works; it's
+    # a no-op unless Sunday is the foreground session (see imessage_macos).
+    indicators = bool(getattr(getattr(daemon, "config", None), "imessage_indicators", False))
+    if indicators:
+        asyncio.create_task(im.ack_inbound_gui(sender))
     try:
         result = await daemon._say(text, "imessage_native")
     except Exception:  # noqa: BLE001
@@ -153,6 +159,9 @@ async def _dispatch(daemon: Any, sender: str, text: str) -> None:
 
     reply = result.get("reply") or ""
     bubbles = split_into_bubbles(reply)
+    if indicators and bubbles:
+        # wipe the typing placeholder before sending the real reply headless
+        await im.clear_compose_gui(sender)
     t_send = time.perf_counter()
     for i, bubble in enumerate(bubbles):
         if i:

@@ -10,10 +10,15 @@ import pytest
 from sunday.channels import imessage_watch as w
 
 
+class _Config:
+    imessage_indicators = False
+
+
 class _FakeDaemon:
     def __init__(self, result):
         self._result = result
         self.said = []
+        self.config = _Config()
 
     async def _say(self, text, modality, attachments=None):
         self.said.append((text, modality))

@@ -542,3 +542,55 @@ async def send_imessage(to: str, body: str, attachments: list[str] | None = None
             return result
 
     return {"ok": True, "to": to, "attached": len(attachments or [])}
+
+
+# ── Real-app typing + read receipts ─────────────────────────────────────────
+# AppleScript `send` (above) is headless: it never produces a typing indicator
+# or a read receipt, because those are side effects of the Messages UI actually
+# displaying/composing. So we GUI-drive the real app to manufacture them. This
+# ONLY works when the Sunday account is the foreground/displayed session — a
+# background fast-user-switched session never renders the window, so the AX tree
+# is empty and these become no-ops. Hence they're flag-gated (config
+# .imessage_indicators) and strictly best-effort: they never raise and never
+# press Return, so a stray keystroke can never send a message. Single-owner
+# assumption: Messages shows the one owner conversation, so we act on whatever's
+# active rather than hunting the chat list (which AX can't reach reliably).
+
+async def ack_inbound_gui(handle: str) -> dict[str, Any]:
+    """Best-effort read receipt + 'typing…' for an inbound, by activating the
+    real Messages app and tapping a key into the compose field. `handle` is
+    unused for now (acts on the active conversation); kept for interface
+    symmetry and future per-thread targeting. No-op off the foreground session.
+    """
+    script = (
+        'tell application "Messages" to activate\n'
+        'delay 0.2\n'
+        'tell application "System Events"\n'
+        '  tell process "Messages"\n'
+        '    try\n'
+        '      set frontmost to true\n'   # displaying the convo marks it read -> receipt
+        '    end try\n'
+        '    try\n'
+        '      keystroke "…"\n'           # a keystroke in the compose field shows "typing…"
+        '    end try\n'
+        '  end tell\n'
+        'end tell'
+    )
+    return await _run_osascript(script)
+
+
+async def clear_compose_gui(handle: str) -> dict[str, Any]:
+    """Wipe whatever ack_inbound_gui's keystroke left in the compose field, so
+    the typing placeholder never gets sent and the real reply (sent headless via
+    send_imessage) stays clean. Best-effort; never raises."""
+    script = (
+        'tell application "System Events"\n'
+        '  tell process "Messages"\n'
+        '    try\n'
+        '      keystroke "a" using command down\n'   # select all
+        '      key code 51\n'                        # delete
+        '    end try\n'
+        '  end tell\n'
+        'end tell'
+    )
+    return await _run_osascript(script)
