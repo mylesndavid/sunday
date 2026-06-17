@@ -453,7 +453,15 @@ async def _process_inbound(
             daemon.registry,
             runtime=getattr(daemon, "runtime", None),
             extras={"broadcast": daemon._broadcast, "devices": daemon.devices,
-                    "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None)},
+                    "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None),
+                    # Tiered tools, same as the desktop chat path: send the lean
+                    # core (~4.3k tok) instead of the full 72-tool schema (~10.5k
+                    # tok), and let find_tools surface the rest on demand. Texting
+                    # was the one channel still paying for every tool every turn —
+                    # ~6k tokens of prefill on a latency-sensitive path. Shares the
+                    # daemon's session-wide active set with the chat UI.
+                    "registry": daemon.registry,
+                    "active_tools": daemon._active_tools},
             timings=timings,
         )
     except Exception as exc:  # noqa: BLE001
