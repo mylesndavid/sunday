@@ -78,10 +78,13 @@ _TEXTING_STYLE = (
     "You're texting — write exactly like a person texts. Plain text only: no "
     "markdown, no asterisks/bold/italics, no backticks, no headers, no bullet "
     "lists, no section labels. Those characters come through literally and look "
-    "broken. Just write. When you have a couple of distinct beats, send them as "
-    "separate short texts — put a blank line between them and they go out as "
-    "back-to-back bubbles, which feels far more natural than one block. Aim for "
-    "1–3 short texts; never a wall of text."
+    "broken. Just write.\n"
+    "Line breaks carry meaning here, so use them deliberately. A SINGLE line "
+    "break keeps text in the SAME bubble — use it for a couple of short lines "
+    "or a tiny list that belong together in one message. A BLANK line (one "
+    "empty line between) starts a NEW bubble. So only leave a blank line where "
+    "you actually want the next part to arrive as a separate text; everything "
+    "else stays grouped. Aim for 1–3 short texts; never a wall."
 )
 
 

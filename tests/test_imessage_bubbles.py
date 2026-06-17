@@ -20,6 +20,12 @@ def test_blank_lines_split_into_separate_bubbles():
     ]
 
 
+def test_single_line_breaks_stay_in_one_bubble():
+    # multi-line content (single \n) is ONE message; only blank lines split
+    reply = "here's the plan:\ngrab milk\ncall mom\n\non it now"
+    assert split_into_bubbles(reply) == ["here's the plan:\ngrab milk\ncall mom", "on it now"]
+
+
 def test_overflow_merges_into_last_bubble():
     reply = "\n\n".join(f"line {i}" for i in range(8))
     bubbles = split_into_bubbles(reply)
