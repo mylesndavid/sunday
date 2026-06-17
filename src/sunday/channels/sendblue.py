@@ -39,6 +39,7 @@ log = structlog.get_logger("sunday.channel.sendblue")
 SENDBLUE_API_BASE = "https://api.sendblue.com/api"
 SENDBLUE_SEND     = f"{SENDBLUE_API_BASE}/send-message"
 SENDBLUE_TYPING   = f"{SENDBLUE_API_BASE}/send-typing-indicator"
+SENDBLUE_MARK_READ = f"{SENDBLUE_API_BASE}/mark-read"
 SENDBLUE_MESSAGES = "https://api.sendblue.com/accounts/messages"
 SENDBLUE_WEBHOOKS = f"{SENDBLUE_API_BASE}/account/webhooks"
 
@@ -310,6 +311,52 @@ async def _send_typing(to: str, from_number: str | None = None) -> dict[str, Any
     return {"ok": True}
 
 
+async def _send_read_receipt(to: str, from_number: str | None = None) -> dict[str, Any]:
+    """Mark the sender's message as read — best-effort, never blocks.
+
+    Read receipts must be enabled on the Sendblue account by their team;
+    if it isn't, Sendblue returns an error we log and swallow."""
+    headers = _sendblue_headers()
+    if headers is None:
+        return {"error": "credentials missing"}
+    if from_number is None:
+        from_number = await discover_from_number()
+    payload: dict[str, Any] = {"number": to}
+    if from_number:
+        payload["from_number"] = from_number
+    async with httpx.AsyncClient(timeout=10) as client:
+        res = await client.post(SENDBLUE_MARK_READ, headers=headers, json=payload)
+    if res.status_code >= 400:
+        log.warning("sendblue read receipt failed", status=res.status_code, body=res.text[:200])
+        return {"error": f"sendblue mark-read {res.status_code}"}
+    return {"ok": True}
+
+
+async def _ack_inbound(sender: str, sunday_number: str | None, source: str) -> None:
+    """The instant we see an inbound text, fire a read receipt + typing
+    indicator — concurrently, fire-and-forget — so the sender sees "Read"
+    and "typing…" before the brain (which can take seconds) even starts.
+
+    Texting is latency-sensitive: this is the perceived-latency win, and it
+    ships independent of however long respond() actually takes. Resolve the
+    Sunday number once (it's on the inbound payload in the common case, so no
+    network round-trip) and hand it to both acks."""
+    from_number = sunday_number or await discover_from_number()
+
+    async def _read() -> None:
+        _t = time.perf_counter()
+        await _send_read_receipt(sender, from_number=from_number)
+        log.info("sendblue read receipt sent", ms=round((time.perf_counter() - _t) * 1000), source=source)
+
+    async def _typing() -> None:
+        _t = time.perf_counter()
+        await _send_typing(sender, from_number=from_number)
+        log.info("sendblue typing sent", ms=round((time.perf_counter() - _t) * 1000), source=source)
+
+    asyncio.create_task(_read())
+    asyncio.create_task(_typing())
+
+
 async def _send_sendblue(
     to: str,
     body: str,
@@ -388,16 +435,12 @@ async def _process_inbound(
     Every phase is timed and logged ("sendblue turn timing") so we can see
     exactly where wall-clock goes: the typing-indicator round-trip, the agent
     loop (broken down further by respond()'s own "turn timing"), and the
-    outbound send."""
-    t0 = time.perf_counter()
+    outbound send.
 
-    # Typing indicator: fire-and-forget, but time its own round-trip — it's the
-    # first signal the user sees ("read"/typing), so if it's slow that's felt.
-    async def _typing_timed() -> None:
-        _t = time.perf_counter()
-        await _send_typing(sender, from_number=sunday_number or None)
-        log.info("sendblue typing sent", ms=round((time.perf_counter() - _t) * 1000), source=source)
-    asyncio.create_task(_typing_timed())
+    Read receipt + typing already fired at the call site (`_ack_inbound`)
+    the moment the message was seen — so the user sees "Read"/"typing…"
+    before this even starts."""
+    t0 = time.perf_counter()
 
     timings: dict[str, Any] = {}
     t_respond = time.perf_counter()
@@ -463,6 +506,10 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
         text = f"(media: {media_url})"
     if not sender or not text:
         return web.json_response({"ok": True, "skipped": "missing sender/content"})
+
+    # First action, before anything else: ack the message (read receipt +
+    # typing) so the sender gets instant feedback while the brain runs.
+    await _ack_inbound(sender, sunday_number, "webhook")
 
     # Mark UID seen so the poller doesn't double-process this in 30s.
     if uid:
@@ -553,6 +600,7 @@ async def start_poller(daemon: Any) -> None:
                     continue
 
                 log.info("sendblue poll picked up message", uuid=uid, sender=sender_phone)
+                await _ack_inbound(sender_phone, sunday_phone, "poll")
                 await _process_inbound(daemon, sender_phone, sunday_phone, text, media_url, "poll", uid)
         except asyncio.CancelledError:
             log.info("sendblue poller cancelled")
