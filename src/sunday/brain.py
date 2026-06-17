@@ -69,6 +69,27 @@ PARALLEL_SAFE_TOOLS = frozenset({
 
 log = structlog.get_logger("sunday.brain")
 
+# Per-turn style note for texting channels (iMessage). Folded into the context
+# block — NOT the cached system prefix — so the byte-stable prompt cache still
+# fires (same reason memory/skills ride the per-turn block). Owner directive
+# 2026-06-17: markdown renders as literal junk in a text bubble, and one long
+# block reads as a wall; real texting is plain and comes in a few short bursts.
+_TEXTING_STYLE = (
+    "You're texting — write exactly like a person texts. Plain text only: no "
+    "markdown, no asterisks/bold/italics, no backticks, no headers, no bullet "
+    "lists, no section labels. Those characters come through literally and look "
+    "broken. Just write. When you have a couple of distinct beats, send them as "
+    "separate short texts — put a blank line between them and they go out as "
+    "back-to-back bubbles, which feels far more natural than one block. Aim for "
+    "1–3 short texts; never a wall of text."
+)
+
+
+def _is_texting(modality: str) -> bool:
+    """iMessage-style channels (native + sendblue) where the reply is a text
+    bubble, not a chat pane or voice. Used to fold in the texting style note."""
+    return modality.startswith("imessage") or modality == "sms"
+
 
 def _context_messages(chat: Chat, memory_block: str = "") -> list[dict]:
     """Build the messages list for the next provider call.
@@ -242,6 +263,11 @@ async def respond(
             memory_block = (memory_block + "\n\n" + shelf) if memory_block else shelf
     except Exception as exc:  # noqa: BLE001
         log.warning("skill shelf block failed", error=str(exc))
+
+    # Texting channels get a plain-text, multi-bubble style note (per-turn, so
+    # the cached prefix stays byte-stable). The send side splits on blank lines.
+    if _is_texting(modality):
+        memory_block = (memory_block + "\n\n" + _TEXTING_STYLE) if memory_block else _TEXTING_STYLE
 
     async def _emit_delta(piece: str) -> None:
         if broadcast is not None:

@@ -21,6 +21,7 @@ double-answers alongside Sendblue until you cut over.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any
 
@@ -47,6 +48,43 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
 # How often to check chat.db for new rows. Local SQLite read is cheap, and this
 # is the whole latency budget for "seen" — keep it tight.
 WATCH_INTERVAL_SECONDS = 2.0
+
+# Replies go out as a few natural texts, not one wall. The brain is told to
+# separate distinct beats with a blank line (brain._TEXTING_STYLE); we split on
+# those blank lines into separate bubbles, with a short human-cadence gap
+# between sends. Cap the count so a runaway reply can't spray a dozen texts.
+MAX_BUBBLES = 4
+BUBBLE_GAP_SECONDS = 0.6
+
+
+def _strip_markdown(text: str) -> str:
+    """Belt-and-suspenders for when the model formats anyway: kill the markdown
+    artifacts that look worst as literal characters in a bubble. Conservative —
+    leaves single `*`, math, and ordinary punctuation alone so we never mangle
+    real text like "2*3" or "the *only* one"."""
+    out = []
+    for line in text.split("\n"):
+        s = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)   # # headers
+        s = re.sub(r"^\s*[-*+]\s+", "", s)            # - bullet markers
+        s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)        # **bold**
+        s = re.sub(r"__(.+?)__", r"\1", s)            # __bold__
+        s = re.sub(r"`([^`]+)`", r"\1", s)            # `code`
+        out.append(s)
+    return "\n".join(out)
+
+
+def split_into_bubbles(reply: str) -> list[str]:
+    """Split a reply into separate iMessage bubbles on blank lines. Returns at
+    most MAX_BUBBLES; overflow is merged back into the last bubble so nothing is
+    ever dropped. Empty/whitespace input → no bubbles (nothing to send)."""
+    text = _strip_markdown(reply or "").strip()
+    if not text:
+        return []
+    parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if len(parts) > MAX_BUBBLES:
+        head, tail = parts[: MAX_BUBBLES - 1], parts[MAX_BUBBLES - 1 :]
+        parts = head + ["\n\n".join(tail)]
+    return parts
 
 
 def _new_inbound_since(since_rowid: int, limit: int = 25) -> list[dict[str, Any]]:
@@ -118,16 +156,21 @@ async def _process(daemon: Any, sender: str, text: str) -> None:
         log.exception("imessage inbound brain failed", sender=sender)
         return
 
+    bubbles = split_into_bubbles(reply)
     t_send = time.perf_counter()
-    res = await im.send_imessage(sender, reply)
+    for i, bubble in enumerate(bubbles):
+        if i:
+            await asyncio.sleep(BUBBLE_GAP_SECONDS)  # human cadence between texts
+        res = await im.send_imessage(sender, bubble)
+        if "error" in res:
+            log.warning("imessage send failed", sender=sender, error=res["error"], bubble=i)
     send_ms = round((time.perf_counter() - t_send) * 1000)
-    if "error" in res:
-        log.warning("imessage send failed", sender=sender, error=res["error"])
 
     log.info(
         "imessage turn timing",
         total_ms=round((time.perf_counter() - t0) * 1000),
         send_ms=send_ms,
+        bubbles=len(bubbles),
         llm_calls_ms=timings.get("llm_calls_ms"),
         tools=timings.get("tool_names", []),
         reply_chars=len(reply or ""),
