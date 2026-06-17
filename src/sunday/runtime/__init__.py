@@ -69,6 +69,13 @@ def build_utility_runtime(config: SundayConfig) -> Provider:
     from dataclasses import replace
     cloned = copy.copy(config)
     name = _UTILITY_MODEL.get(config.model.provider, config.model.name)
-    cloned.model = replace(config.model, name=name, reasoning=False)
+    # Do NOT inherit the chat model's provider pin. The pin (e.g. the deepseek-
+    # specific WandB/Alibaba/DeepSeek order with allow_fallbacks=False, added for
+    # chat TTFT) names backends that don't serve the cheaper utility model —
+    # OpenRouter then returns "No endpoints found" 404s on every extraction. The
+    # utility path is background, not latency-sensitive, so let it route freely.
+    cloned.model = replace(
+        config.model, name=name, reasoning=False, providers=[], allow_fallbacks=True,
+    )
     from sunday.runtime.router import RouterProvider
     return RouterProvider(cloned)

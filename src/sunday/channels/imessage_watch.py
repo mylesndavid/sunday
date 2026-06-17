@@ -55,6 +55,14 @@ WATCH_INTERVAL_SECONDS = 2.0
 MAX_BUBBLES = 4
 BUBBLE_GAP_SECONDS = 0.6
 
+# A turn can finish with no text (the model did its tool work but produced an
+# empty final message — seen on a long Slack/browser task). Silence reads as a
+# crash to the user, so we send this instead. Never leave a text unanswered.
+_EMPTY_REPLY_FALLBACK = (
+    "hmm — I worked through that but didn't come back with anything to send. "
+    "want me to keep going, or take a different angle?"
+)
+
 
 def _strip_markdown(text: str) -> str:
     """Belt-and-suspenders for when the model formats anyway: kill the markdown
@@ -159,7 +167,11 @@ async def _dispatch(daemon: Any, sender: str, text: str) -> None:
 
     reply = result.get("reply") or ""
     bubbles = split_into_bubbles(reply)
-    if indicators and bubbles:
+    empty = not bubbles
+    if empty:
+        log.warning("imessage empty reply — sending fallback", sender=sender)
+        bubbles = [_EMPTY_REPLY_FALLBACK]
+    if indicators:
         # wipe the typing placeholder before sending the real reply headless
         await im.clear_compose_gui(sender)
     t_send = time.perf_counter()
@@ -174,6 +186,7 @@ async def _dispatch(daemon: Any, sender: str, text: str) -> None:
         "imessage reply sent",
         sender=sender,
         bubbles=len(bubbles),
+        empty_fallback=empty,
         send_ms=round((time.perf_counter() - t_send) * 1000),
         total_ms=round((time.perf_counter() - t0) * 1000),
         reply_chars=len(reply),

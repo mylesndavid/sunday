@@ -54,7 +54,15 @@ def test_steered_sends_nothing(captured_sends):
     assert captured_sends == []  # the running turn's reply covers it
 
 
-def test_empty_reply_sends_nothing(captured_sends):
+def test_empty_reply_sends_fallback(captured_sends):
+    # a turn that finishes with no text must NOT be silence — send a fallback
     daemon = _FakeDaemon({"reply": ""})
     asyncio.run(w._dispatch(daemon, "+15551234567", "hm"))
+    assert captured_sends == [("+15551234567", w._EMPTY_REPLY_FALLBACK)]
+
+
+def test_steered_still_sends_nothing_not_fallback(captured_sends):
+    # steered folds into the running turn; the fallback must not fire here
+    daemon = _FakeDaemon({"steered": True, "reply": None})
+    asyncio.run(w._dispatch(daemon, "+15551234567", "by the way"))
     assert captured_sends == []
