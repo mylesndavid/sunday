@@ -1225,6 +1225,7 @@ let _updateReady = false;
 // brain. Sendblue keys save through the standard saveBrain({credentials}) path,
 // same as Gmail/Cockpit. The webhook URL carries a path secret so Funnel can
 // expose just that one route publicly.
+let _funnelCapable = null;   // tri-state: true / false / null (unknown) — set by loadNet
 async function loadNet() {
   const tsEl = $('#net-ts'); if (!tsEl) return;
   let d;
@@ -1239,6 +1240,12 @@ async function loadNet() {
   if (ts.funnel_capable === true) funnelEl.textContent = 'available';
   else if (ts.funnel_capable === false) funnelEl.textContent = 'not enabled for this node';
   else funnelEl.textContent = '—';
+  // Surface the guided prerequisites the moment we know Funnel isn't enabled, so
+  // the user never has to click into a failure to learn what's missing. Only
+  // meaningful once Tailscale itself is up.
+  _funnelCapable = ts.installed && ts.running ? ts.funnel_capable : null;
+  const prereqs = $('#net-prereqs');
+  if (prereqs) prereqs.hidden = _funnelCapable !== false;
 
   const sb = d.sendblue || {};
   const panel = $('#net-webhook-panel');
@@ -1254,6 +1261,14 @@ async function loadNet() {
 
 async function setupTexting() {
   const line = $('#net-status'); const manual = $('#net-manual');
+  // Don't POST into a guaranteed failure: if Funnel isn't enabled for the
+  // tailnet, reveal the two-step guide instead and point the user at it.
+  if (_funnelCapable === false) {
+    const pre = $('#net-prereqs'); if (pre) pre.hidden = false;
+    if (line) { line.dataset.state = 'wait'; line.textContent = "Funnel isn't enabled yet — do the two steps below, then re-check."; }
+    pre?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
   if (line) { line.dataset.state = 'wait'; line.textContent = 'configuring Tailscale Funnel…'; }
   let d;
   try { d = await (await fetch(`${DAEMON_HTTP}/v1/net/configure`, { method: 'POST' })).json(); }
@@ -1427,6 +1442,20 @@ function wire() {
 
   // Texting (Sendblue over Tailscale)
   $('#net-setup')?.addEventListener('click', () => setupTexting());
+  $('#net-step-https')?.addEventListener('click', () => window.sunday.openExternal('https://login.tailscale.com/admin/dns'));
+  $('#net-step-acl')?.addEventListener('click', () => window.sunday.openExternal('https://login.tailscale.com/admin/acls'));
+  $('#net-acl-copy')?.addEventListener('click', async (e) => {
+    try { await navigator.clipboard.writeText($('#net-acl-snippet')?.textContent || ''); e.target.textContent = 'Copied'; setTimeout(() => { e.target.textContent = 'Copy snippet'; }, 1200); } catch {}
+  });
+  $('#net-recheck')?.addEventListener('click', async (e) => {
+    const line = $('#net-status'); if (line) { line.dataset.state = 'wait'; line.textContent = 're-checking…'; }
+    await loadNet();
+    if (line) {
+      if (_funnelCapable === true) { line.dataset.state = 'ok'; line.textContent = 'Funnel is enabled — click Set up texting to finish.'; }
+      else if (_funnelCapable === false) { line.dataset.state = 'fail'; line.textContent = "still not enabled — give the admin console a moment, then re-check."; }
+      else { line.dataset.state = ''; line.textContent = ''; }
+    }
+  });
   $('#net-webhook-copy')?.addEventListener('click', () => copyWebhook());
   $('#sb-save')?.addEventListener('click', () => saveSendblue());
   ['#sb-key-id', '#sb-secret'].forEach((sel) => $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveSendblue(); } }));

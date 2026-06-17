@@ -409,9 +409,33 @@
               <span class="set-verify" id="net-status" aria-live="polite"></span>
               <button type="button" class="btn btn-primary" id="net-setup">Set up texting</button>
             </div>
-            <!-- Manual fallback, shown only when auto-config can't run -->
+            <!-- Guided prerequisites — shown when Funnel isn't enabled for the tailnet yet -->
+            <div class="set-manual" id="net-prereqs" hidden>
+              <p class="set-help set-help-tight">Two one-time toggles in your Tailscale admin console turn on the public webhook. Sunday can't flip these for you — they live in your tailnet settings — so here's exactly what and where.</p>
+              <ol class="net-steps">
+                <li>
+                  <div class="net-step-t">Enable HTTPS for your tailnet</div>
+                  <div class="set-actions"><button type="button" class="btn" id="net-step-https">Open HTTPS settings</button></div>
+                </li>
+                <li>
+                  <div class="net-step-t">Allow Funnel — add this to your access controls, then Save</div>
+                  <pre class="instr-text mono" id="net-acl-snippet">"nodeAttrs": [
+  { "target": ["autogroup:member"], "attr": ["funnel"] }
+],</pre>
+                  <div class="set-actions">
+                    <button type="button" class="btn" id="net-step-acl">Open access controls</button>
+                    <button type="button" class="btn" id="net-acl-copy">Copy snippet</button>
+                  </div>
+                </li>
+                <li>
+                  <div class="net-step-t">Come back and re-check</div>
+                  <div class="set-actions"><button type="button" class="btn btn-primary" id="net-recheck">Re-check</button></div>
+                </li>
+              </ol>
+            </div>
+            <!-- Raw command fallback, shown only when auto-config runs but can't finish -->
             <div class="set-manual" id="net-manual" hidden>
-              <p class="set-help set-help-tight">Funnel couldn't be configured automatically. Enable Funnel for this machine in the Tailscale admin console, then run these on the brain:</p>
+              <p class="set-help set-help-tight">Funnel couldn't be configured automatically. Run these on the brain:</p>
               <pre class="instr-text mono" id="net-manual-cmds"></pre>
             </div>
           </div>

@@ -602,6 +602,9 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .net-url-row .field { flex: 1; min-width: 0; }
 .set-manual { margin-top: 12px; }
 .set-manual pre { margin: 8px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: var(--r-md); font: 12px/1.6 var(--font-mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.net-steps { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
+.net-steps li { line-height: 1.45; }
+.net-step-t { font-weight: 600; margin-bottom: 6px; }
 
 /* Transcription mode block under the observer toggle. */
 .set-trans { margin-top: 14px; font-size: 13px; }
