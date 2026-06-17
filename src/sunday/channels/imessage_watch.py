@@ -27,7 +27,6 @@ from typing import Any
 
 import structlog
 
-from sunday.brain import respond
 from sunday.config import SundayConfig
 from sunday.devices import imessage_macos as im
 from sunday.tools import ToolRegistry
@@ -129,33 +128,30 @@ def _max_rowid() -> int:
         conn.close()
 
 
-async def _process(daemon: Any, sender: str, text: str) -> None:
-    """Drive the brain for one inbound text and send the reply via AppleScript."""
+async def _dispatch(daemon: Any, sender: str, text: str) -> None:
+    """Route one inbound text through the daemon's turn machinery, then send the
+    reply as iMessage bubbles.
+
+    Going through `daemon._say` (rather than calling the brain directly) means
+    texting gets the same turn-lock, memory extraction, compaction, and app
+    broadcast the chat surface does — AND "by the way" steering for free: if a
+    turn is already running, `_say` folds this text into it as a mid-turn nudge
+    and returns steered=True, so we send nothing here and the in-flight turn's
+    reply (which now accounts for it) is what goes out. Single-owner assumption:
+    one person texts this handle, so a follow-up is always a steer for the same
+    conversation, never a different sender bleeding in."""
     t0 = time.perf_counter()
-    timings: dict[str, Any] = {}
     try:
-        reply = await respond(
-            daemon.chat,
-            text,
-            "imessage_native",
-            daemon.config,
-            daemon.registry,
-            runtime=getattr(daemon, "runtime", None),
-            extras={
-                "broadcast": daemon._broadcast,
-                "devices": daemon.devices,
-                "memory": daemon.memory,
-                "runtime": getattr(daemon, "runtime", None),
-                # same lean tiered-tools path the chat + sendblue channels use
-                "registry": daemon.registry,
-                "active_tools": daemon._active_tools,
-            },
-            timings=timings,
-        )
+        result = await daemon._say(text, "imessage_native")
     except Exception:  # noqa: BLE001
-        log.exception("imessage inbound brain failed", sender=sender)
+        log.exception("imessage inbound turn failed", sender=sender)
         return
 
+    if result.get("steered"):
+        log.info("imessage folded in as 'by the way'", sender=sender)
+        return
+
+    reply = result.get("reply") or ""
     bubbles = split_into_bubbles(reply)
     t_send = time.perf_counter()
     for i, bubble in enumerate(bubbles):
@@ -164,16 +160,14 @@ async def _process(daemon: Any, sender: str, text: str) -> None:
         res = await im.send_imessage(sender, bubble)
         if "error" in res:
             log.warning("imessage send failed", sender=sender, error=res["error"], bubble=i)
-    send_ms = round((time.perf_counter() - t_send) * 1000)
 
     log.info(
-        "imessage turn timing",
-        total_ms=round((time.perf_counter() - t0) * 1000),
-        send_ms=send_ms,
+        "imessage reply sent",
+        sender=sender,
         bubbles=len(bubbles),
-        llm_calls_ms=timings.get("llm_calls_ms"),
-        tools=timings.get("tool_names", []),
-        reply_chars=len(reply or ""),
+        send_ms=round((time.perf_counter() - t_send) * 1000),
+        total_ms=round((time.perf_counter() - t0) * 1000),
+        reply_chars=len(reply),
     )
 
 
@@ -203,7 +197,11 @@ async def start_imessage_watcher(daemon: Any) -> None:
                 if not msg["sender"] or not msg["text"]:
                     continue
                 log.info("imessage inbound", sender=msg["sender"], rowid=msg["rowid"])
-                await _process(daemon, msg["sender"], msg["text"])
+                # Dispatch as a task, don't await it: the poll loop has to keep
+                # watching chat.db while a turn runs, so a follow-up text can be
+                # seen and folded in as a "by the way" steer instead of queuing
+                # behind the turn. _say serializes the turns via the daemon lock.
+                asyncio.create_task(_dispatch(daemon, msg["sender"], msg["text"]))
         except asyncio.CancelledError:
             log.info("imessage watcher cancelled")
             return
