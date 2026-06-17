@@ -37,7 +37,12 @@ ToolFn = Callable[[dict[str, Any], "ToolContext"], Awaitable[Any]]
 CORE_TOOLS = frozenset({
     "find_tools", "sunday_config",
     "remember", "recall", "search_history",
-    "list_skills", "load_skill", "save_skill", "search_skills", "install_skill",
+    # Skills: list/load/save are promised by the system prompt ("save it as a
+    # skill with save_skill right then. Do not ask permission; just do it") so
+    # they must stay visible — a prompt promise about an unseen tool makes the
+    # harness lie to the model. install_skill + search_skills are NOT promised,
+    # so find_tools surfaces them on demand.
+    "list_skills", "load_skill", "save_skill",
     "cockpit_read_page", "cockpit_click", "cockpit_fill", "cockpit_press_key",
     "cockpit_scroll", "cockpit_navigate", "cockpit_tabs", "cockpit_screenshot",
     "cockpit_highlight", "cockpit_instruct_user",
@@ -50,6 +55,13 @@ CORE_TOOLS = frozenset({
     # the prompt about a tool the model can't see is the harness lying to the
     # model (live failure: "I can't check Docker" with a satellite connected).
     "device_run_command",
+    # Why cockpit_* (10 tools, ~1.7k tok) stays in core despite the weight:
+    # prompt.py makes the browser a first-class always-on surface ("THE WEB =
+    # COCKPIT, full stop ... Always cockpit_read_page first"). Demoting it to
+    # find_tools would require softening that instruction AND fragmenting the
+    # byte-stable system prompt per modality. Tracked as a possible modality-
+    # scoped-core change; not worth the regression risk now that the provider
+    # pin already solved texting latency.
 })
 
 
