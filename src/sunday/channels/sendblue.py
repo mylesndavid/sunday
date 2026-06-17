@@ -68,6 +68,106 @@ def _sendblue_headers() -> dict[str, str] | None:
     }
 
 
+def normalize_phone(raw: str) -> str:
+    """Best-effort E.164 for US numbers so the owner can type a bare
+    10-digit number: '5550101234' -> '+15550101234', '15550101234' ->
+    '+15550101234'. Anything already starting with '+' is left as-is, and
+    unusual lengths fall through untouched for Sendblue to validate."""
+    s = (raw or "").strip()
+    if s.startswith("+"):
+        return s
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) == 10:
+        return "+1" + digits
+    if len(digits) == 11 and digits.startswith("1"):
+        return "+" + digits
+    return s
+
+
+# ─── Sunday's own number (required as from_number on free_api sends) ───────
+# Sendblue's free_api plan rejects /send-message with 400 "missing required
+# parameter: from_number". GET /accounts exposes only a phoneID, not the
+# number — so we discover Sunday's number from the most recent message's
+# `sendblueNumber` and cache it (persisted to credentials, so later sends are
+# instant and survive restarts). Inbound replies already pass the number they
+# were texted from; this covers the test send and the brain's own outbound.
+
+_default_from_number: str | None = None
+
+
+async def discover_from_number() -> str | None:
+    """Sunday's own Sendblue number, used as the required `from_number` on
+    sends. Cached in-process + persisted; falls back to scanning recent
+    messages for `sendblueNumber`. None only when there's no history yet."""
+    global _default_from_number
+    if _default_from_number:
+        return _default_from_number
+    stored = get_credential("SENDBLUE_FROM_NUMBER")
+    if stored:
+        _default_from_number = stored
+        return stored
+    headers = _sendblue_headers()
+    if headers is None:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            res = await client.get(SENDBLUE_MESSAGES, headers=headers, params={"limit": 25})
+        if res.status_code != 200:
+            return None
+        counts: dict[str, int] = {}
+        for m in _extract_messages(res.json()):
+            num = m.get("sendblueNumber") or m.get("from_number")
+            if num:
+                counts[num] = counts.get(num, 0) + 1
+        if not counts:
+            return None
+        best = max(counts, key=counts.get)
+        _default_from_number = best
+        set_credential("SENDBLUE_FROM_NUMBER", best)
+        log.info("sendblue from_number discovered", number=best)
+        return best
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sendblue from_number discovery failed", error=str(exc))
+        return None
+
+
+_account_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+async def account_status() -> dict[str, Any]:
+    """Connection facts for the desktop's Sendblue panel — so saving keys
+    shows a real 'connected' state (Sunday's number, plan, owner email)
+    instead of an empty-looking form. Cached 30s, keyed by the API key id so a
+    key change busts it immediately."""
+    headers = _sendblue_headers()
+    if headers is None:
+        return {"configured": False, "connected": False}
+    key = headers.get("sb-api-key-id", "")
+    now = time.monotonic()
+    cached = _account_status_cache.get(key)
+    if cached and (now - cached[0]) < 30:
+        return cached[1]
+    out: dict[str, Any] = {"configured": True}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get("https://api.sendblue.com/accounts", headers=headers)
+        if res.status_code == 200:
+            data = res.json().get("data") or {}
+            out["connected"] = True
+            out["plan"] = data.get("plan")
+            emails = data.get("accountOwnerEmails") or []
+            out["owner"] = (emails[0] if emails else None) or (data.get("email") or None)
+        else:
+            out["connected"] = False
+            out["error"] = f"keys rejected (sendblue {res.status_code})"
+    except Exception as exc:  # noqa: BLE001
+        out["connected"] = False
+        out["error"] = f"can't reach Sendblue — {type(exc).__name__}"
+    out["number"] = await discover_from_number()
+    _account_status_cache[key] = (now, out)
+    return out
+
+
 # ─── webhook secret ───────────────────────────────────────────────────────
 # The inbound webhook is auth-exempt (external services can't carry our bearer
 # token). When the brain runs on a private box reached via Tailscale Funnel,
@@ -197,6 +297,8 @@ async def _send_typing(to: str, from_number: str | None = None) -> dict[str, Any
     headers = _sendblue_headers()
     if headers is None:
         return {"error": "credentials missing"}
+    if from_number is None:
+        from_number = await discover_from_number()
     payload: dict[str, Any] = {"number": to}
     if from_number:
         payload["from_number"] = from_number
@@ -222,6 +324,11 @@ async def _send_sendblue(
             "error": "SENDBLUE_API_KEY_ID / SENDBLUE_API_SECRET_KEY missing. "
                      "Run: sunday credential set SENDBLUE_API_KEY_ID <key>"
         }
+
+    # free_api requires from_number on every send; default to Sunday's own
+    # number when the caller didn't pass one (test send, brain-initiated text).
+    if from_number is None:
+        from_number = await discover_from_number()
 
     payload: dict[str, Any] = {"number": to, "content": body}
     if media_url:

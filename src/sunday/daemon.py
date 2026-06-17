@@ -2600,15 +2600,14 @@ class Daemon:
     async def _http_net_status(self, request: web.Request) -> web.Response:
         """Tailscale reachability + the ready-to-paste Sendblue webhook URL."""
         from sunday.net import tailscale
-        from sunday.channels.sendblue import webhook_path, public_webhook_url
-        from sunday.credentials import credential_present
+        from sunday.channels.sendblue import webhook_path, public_webhook_url, account_status
         ts = tailscale.status()
+        sb = await account_status()
         return web.json_response({
             "tailscale": ts,
             "port": self.config.server.port,
             "sendblue": {
-                "configured": credential_present("SENDBLUE_API_KEY_ID")
-                              and credential_present("SENDBLUE_API_SECRET_KEY"),
+                **sb,
                 "webhook_path": webhook_path(),
                 "webhook_url": public_webhook_url(ts.get("dns_name")),
             },
@@ -2650,14 +2649,14 @@ class Daemon:
     async def _http_sendblue_test(self, request: web.Request) -> web.Response:
         """Send a test iMessage so the whole texting round-trip can be proven
         from the desktop: Sunday texts you, you reply, it lands in the one chat."""
-        from sunday.channels.sendblue import _send_sendblue, _sendblue_headers
+        from sunday.channels.sendblue import _send_sendblue, _sendblue_headers, normalize_phone
         if _sendblue_headers() is None:
             return web.json_response({"ok": False, "error": "Sendblue keys not set yet"}, status=400)
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
             return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
-        to = (body.get("to") or "").strip()
+        to = normalize_phone((body.get("to") or "").strip())
         if not to:
             return web.json_response({"ok": False, "error": "enter your phone number"}, status=400)
         msg = "Test from Sunday — texting is wired up. Reply to this and it lands in your chat."

@@ -1257,9 +1257,39 @@ async function loadNet() {
 
   const sbLine = $('#sb-status');
   if (sbLine) {
-    if (sb.configured) { sbLine.dataset.state = 'ok'; sbLine.textContent = 'keys saved'; }
-    else { sbLine.dataset.state = ''; sbLine.textContent = 'no keys yet'; }
+    if (sb.connected) {
+      sbLine.dataset.state = 'ok';
+      const bits = [];
+      if (sb.number) bits.push(`Sunday's number is ${formatUSNumber(sb.number)}`);
+      if (sb.plan) bits.push(`${sb.plan} plan`);
+      sbLine.textContent = bits.length ? `connected — ${bits.join(' · ')}` : 'connected';
+    } else if (sb.configured) {
+      sbLine.dataset.state = 'wait';
+      sbLine.textContent = sb.error ? `keys saved, but ${sb.error}` : 'keys saved — checking connection…';
+    } else {
+      sbLine.dataset.state = ''; sbLine.textContent = 'no keys yet';
+    }
   }
+  // When keys are saved, the secret field is blanked for safety — make it read
+  // as "saved" rather than empty so the account doesn't look disconnected.
+  const sec = $('#sb-secret');
+  if (sec && sb.configured && !sec.value) sec.placeholder = 'saved — leave blank to keep';
+}
+
+// +1 (645) 221-7751 for display; bare passthrough for anything non-US-shaped.
+function formatUSNumber(n) {
+  const m = String(n || '').match(/^\+1(\d{3})(\d{3})(\d{4})$/);
+  return m ? `+1 (${m[1]}) ${m[2]}-${m[3]}` : String(n || '');
+}
+// Forgiving E.164 for a US number typed as bare digits (the +1 prefix is shown
+// next to the field, so '5550101234' and '+15550101234' both work).
+function e164US(raw) {
+  const s = String(raw || '').trim();
+  if (s.startsWith('+')) return s;
+  const d = s.replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return d ? '+' + d : '';
 }
 
 async function setupTexting() {
@@ -1351,9 +1381,10 @@ async function copyWebhook() {
 }
 
 async function sendTestText() {
-  const to = $('#sb-test-to')?.value.trim() || '';
+  const to = e164US($('#sb-test-to')?.value || '');
   const line = $('#sb-test-status');
   if (!to) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter your phone number.'; } return; }
+  if ($('#sb-test-to')) $('#sb-test-to').value = to;   // show what we'll actually send
   if (line) { line.dataset.state = 'wait'; line.textContent = 'sending…'; }
   try {
     const d = await (await fetch(`${DAEMON_HTTP}/v1/channels/sendblue/test`, {

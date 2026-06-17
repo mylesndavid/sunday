@@ -600,6 +600,7 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 /* Texting — webhook URL row + manual-command fallback */
 .net-url-row { display: flex; gap: 8px; align-items: center; }
 .net-url-row .field { flex: 1; min-width: 0; }
+.tel-prefix { display: inline-flex; align-items: center; padding: 0 11px; align-self: stretch; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-3); font: 13px/1 var(--font-mono); white-space: nowrap; }
 .set-manual { margin-top: 12px; }
 .set-manual pre { margin: 8px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: var(--r-md); font: 12px/1.6 var(--font-mono); color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .net-steps { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 14px; }
