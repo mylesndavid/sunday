@@ -183,6 +183,10 @@ function killStaleDaemon() {
 async function startEmbeddedDaemon() {
   if (daemonChild) return true;
   if (!isLocalDaemon()) return false;          // remote daemon — not ours to run
+  // SERVER role (packaged): launchd owns the daemon so it outlives the GUI —
+  // survives app quit, crash, and reboot. We install/refresh the agent and wait
+  // for health; we never spawn an app-child or pkill (KeepAlive would fight it).
+  if (wantsLaunchdDaemon()) return installServerDaemon();
   const token = localAuthToken();
   // Reuse an already-running local daemon ONLY if it accepts our token AND runs
   // our version; otherwise it's stale (bad token, or old code left over from a
@@ -220,6 +224,129 @@ async function startEmbeddedDaemon() {
 function stopEmbeddedDaemon() {
   try { daemonChild?.kill('SIGTERM'); } catch {}
   daemonChild = null;
+}
+
+// ── Server daemon (launchd, always-on) ──────────────────────────────────
+// The doctrine: the mini is always-on and canonical. So a SERVER doesn't run
+// the brain as an app child that dies when you quit Sunday — it hands ownership
+// to launchd (RunAtLoad + KeepAlive), which starts the daemon at boot and
+// restarts it on crash. The app only installs/refreshes the agent and waits for
+// health. Satellites and dev builds keep the app-child path above. Mutual
+// exclusion is the whole game: launchd OR app-child owns the port, never both.
+const SERVER_DAEMON_LABEL = 'com.sunday.daemon';
+function serverDaemonPlistPath() {
+  return path.join(os.homedir(), 'Library', 'LaunchAgents', `${SERVER_DAEMON_LABEL}.plist`);
+}
+function serverDaemonInstalled() {
+  try { return fs.existsSync(serverDaemonPlistPath()); } catch { return false; }
+}
+// Should launchd own the daemon? Only a packaged server pointed at the local
+// daemon — dev builds (no stable bundled-binary path, run from a venv) keep the
+// app-child flow, which also spares developer machines a surprise LaunchAgent.
+function wantsLaunchdDaemon() {
+  return app.isPackaged && resolveRole() === 'server' && isLocalDaemon() && !!bundledDaemonBinary();
+}
+
+function _xmlEscape(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function _serverDaemonPlistXml(bin, token) {
+  const log = path.join(os.homedir(), '.sunday', 'logs', 'daemon-launchd.log');
+  // Mirror the env the app-child daemon gets (startEmbeddedDaemon). launchd hands
+  // an agent a minimal environment, so set PATH explicitly — the brain shells out
+  // to tools (codex, tailscale, …) that live in these dirs.
+  const env = {
+    SUNDAY_AUTH_TOKEN: token,
+    SUNDAY_APP_VERSION: app.getVersion(),
+    SUNDAY_PORT: String(LOCAL_PORT),
+    PATH: '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    ...(loadPrefs().argus ? { SUNDAY_ARGUS_URL: ARGUS_URL } : {}),
+  };
+  const envXml = Object.entries(env)
+    .map(([k, v]) => `      <key>${k}</key><string>${_xmlEscape(v)}</string>`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${SERVER_DAEMON_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${_xmlEscape(bin)}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${envXml}
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>${_xmlEscape(log)}</string>
+  <key>StandardErrorPath</key><string>${_xmlEscape(log)}</string>
+</dict>
+</plist>
+`;
+}
+function _launchctl(args) {
+  // Absolute path — a Finder-launched app can have a minimal PATH that omits /bin.
+  try { require('node:child_process').execFileSync('/bin/launchctl', args, { stdio: 'ignore', timeout: 8000 }); return true; }
+  catch { return false; }
+}
+
+// Install (or refresh) and start the launchd daemon. Idempotent: rewrites the
+// plist with the current token / version / argus env, reloads it so a post-update
+// launch restarts the daemon onto the new binary, and waits for it to answer our
+// token. Returns true on health.
+async function installServerDaemon() {
+  const bin = bundledDaemonBinary();
+  if (!bin) return false;
+  const token = localAuthToken();
+  const uid = os.userInfo().uid ?? 501;
+  const domain = `gui/${uid}`, target = `${domain}/${SERVER_DAEMON_LABEL}`;
+  const plist = serverDaemonPlistPath();
+  try {
+    fs.mkdirSync(path.dirname(plist), { recursive: true });
+    fs.mkdirSync(path.join(os.homedir(), '.sunday', 'logs'), { recursive: true });
+    // 0600 — the plist embeds the bearer token, so keep it owner-only.
+    fs.writeFileSync(plist, _serverDaemonPlistXml(bin, token), { mode: 0o600 });
+  } catch (e) { console.warn('write daemon plist failed', e?.message); return false; }
+  // bootout first so bootstrap re-reads the (possibly changed) plist. Between the
+  // two, clear any NON-launchd squatter on the port — once we've booted our own
+  // agent out, nothing launchd-managed is there for KeepAlive to fight.
+  _launchctl(['bootout', target]);
+  await new Promise((r) => setTimeout(r, 400));
+  try {
+    require('node:child_process').execSync(
+      `lsof -ti tcp:${LOCAL_PORT} -sTCP:LISTEN 2>/dev/null | xargs -r kill -9 2>/dev/null`,
+      { stdio: 'ignore', shell: '/bin/bash' });
+  } catch {}
+  if (!_launchctl(['bootstrap', domain, plist])) {
+    // Already bootstrapped, or bootstrap unsupported on this macOS — hard-restart.
+    _launchctl(['kickstart', '-k', target]);
+  }
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('launchd daemon healthy'); return true; }
+  }
+  console.warn('launchd daemon never became healthy');
+  return false;
+}
+
+// Tear down the launchd daemon — used when this Mac stops being the server.
+function removeServerDaemon() {
+  const uid = os.userInfo().uid ?? 501;
+  _launchctl(['bootout', `gui/${uid}/${SERVER_DAEMON_LABEL}`]);
+  try { fs.unlinkSync(serverDaemonPlistPath()); } catch {}
+}
+
+// Restart the local daemon to reload credentials / env. Launchd-managed servers
+// are reloaded in place (which rewrites the plist and picks up disk creds);
+// app-child daemons are killed and respawned. Never pkill a launchd daemon.
+async function restartLocalDaemon() {
+  if (!isLocalDaemon()) return;
+  if (wantsLaunchdDaemon()) { await installServerDaemon(); return; }
+  killStaleDaemon();
+  daemonChild = null;
+  await new Promise((r) => setTimeout(r, 800));
+  await startEmbeddedDaemon();
 }
 
 let mainWindow = null;
@@ -378,9 +505,8 @@ ipcMain.handle('sunday:set-openrouter-key', async (_evt, key) => {
     try { lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() && !l.startsWith('OPENROUTER_API_KEY=')); } catch {}
     lines.push(`OPENROUTER_API_KEY=${k}`);
     fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
-    // Restart embedded daemon so it reloads credentials.
-    if (daemonChild) { stopEmbeddedDaemon(); await new Promise((r) => setTimeout(r, 800)); }
-    await startEmbeddedDaemon();
+    // Restart the local daemon so it reloads credentials (launchd-aware).
+    await restartLocalDaemon();
     return { ok: true };
   } catch (e) { return { ok: false, error: e?.message || String(e) }; }
 });
@@ -422,7 +548,7 @@ function localDaemonToken() {
 
 ipcMain.handle('sunday:run-mode', () => {
   const prefs = loadPrefs();
-  return { local: isLocalDaemon(), role: resolveRole(), cloudHttp: prefs.cloudDaemonHttp || (isLocalDaemon() ? '' : prefs.daemonHttp) || '' };
+  return { local: isLocalDaemon(), role: resolveRole(), alwaysOn: serverDaemonInstalled(), cloudHttp: prefs.cloudDaemonHttp || (isLocalDaemon() ? '' : prefs.daemonHttp) || '' };
 });
 
 ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
@@ -434,6 +560,8 @@ ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
     if (!up) {
       // Don't strand the user on a "local" brain that never came up — revert so
       // the UI keeps pointing at the working cloud daemon instead of half-switching.
+      // Also tear down any launchd agent a failed install left half-written.
+      removeServerDaemon();
       savePrefs({ daemonHttp: prefs.daemonHttp, daemonWs: prefs.daemonWs, daemonToken: prefs.daemonToken });
       return { ok: false, error: "the local brain didn't start on this Mac — still on cloud" };
     }
@@ -445,6 +573,7 @@ ipcMain.handle('sunday:set-run-mode', async (_evt, mode) => {
     if (!ch) return { ok: false, error: 'no cloud daemon saved to switch back to' };
     savePrefs({ daemonHttp: ch, daemonWs: cw, daemonToken: prefs.cloudDaemonToken || prefs.daemonToken || '', role: 'satellite' });
     stopEmbeddedDaemon();
+    removeServerDaemon();   // this Mac is no longer the server — stop the always-on daemon
   }
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
   rebuildTrayMenu();
@@ -735,7 +864,7 @@ function rebuildTrayMenu() {
   const version = app.getVersion();
   const role = resolveRole();
   const roleLine = role === 'server'
-    ? 'Server · this Mac is the brain'
+    ? (serverDaemonInstalled() ? 'Server · this Mac is the brain · always-on' : 'Server · this Mac is the brain')
     : `Satellite · ${prefs.label || daemonHttp}`;
   const menu = Menu.buildFromTemplate([
     { label: `Sunday ${version}`, enabled: false },
@@ -1574,9 +1703,9 @@ ipcMain.handle('sunday:argus-set', async (_evt, enabled) => {
   }
   savePrefs({ argus: enabled });
   if (enabled) startArgus(); else stopArgus();
-  // Restart the local daemon so it picks up (or drops) SUNDAY_ARGUS_URL. Kill by
-  // port so a reused daemon is replaced too, not just one we spawned ourselves.
-  if (isLocalDaemon()) { killStaleDaemon(); daemonChild = null; await new Promise((r) => setTimeout(r, 800)); await startEmbeddedDaemon(); }
+  // Restart the local daemon so it picks up (or drops) SUNDAY_ARGUS_URL —
+  // launchd-aware, so a server's always-on daemon is reloaded, not pkill'd.
+  await restartLocalDaemon();
   return { ok: true, running: !!argusChild };
 });
 ipcMain.handle('sunday:argus-open', () => { try { shell.openExternal(ARGUS_URL); return { ok: true }; } catch (e) { return { ok: false, error: String(e) }; } });
