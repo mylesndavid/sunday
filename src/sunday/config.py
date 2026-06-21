@@ -19,30 +19,32 @@ ProviderName = Literal["openrouter", "openai", "anthropic", "deepseek-direct", "
 
 @dataclass
 class ModelConfig:
-    """The LLM Sunday speaks with.
+    """The LLM Sunday's brain speaks with.
 
-    Default is a DeepSeek model accessed *via OpenRouter* — same wire format
-    everything else uses (OpenAI-compatible chat completions), and OpenRouter
-    handles provider routing + failover for us. Override `name` with any
-    OpenRouter slug to swap models without touching code.
+    Default is OpenAI's gpt-5.5 hit directly — a frontier reasoning model, so
+    replies actually think before they land. The runtime router (see
+    runtime/router.py) auto-fails-over to any other credentialed provider on
+    402 / rate-limit; on a box logged into the codex CLI that means the next
+    stop is Codex/gpt-5.x (your ChatGPT subscription, no key) — also a real
+    reasoning model. Background fact-extraction runs on a cheap utility model
+    (gpt-4o-mini) separately; see runtime.build_utility_runtime. The brain
+    itself never lands on gpt-4o-mini.
 
-    Use 'deepseek-direct' only if you specifically want to hit DeepSeek's
-    own API instead of going through OpenRouter.
+    Override `name`/`provider` to swap models. Use 'openrouter' (with an
+    OPENROUTER_API_KEY) for unified routing across vendors, 'codex' to make
+    the ChatGPT subscription primary, or 'ollama' for a local model.
     """
-    provider: ProviderName = "openrouter"
-    name: str = "deepseek/deepseek-v4-flash"
-    base_url: str = "https://openrouter.ai/api/v1"
+    provider: ProviderName = "openai"
+    name: str = "gpt-5.5"
+    base_url: str = "https://api.openai.com/v1"
     # Reasoning costs latency but cleans up multi-step thinking and tool routing.
     # On by default; turn off for ambient conversational replies if it becomes a problem.
     reasoning: bool = True
-    # OpenRouter provider pin. Default routing (even sort:latency) lets requests
-    # land on slow backends — measured a 7-37s TTFT tail on texting. These three
-    # benchmarked fastest + most consistent for deepseek-v4-flash (WandB ~1.0s,
-    # Alibaba ~0.9s, DeepSeek first-party ~1.7s as a reliable anchor). Tried in
-    # order; allow_fallbacks=False keeps the long tail of the other 15 providers
-    # out, but the list still gives redundancy if one is down. Empty list ->
-    # fall back to sort:latency (correct for any non-deepseek model swap).
-    providers: list[str] = field(default_factory=lambda: ["WandB", "Alibaba", "DeepSeek"])
+    # OpenRouter-only provider pin (ignored unless base_url is OpenRouter). Pins
+    # the routing order to tame the TTFT tail when a model is served by many
+    # backends of varying speed. Empty -> sort:latency, which is correct for the
+    # default direct-OpenAI path and any non-OpenRouter model.
+    providers: list[str] = field(default_factory=list)
     allow_fallbacks: bool = False
 
 
