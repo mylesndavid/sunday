@@ -83,6 +83,18 @@ BUILTIN_SERVERS: dict[str, dict[str, Any]] = {
         ],
         "setup_url": "https://github.com/microsoft/playwright/tree/main/packages/extension#readme",
     },
+    "cua-driver": {
+        "title": "Computer use (Cua Driver)",
+        "desc": "Drive native macOS apps in the background — click, type, and read the on-screen accessibility tree WITHOUT stealing your cursor, focus, or Space. Lets Sunday operate the Mac (and Electron apps like Slack/Discord/VS Code) while you keep working in the foreground. Open-source (trycua/cua); pid-scoped CGEvents + AX RPC.",
+        "config": {"command": "cua-driver", "args": ["mcp"]},
+        "needs": "cua-driver",   # the signed CuaDriver.app installs a `cua-driver` binary on PATH
+        "setup": [
+            "Install the driver once via the Cua install script — it downloads the signed CuaDriver.app and puts a `cua-driver` binary on PATH.",
+            "Grant CuaDriver (com.trycua.driver) both Accessibility AND Screen Recording in System Settings → Privacy & Security. Call the cua_driver_check_permissions tool to raise the prompts.",
+            "Toggle this on — cua_driver_* tools (screenshot, click, type, read the AX tree) go live on the next turn.",
+        ],
+        "setup_url": "https://github.com/trycua/cua/blob/main/libs/cua-driver/README.md",
+    },
 }
 
 
@@ -93,6 +105,7 @@ def _node_path_dirs() -> list[str]:
     import os, glob
     home = os.path.expanduser("~")
     dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+            f"{home}/.local/bin",   # cua-driver's install script symlinks here
             f"{home}/.npm-global/bin", f"{home}/.volta/bin", f"{home}/.bun/bin"]
     for pat in (f"{home}/.nvm/versions/node/*/bin",
                 f"{home}/Library/Application Support/fnm/node-versions/*/installation/bin",
@@ -116,12 +129,27 @@ def node_available() -> bool:
                 or shutil.which("node", path=augmented_env()["PATH"]))
 
 
+def _binary_available(name: str) -> bool:
+    import shutil
+    return bool(shutil.which(name, path=augmented_env()["PATH"]))
+
+
+def _need_met(need: str | None) -> bool:
+    """Is a built-in connector's runtime requirement satisfied? `node` checks for
+    npx/node; any other value is the name of a binary that must be on PATH (e.g.
+    `cua-driver`). None = no requirement."""
+    if not need:
+        return True
+    if need == "node":
+        return node_available()
+    return _binary_available(need)
+
+
 def builtin_status() -> list[dict[str, Any]]:
     """The built-in connectors + whether each is currently enabled in mcp.json,
     whether its runtime req (Node) is met, and (for token connectors) whether a
     token is already stored."""
     saved = (load_config().get("mcpServers") or {})
-    node = node_available()
     out = []
     for bid, b in BUILTIN_SERVERS.items():
         tenv = b.get("token_env")
@@ -129,7 +157,7 @@ def builtin_status() -> list[dict[str, Any]]:
         out.append({
             "id": bid, "title": b["title"], "desc": b["desc"],
             "enabled": bid in saved,
-            "ready": (b.get("needs") != "node") or node,
+            "ready": _need_met(b.get("needs")),
             "needs": b.get("needs"), "setup": b.get("setup", []), "setup_url": b.get("setup_url"),
             "needs_token": bool(tenv), "token_label": b.get("token_label"), "has_token": has_token,
         })
