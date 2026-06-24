@@ -1648,6 +1648,54 @@ class Daemon:
             "token_mismatch": recent_reject and not self.cockpit.connected,
         })
 
+    async def _http_vapi_status(self, request: web.Request) -> web.Response:
+        """Whether phone calling is wired up, for the Calling card in Settings.
+
+        configured       — both the API key and a from-number id are set, so a
+                           call can actually be placed.
+        has_api_key      — VAPI_API_KEY credential present.
+        has_from_number  — VAPI_PHONE_NUMBER_ID credential present.
+        from_number_id   — the id itself (not a secret — it's a phone-number
+                           handle, safe to show so the owner can confirm it).
+        model            — the on-call voice model VAPI will run.
+        """
+        from sunday.credentials import get_credential
+        api_key = get_credential("VAPI_API_KEY")
+        from_number = get_credential("VAPI_PHONE_NUMBER_ID")
+        return web.json_response({
+            "configured": bool(api_key and from_number),
+            "has_api_key": bool(api_key),
+            "has_from_number": bool(from_number),
+            "from_number_id": from_number or None,
+            "model": self.config.vapi.model_name,
+        })
+
+    async def _http_vapi_test(self, request: web.Request) -> web.Response:
+        """Place a real test call so the whole calling round-trip can be proven
+        from the desktop. Dials the number the owner entered with a short,
+        self-describing purpose; the transcript + summary land in the one chat
+        (modality='vapi') when the call ends, same as any other call."""
+        from sunday.channels.vapi import _create_call
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+        to = (body.get("to") or "").strip()
+        if not to:
+            return web.json_response({"ok": False, "error": "enter a number to call"}, status=400)
+        purpose = (
+            "This is a test call placed from Sunday's Settings to confirm phone "
+            "calling works. Briefly say you're Sunday testing the connection, "
+            "confirm the line is clear, then politely end the call."
+        )
+        try:
+            result = await _create_call(str(to), purpose, self.config)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=502)
+        if isinstance(result, dict) and result.get("error"):
+            return web.json_response({"ok": False, "error": result["error"]}, status=400)
+        return web.json_response({"ok": True, "result": result})
+
     async def _start_codex_callback(self) -> None:
         """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
         catches the OAuth redirect. Torn down once we have the code."""
@@ -2728,6 +2776,8 @@ class Daemon:
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
         app.router.add_get("/v1/cockpit/status", self._http_cockpit_status)
+        app.router.add_get("/v1/vapi/status", self._http_vapi_status)
+        app.router.add_post("/v1/vapi/test", self._http_vapi_test)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)

@@ -78,6 +78,7 @@ export async function loadAll() {
   loadMcp();
   loadGmailStatus();
   loadCockpitStatus();
+  loadVapiStatus();
   loadNet();
   loadMemorySummary();
   loadSkills();
@@ -476,6 +477,59 @@ async function saveCockpitToken() {
   } catch (err) {
     if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
   }
+}
+
+// Calling (outbound phone via VAPI). Saves VAPI_API_KEY + VAPI_PHONE_NUMBER_ID
+// through the standard saveBrain({credentials}) path, same as Gmail/Cockpit;
+// status reflects whether both are set (configured/not configured). The test
+// button places a real call to whatever number the owner enters.
+async function loadVapiStatus() {
+  const line = $('#vapi-status'); if (!line) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/vapi/status`)).json(); }
+  catch { line.dataset.state = ''; line.textContent = ''; return; }
+  const num = $('#vapi-from-number');
+  if (num && !num.value && d.from_number_id) num.value = d.from_number_id;
+  if (d.configured) { line.dataset.state = 'ok'; line.textContent = `configured — on-call model ${d.model || 'gpt-4o'}`; return; }
+  if (d.has_api_key && !d.has_from_number) { line.dataset.state = 'wait'; line.textContent = 'key saved — add the from-number id to finish'; return; }
+  if (!d.has_api_key && d.has_from_number) { line.dataset.state = 'wait'; line.textContent = 'from-number saved — add the API key to finish'; return; }
+  line.dataset.state = ''; line.textContent = 'Not configured';
+}
+
+async function saveVapiCreds() {
+  const apiKey = $('#vapi-api-key')?.value.trim() || '';
+  const fromNumber = $('#vapi-from-number')?.value.trim() || '';
+  const line = $('#vapi-status');
+  if (!apiKey && !fromNumber) {
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter the API key and from-number id.'; }
+    return;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  const credentials = {};
+  if (apiKey) credentials.VAPI_API_KEY = apiKey;
+  if (fromNumber) credentials.VAPI_PHONE_NUMBER_ID = fromNumber;
+  try {
+    await saveBrain({ credentials });
+    if ($('#vapi-api-key')) $('#vapi-api-key').value = '';   // don't keep the secret on screen
+    await loadVapiStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+async function placeTestCall() {
+  const to = e164US($('#vapi-test-to')?.value || '');
+  const line = $('#vapi-test-status');
+  if (!to) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter a number to call.'; } return; }
+  if ($('#vapi-test-to')) $('#vapi-test-to').value = to;   // show what we'll actually dial
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'placing the call…'; }
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/vapi/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }),
+    })).json();
+    if (d.ok) { line.dataset.state = 'ok'; line.textContent = 'call placed — the transcript lands in your chat when it ends'; }
+    else { line.dataset.state = 'fail'; line.textContent = d.error || 'call failed'; }
+  } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
 }
 
 function renderMcpServers(servers) {
@@ -1512,6 +1566,16 @@ function wire() {
   });
   $('#cockpit-connect')?.addEventListener('click', () => saveCockpitToken());
   $('#cockpit-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveCockpitToken(); } });
+
+  // Calling (outbound phone via VAPI) card — Save stores the key + from-number
+  // id; Place test call dials the entered number; open the VAPI dashboard.
+  $('#vapi-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://dashboard.vapi.ai'); });
+  $('#vapi-save')?.addEventListener('click', () => saveVapiCreds());
+  ['#vapi-api-key', '#vapi-from-number'].forEach((sel) => {
+    $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveVapiCreds(); } });
+  });
+  $('#vapi-test-call')?.addEventListener('click', () => placeTestCall());
+  $('#vapi-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); placeTestCall(); } });
 
   // Texting (Sendblue over Tailscale)
   $('#net-setup')?.addEventListener('click', () => setupTexting());

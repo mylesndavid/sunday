@@ -531,6 +531,35 @@
             </div>
           </div>
 
+          <!-- CALLING (outbound phone calls via VAPI) -->
+          <div class="set-panel">
+            <div class="brain-label">Calling (phone)</div>
+            <div class="mcp-bi" id="vapi-card">
+              <p class="set-help set-help-tight">Sunday places outbound calls on your behalf. Say "call X" and she dials, speaks to the stated purpose, and drops the transcript and summary into your chat when the call ends.</p>
+              <label class="set-field">
+                <span class="set-field-l">VAPI API key</span>
+                <input type="password" id="vapi-api-key" class="field mono" placeholder="paste your VAPI private key" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">From-number ID</span>
+                <input type="text" id="vapi-from-number" class="field mono" placeholder="the VAPI phone-number id you call from" autocomplete="off" spellcheck="false">
+              </label>
+              <p class="set-help set-help-tight">Both come from your VAPI dashboard. <a href="#" id="vapi-keys-link" class="mcp-bi-link">Open the VAPI dashboard</a></p>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="vapi-save">Save</button>
+                <span class="set-verify" id="vapi-status" aria-live="polite"></span>
+              </div>
+              <label class="set-field">
+                <span class="set-field-l">Place a test call</span>
+                <input type="tel" id="vapi-test-to" class="field mono" placeholder="+1 555 010 1234" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <button type="button" class="btn" id="vapi-test-call">Place test call</button>
+                <span class="set-verify" id="vapi-test-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
           <!-- CONNECTED SERVICES -->
           <div class="set-panel">
             <div class="brain-label">Connected services</div>

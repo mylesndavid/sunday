@@ -102,10 +102,17 @@ class CloudflareConfig:
 
 @dataclass
 class VapiConfig:
-    """VAPI outbound voice calls."""
+    """VAPI outbound voice calls.
+
+    The on-call brain is a separate, mid-tier model that runs *inside* VAPI's
+    voice pipeline (not Sunday's own router) — it has to be one VAPI supports.
+    gpt-4o is the default: stronger than gpt-4o-mini at staying on-objective and
+    handling phone-tree fumbles, and confirmed VAPI-supported. Don't point this
+    at gpt-5.x — not confirmed on VAPI. Overridable.
+    """
     api_base: str = "https://api.vapi.ai"
     model_provider: str = "openai"
-    model_name: str = "gpt-4o-mini"
+    model_name: str = "gpt-4o"
     voice_provider: str = "11labs"
     voice_id: str = "rachel"
     transcriber_provider: str = "deepgram"
