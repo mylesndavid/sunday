@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -222,6 +223,22 @@ class Daemon:
         # Tools find_tools has activated this session (beyond the core set).
         self._active_tools: set[str] = set()
         self.devices = DeviceManager(broadcast=self._broadcast_lazy)
+        # The brain runs on the user's own machine, so register it as an
+        # in-process "local" device — shell commands execute right here, no
+        # satellite WebSocket required. This is why device_run_command works the
+        # moment the daemon is up, instead of erroring "no device — start the
+        # satellite" whenever the satellite's WS link has dropped (it silently
+        # does on restarts). Satellites on OTHER machines still connect over
+        # /v1/devices/ws and add their own capabilities (screen, control, …).
+        if sys.platform in ("darwin", "linux"):
+            import platform as _platform
+            from sunday.devices import local as _local
+            self.devices.register_local(
+                device_id="local",
+                capabilities=_local.CAPABILITIES,
+                platform=_platform.platform(),
+                handlers=_local.HANDLERS,
+            )
         # Bridge to the user's real logged-in Chrome via the Cockpit extension.
         # Holds the single live extension WS; tools route through it.
         self.cockpit = CockpitBridge()

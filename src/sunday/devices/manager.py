@@ -32,8 +32,11 @@ class ConnectedDevice:
     device_id: str
     capabilities: list[str]
     platform: str
-    ws: web.WebSocketResponse
+    # A satellite carries a live WebSocket; the brain's own host (registered via
+    # register_local) carries `handlers` instead and `ws` stays None.
+    ws: web.WebSocketResponse | None = None
     pending: dict[str, asyncio.Future] = field(default_factory=dict)
+    handlers: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]] | None = None
 
 
 class DeviceManager:
@@ -57,6 +60,28 @@ class DeviceManager:
     def get(self, device_id: str) -> ConnectedDevice | None:
         return self._devices.get(device_id)
 
+    def register_local(
+        self,
+        device_id: str,
+        capabilities: list[str],
+        platform: str,
+        handlers: dict[str, Callable[[dict[str, Any]], Awaitable[Any]]],
+    ) -> None:
+        """Register an in-process device for the brain's own host. Unlike a
+        satellite it has no WebSocket — command() dispatches to `handlers`
+        directly. This guarantees the machine Sunday runs on is always
+        reachable (shell, etc.) even when no satellite is connected. Inserted
+        first so capability-matched routing prefers running here over a WS
+        round-trip to a satellite on the same Mac."""
+        self._devices[device_id] = ConnectedDevice(
+            device_id=device_id,
+            capabilities=list(capabilities),
+            platform=platform,
+            ws=None,
+            handlers=dict(handlers),
+        )
+        log.info("local device registered", device_id=device_id, capabilities=list(capabilities))
+
     async def command(
         self,
         device_id: str,
@@ -67,6 +92,19 @@ class DeviceManager:
         device = self._devices.get(device_id)
         if device is None:
             raise RuntimeError(f"no such device connected: {device_id}")
+
+        # In-process local device: run the handler here, no WebSocket hop.
+        if device.handlers is not None:
+            handler = device.handlers.get(method)
+            if handler is None:
+                raise RuntimeError(f"local device '{device_id}' has no handler for: {method}")
+            try:
+                return await asyncio.wait_for(handler(params or {}), timeout=timeout)
+            except asyncio.TimeoutError:
+                raise RuntimeError(f"timeout running local {method}")
+
+        if device.ws is None:
+            raise RuntimeError(f"device {device_id} has no transport")
 
         req_id = uuid.uuid4().hex[:12]
         loop = asyncio.get_running_loop()
