@@ -5,6 +5,7 @@
 import * as memoryView from './memory-view.js';
 import * as settingsView from './settings-view.js';
 import * as rewindView from './rewind-view.js';
+import * as callsView from './calls-view.js';
 
 const $ = (s) => document.querySelector(s);
 const chatEl     = $('#chat');
@@ -59,6 +60,14 @@ async function boot() {
     img: $('#rw-img'), empty: $('#rw-empty'), emptyTitle: $('#rw-empty-title'), emptySub: $('#rw-empty-sub'),
     enable: $('#rw-enable'), controls: $('#rw-controls'), text: $('#rw-text'), ocr: $('#rw-ocr'),
     slider: $('#rw-slider'), time: $('#rw-time'), play: $('#rw-play'), prev: $('#rw-prev'), next: $('#rw-next'), stop: $('#rw-stop'),
+  });
+  callsView.init({ daemonHttp: DAEMON_HTTP }, {
+    list: $('#calls-list'), rows: $('#calls-rows'), refresh: $('#calls-refresh'),
+    empty: $('#calls-empty'), error: $('#calls-error'), errorSub: $('#calls-error-sub'),
+    detail: $('#call-detail'), back: $('#call-back'),
+    detailTo: $('#call-detail-to'), detailMeta: $('#call-detail-meta'),
+    audio: $('#call-audio'), noAudio: $('#call-no-audio'),
+    summaryWrap: $('#call-summary-wrap'), summary: $('#call-summary'), transcript: $('#call-transcript'),
   });
   renderSkeleton();
   await refreshLog();
@@ -754,11 +763,12 @@ $('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.clic
 
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
-  if (!['chat', 'memory', 'rewind', 'settings'].includes(name)) return;
+  if (!['chat', 'memory', 'calls', 'rewind', 'settings'].includes(name)) return;
   currentView = name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'memory') { memoryView.refresh(); }
+  if (name === 'calls') callsView.load();
   if (name === 'rewind') rewindView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
   if (name === 'chat') scrollToEnd();
@@ -769,7 +779,8 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); switchView('settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); switchView('chat'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); switchView('memory'); }
-  if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('rewind'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('calls'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); switchView('rewind'); }
 });
 window.sunday?.onSwitchView?.((name) => switchView(name));
 window.sunday?.onOpenAdmin?.(() => switchView('settings'));

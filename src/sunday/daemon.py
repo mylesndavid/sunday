@@ -1696,6 +1696,33 @@ class Daemon:
             return web.json_response({"ok": False, "error": result["error"]}, status=400)
         return web.json_response({"ok": True, "result": result})
 
+    async def _http_vapi_calls(self, request: web.Request) -> web.Response:
+        """The Calls view's list — pulled live from VAPI (we hold the key; the
+        renderer never sees it). Trimmed rows, newest first, capped at ~50."""
+        from sunday.channels.vapi import list_calls
+        try:
+            result = await list_calls(limit=50)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=502)
+        if isinstance(result, dict) and result.get("error"):
+            return web.json_response({"error": result["error"]}, status=400)
+        return web.json_response(result)
+
+    async def _http_vapi_call_get(self, request: web.Request) -> web.Response:
+        """One call's detail for the Calls view: transcript, summary, and the
+        VAPI-stored recording URL the in-app audio player points at."""
+        from sunday.channels.vapi import get_call
+        call_id = request.match_info.get("id", "").strip()
+        if not call_id:
+            return web.json_response({"error": "missing call id"}, status=400)
+        try:
+            result = await get_call(call_id)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=502)
+        if isinstance(result, dict) and result.get("error"):
+            return web.json_response({"error": result["error"]}, status=400)
+        return web.json_response(result)
+
     async def _start_codex_callback(self) -> None:
         """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
         catches the OAuth redirect. Torn down once we have the code."""
@@ -2778,6 +2805,8 @@ class Daemon:
         app.router.add_get("/v1/cockpit/status", self._http_cockpit_status)
         app.router.add_get("/v1/vapi/status", self._http_vapi_status)
         app.router.add_post("/v1/vapi/test", self._http_vapi_test)
+        app.router.add_get("/v1/vapi/calls", self._http_vapi_calls)
+        app.router.add_get("/v1/vapi/calls/{id}", self._http_vapi_call_get)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)

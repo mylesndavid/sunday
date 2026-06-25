@@ -94,6 +94,144 @@ async def _create_call(
     return {"ok": True, "call_id": data.get("id"), "status": data.get("status"), "data": data}
 
 
+# ─── reading calls back (Calls view pulls from VAPI directly) ─────────────
+#
+# The daemon is local-only (127.0.0.1), so VAPI's webhook can't reach it and
+# a webhook-fed store would be empty. VAPI already keeps the call list,
+# transcripts, and recordings — so the Calls view just queries them through
+# the daemon, which holds the API key. The key never reaches the renderer.
+
+_VAPI_BASE = "https://api.vapi.ai"
+
+
+def _coalesce(d: dict[str, Any], *keys: str) -> Any:
+    """First present, non-None value among nested dotted keys."""
+    for key in keys:
+        cur: Any = d
+        for part in key.split("."):
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(part)
+        if cur not in (None, ""):
+            return cur
+    return None
+
+
+def _duration_seconds(call: dict[str, Any]) -> float | None:
+    secs = _coalesce(call, "durationSeconds", "duration")
+    if isinstance(secs, (int, float)):
+        return float(secs)
+    # VAPI also exposes startedAt/endedAt ISO timestamps we can subtract.
+    started = call.get("startedAt")
+    ended = call.get("endedAt")
+    if isinstance(started, str) and isinstance(ended, str):
+        from datetime import datetime
+        try:
+            s = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            e = datetime.fromisoformat(ended.replace("Z", "+00:00"))
+            return max(0.0, (e - s).total_seconds())
+        except ValueError:
+            return None
+    return None
+
+
+def _recording_url(call: dict[str, Any]) -> str | None:
+    return _coalesce(
+        call,
+        "recordingUrl",
+        "artifact.recordingUrl",
+        "artifact.stereoRecordingUrl",
+        "stereoRecordingUrl",
+    )
+
+
+def _assistant_label(call: dict[str, Any]) -> str | None:
+    """A human label for the call: assistant name, else the purpose we set."""
+    name = _coalesce(call, "assistant.name", "assistantId")
+    if name:
+        return str(name)
+    # We seed the system prompt with "# Purpose of this call"; surface it.
+    messages = _coalesce(call, "assistant.model.messages") or []
+    if isinstance(messages, list):
+        for m in messages:
+            if isinstance(m, dict) and m.get("role") == "system":
+                content = str(m.get("content") or "")
+                marker = "# Purpose of this call"
+                if marker in content:
+                    after = content.split(marker, 1)[1].strip()
+                    first = after.splitlines()[0].strip() if after else ""
+                    if first:
+                        return first[:120]
+    return None
+
+
+def _trim_call_row(call: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": call.get("id"),
+        "createdAt": _coalesce(call, "createdAt", "startedAt"),
+        "to": _coalesce(call, "customer.number", "phoneNumber.number") or "?",
+        "status": call.get("status"),
+        "endedReason": call.get("endedReason"),
+        "durationSeconds": _duration_seconds(call),
+        "assistantName": _assistant_label(call),
+        "hasRecording": bool(_recording_url(call)),
+    }
+
+
+async def list_calls(limit: int = 50) -> dict[str, Any]:
+    """Pull the recent call list from VAPI. Returns {calls:[...]} or {error}."""
+    api_key = get_credential("VAPI_API_KEY")
+    if not api_key:
+        return {"error": "VAPI_API_KEY is missing. Run: sunday credential set VAPI_API_KEY <key>"}
+    headers = {"Authorization": f"Bearer {api_key}"}
+    params = {"limit": str(max(1, min(int(limit), 100)))}
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(f"{_VAPI_BASE}/call", headers=headers, params=params)
+    try:
+        data = res.json()
+    except ValueError:
+        data = {"raw": res.text}
+    if res.status_code >= 400:
+        return {"error": f"vapi {res.status_code}: {data}"}
+    calls = data if isinstance(data, list) else (data.get("results") or data.get("calls") or [])
+    rows = [_trim_call_row(c) for c in calls if isinstance(c, dict)]
+    rows.sort(key=lambda r: r.get("createdAt") or "", reverse=True)
+    return {"calls": rows[:limit]}
+
+
+async def get_call(call_id: str) -> dict[str, Any]:
+    """Pull a single call's detail (transcript, summary, recording) from VAPI."""
+    api_key = get_credential("VAPI_API_KEY")
+    if not api_key:
+        return {"error": "VAPI_API_KEY is missing. Run: sunday credential set VAPI_API_KEY <key>"}
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(f"{_VAPI_BASE}/call/{call_id}", headers=headers)
+    try:
+        call = res.json()
+    except ValueError:
+        call = {"raw": res.text}
+    if res.status_code >= 400:
+        return {"error": f"vapi {res.status_code}: {call}"}
+    if not isinstance(call, dict):
+        return {"error": "vapi returned an unexpected call shape"}
+    messages = _coalesce(call, "artifact.messages", "messages") or []
+    return {
+        "id": call.get("id"),
+        "createdAt": _coalesce(call, "createdAt", "startedAt"),
+        "to": _coalesce(call, "customer.number", "phoneNumber.number") or "?",
+        "status": call.get("status"),
+        "endedReason": call.get("endedReason"),
+        "durationSeconds": _duration_seconds(call),
+        "summary": _coalesce(call, "summary", "analysis.summary"),
+        "transcript": _coalesce(call, "transcript", "artifact.transcript"),
+        "recordingUrl": _recording_url(call),
+        "assistantName": _assistant_label(call),
+        "messages": messages if isinstance(messages, list) else [],
+    }
+
+
 # ─── webhook ─────────────────────────────────────────────────────────────
 
 
