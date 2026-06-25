@@ -32,6 +32,21 @@ exports.default = async function notarizing(context) {
   const { electronPlatformName, appOutDir } = context;
   if (electronPlatformName !== 'darwin') return;
 
+  const config = context.packager.config || {};
+  const macConfig = config.mac || {};
+  const identity = macConfig.identity;
+  const signingDisabled = process.env.CSC_IDENTITY_AUTO_DISCOVERY === 'false' || identity === null || identity === 'null';
+  if (signingDisabled) {
+    console.log('  skipping notarization because macOS signing is disabled.');
+    return;
+  }
+
+  const required = ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length) {
+    throw new Error(`Cannot notarize: missing ${missing.join(', ')}`);
+  }
+
   const appName = context.packager.appInfo.productFilename;
   const appPath = `${appOutDir}/${appName}.app`;
 
