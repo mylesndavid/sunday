@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python-tests:
+    runs-on: [self-hosted, hero]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show runner toolchain
+        run: |
+          hostname
+          python3 --version
+          node --version || true
+          docker --version || true
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install -e '.[dev,devices]'
+
+      - name: Run tests
+        run: |
+          . .venv/bin/activate
+          pytest -q
