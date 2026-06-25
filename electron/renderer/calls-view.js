@@ -17,9 +17,14 @@ export async function load() {
   els.empty.hidden = true;
   els.error.hidden = true;
   els.rows.innerHTML = '<div class="calls-loading">Loading calls…</div>';
+  // The whole list comes from this one response — id, time, number, status,
+  // ended reason, duration, name, and whether a recording exists. We render
+  // straight from it and never touch the per-call detail endpoint here; that
+  // only fires when a row is opened. A timeout turns a slow or hung request
+  // into an honest error state instead of an endless spinner.
   try {
-    const res = await fetch(`${cfg.daemonHttp}/v1/vapi/calls`);
-    const data = await res.json();
+    const res = await fetch(`${cfg.daemonHttp}/v1/vapi/calls`, { signal: AbortSignal.timeout(20000) });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) {
       renderError(data.error || `Request failed (${res.status}).`);
       return;
@@ -28,7 +33,9 @@ export async function load() {
     renderRows(data.calls || []);
   } catch (err) {
     console.warn('calls load failed', err);
-    renderError('The daemon is unreachable. Is Sunday running?');
+    renderError(err.name === 'TimeoutError'
+      ? 'Loading calls timed out. Try again in a moment.'
+      : 'The daemon is unreachable. Is Sunday running?');
   }
 }
 
@@ -60,7 +67,9 @@ function renderRows(calls) {
 
     const purpose = document.createElement('span');
     purpose.className = 'call-purpose';
+    // CSS ellipsis truncates a long name; the title surfaces the full text.
     purpose.textContent = c.assistantName || '—';
+    if (c.assistantName) purpose.title = c.assistantName;
 
     const dur = document.createElement('span');
     dur.className = 'call-dur mono';
@@ -70,6 +79,9 @@ function renderRows(calls) {
     const bad = isBad(c.endedReason, c.status);
     status.className = `call-status ${bad ? 'call-status-bad' : 'call-status-ok'}`;
     status.textContent = statusLabel(c);
+    // The ended reason is the useful field (e.g. call.start.error-get-transport).
+    // The pill prettifies it; the title keeps the raw value within reach.
+    if (c.endedReason) status.title = c.endedReason;
 
     row.append(when, to, purpose, dur, status);
     row.addEventListener('click', () => openDetail(c.id));
@@ -88,8 +100,8 @@ async function openDetail(id) {
   els.summary.textContent = '';
   els.transcript.textContent = '—';
   try {
-    const res = await fetch(`${cfg.daemonHttp}/v1/vapi/calls/${encodeURIComponent(id)}`);
-    const c = await res.json();
+    const res = await fetch(`${cfg.daemonHttp}/v1/vapi/calls/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(20000) });
+    const c = await res.json().catch(() => ({}));
     if (!res.ok || c.error) {
       els.detailTo.textContent = 'Could not load call';
       els.transcript.textContent = c.error || `Request failed (${res.status}).`;
@@ -99,7 +111,9 @@ async function openDetail(id) {
   } catch (err) {
     console.warn('call detail failed', err);
     els.detailTo.textContent = 'Could not load call';
-    els.transcript.textContent = 'The daemon is unreachable.';
+    els.transcript.textContent = err.name === 'TimeoutError'
+      ? 'Loading this call timed out. Try again in a moment.'
+      : 'The daemon is unreachable.';
   }
 }
 
