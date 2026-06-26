@@ -46,6 +46,20 @@ let lastUserTs = null;
 let bootedChat = false;
 let currentView = 'chat';
 
+// ─── threads (Slack-style reply branches) ────────────────────────────────
+// {root_message_id: reply_count} — refreshed with the main log, drives the
+// "N replies" badge under each rooted message.
+let replyCounts = {};
+// The thread currently open in the side panel, or null. Holds the thread id and
+// the set of reply ids already rendered (so a refresh appends, not duplicates).
+let openThread = null;
+const threadPanel   = $('#thread-panel');
+const threadScrim   = $('#thread-scrim');
+const threadLogEl   = $('#thread-log');
+const threadComposer = $('#thread-composer');
+const threadSendBtn = $('#thread-send-btn');
+const threadSubEl   = $('#thread-panel-sub');
+
 // ─── boot ──────────────────────────────────────────────────────────────
 async function boot() {
   if (window.sunday) {
@@ -99,6 +113,7 @@ async function refreshLog() {
     const res = await fetch(`${DAEMON_HTTP}/v1/log?limit=200`);
     const data = await res.json();
     const msgs = data.messages || [];
+    replyCounts = data.reply_counts || {};
     // drop transient placeholders; the real rows are about to land
     chatEl.querySelectorAll('.pending, .stream-temp').forEach((n) => n.remove());
     const atBottom = nearBottom();
@@ -114,8 +129,11 @@ async function refreshLog() {
       appendMessage(m);
       if (typeof m.id === 'number') renderedIds.add(m.id);
     }
+    syncThreadBadges();
     if (!bootedChat || atBottom) scrollToEnd(true);
     bootedChat = true;
+    // If a thread is open, keep its replies fresh too (a reply just landed).
+    if (openThread) loadThread(openThread.id, { quiet: true });
   } catch (err) {
     console.warn('log fetch failed', err);
     // On the FIRST load, a failed fetch leaves the skeleton shimmering forever
@@ -152,20 +170,42 @@ function connectWs() {
 }
 
 let stream = null;
+// Stream ids that belong to a thread turn — their deltas must NOT render into
+// the main chat. We track them so a thread reply streams quietly (the panel
+// pulls the finished replies on stream_end) instead of leaking a bubble into
+// the main timeline.
+const threadStreams = new Set();
 function handleWs(ev) {
   switch (ev.type) {
-    case 'stream_start': stream = beginStream(ev); showStop(true); return;
+    case 'stream_start':
+      // A thread turn streams into the panel, never the main chat. We render the
+      // finished replies on stream_end (loadThread) rather than live-splicing
+      // the main-chat stream UI, so the main timeline stays clean.
+      if (ev.thread_id != null) { threadStreams.add(ev.stream_id); showThreadThinking(true); return; }
+      stream = beginStream(ev); showStop(true); return;
     case 'reasoning_delta':
+      if (threadStreams.has(ev.stream_id)) return;
       if (stream && stream.id === ev.stream_id) { stream.reason += (ev.content || ''); showThinking(stream); autoScroll(); }
       return;
     case 'stream_delta':
+      if (threadStreams.has(ev.stream_id)) return;
       if (stream && stream.id === ev.stream_id) { stream.raw += (ev.content || ''); showText(stream); autoScroll(); }
       return;
     case 'tool_call':
+      if (threadStreams.has(ev.stream_id)) return;
       if (stream && stream.id === ev.stream_id) addToolRow(stream, ev); return;
     case 'tool_result':
+      if (threadStreams.has(ev.stream_id)) return;
       if (stream && stream.id === ev.stream_id) finishToolRow(stream, ev); return;
     case 'stream_end':
+      if (threadStreams.has(ev.stream_id)) {
+        threadStreams.delete(ev.stream_id);
+        showThreadThinking(false);
+        if (openThread) loadThread(openThread.id, { quiet: true });
+        // the badge count on the main timeline may have changed
+        refreshLog();
+        return;
+      }
       // Only tear down if this end belongs to the stream we're showing. A
       // stale end for a prior stream (id mismatch) must NOT null out the live
       // stream, hide Stop, or refreshLog (which would rip down the active
@@ -173,7 +213,9 @@ function handleWs(ev) {
       if (!stream || stream.id !== ev.stream_id) return;
       stream.el.classList.remove('streaming');
       stream = null; showStop(false); refreshLog(); refreshStatus(); return;
-    case 'reply': if (!stream) refreshLog(); return;
+    case 'thread_created': refreshLog(); return;
+    case 'cleared': if (openThread) closeThreadPanel(); return;
+    case 'reply': if (!stream && ev.thread_id == null) refreshLog(); return;
     case 'interjection':
       // A proactive note Sunday surfaced unprompted (e.g. a time-gap check-in).
       // It's already folded into the chat server-side, so pull it in; if the
@@ -331,6 +373,15 @@ function appendMessage(m) {
       edit.onclick = () => beginEdit(wrap, m);
       bubble.appendChild(edit);
     }
+    // Reply in thread — branch a Slack-style side discussion off any real,
+    // main-timeline message (never off a thread reply, and not the pending bubble).
+    if (typeof m.id === 'number' && !m.thread_id) {
+      const th = document.createElement('button');
+      th.className = 'bubble-thread'; th.title = 'Reply in thread'; th.setAttribute('aria-label', 'Reply in thread');
+      th.innerHTML = threadIcon();
+      th.onclick = (e) => { e.stopPropagation(); openThreadForMessage(m.id); };
+      bubble.appendChild(th);
+    }
     wrap.appendChild(bubble);
   }
 
@@ -348,8 +399,199 @@ function appendMessage(m) {
 
   placeRow(wrap, side);
 
+  // "N replies" badge if this message roots a thread (rendered/updated by
+  // syncThreadBadges, which reads replyCounts after the log lands).
+  if (typeof m.id === 'number') updateThreadBadge(wrap, m.id);
+
   if (role === 'user') lastUserTs = m.created_at;
 }
+
+// ─── thread badges on the main timeline ──────────────────────────────────
+function updateThreadBadge(wrap, mid) {
+  const n = replyCounts[String(mid)];
+  let badge = wrap.querySelector(':scope > .thread-badge');
+  if (!n) { badge?.remove(); return; }
+  if (!badge) {
+    badge = document.createElement('button');
+    badge.className = 'thread-badge';
+    badge.onclick = (e) => { e.stopPropagation(); openThreadForMessage(mid); };
+    wrap.appendChild(badge);
+  }
+  badge.innerHTML = `<svg class="tb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`
+    + `<span>${n} ${n === 1 ? 'reply' : 'replies'}</span>`;
+}
+
+// Re-badge every rendered main-timeline message after a log refresh — a new
+// thread may have been created, or a reply count changed.
+function syncThreadBadges() {
+  chatEl.querySelectorAll('.msg[data-mid]').forEach((wrap) => {
+    const mid = wrap.dataset.mid;
+    if (mid) updateThreadBadge(wrap, Number(mid));
+  });
+}
+
+// ─── thread panel: open, render, send ─────────────────────────────────────
+// Open the thread rooted at a main-timeline message — creating it first if one
+// doesn't exist yet (idempotent server-side), then loading + showing the panel.
+async function openThreadForMessage(rootId) {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/threads`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root_message_id: rootId }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.thread) { console.warn('create thread failed', d.error || res.status); return; }
+    openThreadPanel(d.thread.id);
+  } catch (err) { console.warn('open thread failed', err); }
+}
+
+function openThreadPanel(threadId) {
+  openThread = { id: threadId, renderedIds: new Set() };
+  threadLogEl.innerHTML = '';
+  threadPanel.hidden = false;
+  threadScrim.hidden = false;
+  loadThread(threadId);
+  updateThreadSend();
+  requestAnimationFrame(() => threadComposer.focus());
+}
+
+function closeThreadPanel() {
+  openThread = null;
+  threadPanel.hidden = true;
+  threadScrim.hidden = true;
+  threadComposer.value = '';
+}
+
+async function loadThread(threadId, opts = {}) {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/threads/${threadId}`);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { console.warn('load thread failed', d.error || res.status); return; }
+    if (!openThread || openThread.id !== threadId) return;   // panel closed/switched mid-flight
+    renderThread(d, opts);
+  } catch (err) { console.warn('load thread failed', err); }
+}
+
+function renderThread(d, opts = {}) {
+  const root = d.root;
+  const replies = d.messages || [];
+  const sub = (root && (root.content || '').trim().slice(0, 60)) || '';
+  threadSubEl.textContent = sub;
+
+  // The root anchor is rendered once at the top; replies append incrementally.
+  const atBottom = threadLogEl.scrollHeight - threadLogEl.scrollTop - threadLogEl.clientHeight < 90;
+  if (!threadLogEl.querySelector('.thread-root') && root) {
+    threadLogEl.querySelectorAll('.pending').forEach((n) => n.remove());
+    const anchor = document.createElement('div');
+    anchor.className = 'thread-root';
+    const who = root.role === 'user' ? 'You' : 'Sunday';
+    anchor.innerHTML = `<div class="thread-root-label">Replying to</div>`
+      + `<div class="thread-root-body"><span class="thread-root-who">${esc(who)}: </span>${mdLite(root.content || '')}</div>`;
+    threadLogEl.appendChild(anchor);
+    const div = document.createElement('div');
+    div.className = 'thread-divider';
+    div.textContent = 'Thread';
+    threadLogEl.appendChild(div);
+  }
+  if (!replies.length && !threadLogEl.querySelector('.thread-empty') && !threadLogEl.querySelector('.thread-msg-row')) {
+    const e = document.createElement('div'); e.className = 'thread-empty';
+    e.textContent = 'No replies yet. Start the side discussion here.';
+    threadLogEl.appendChild(e);
+  }
+  for (const m of replies) {
+    if (typeof m.id === 'number' && openThread.renderedIds.has(m.id)) continue;
+    threadLogEl.querySelector('.thread-empty')?.remove();
+    threadLogEl.querySelectorAll('.pending').forEach((n) => n.remove());
+    appendThreadMessage(m);
+    if (typeof m.id === 'number') openThread.renderedIds.add(m.id);
+  }
+  if (!opts.quiet || atBottom) threadLogEl.scrollTop = threadLogEl.scrollHeight;
+}
+
+// A thread reply bubble — same look as the main thread, scoped to the panel.
+function appendThreadMessage(m) {
+  const role = m.role;
+  if (role === 'tool') return;        // tool steps stay quiet in the panel
+  const content = (m.content || '').trim();
+  if (role === 'system') {
+    const s = document.createElement('div'); s.className = 'msg system thread-msg-row';
+    const p = document.createElement('div'); p.className = 'sys-msg'; p.textContent = content;
+    s.appendChild(p); threadLogEl.appendChild(s); return;
+  }
+  if (!content) return;
+  const wrap = document.createElement('div');
+  wrap.className = `msg ${role} thread-msg-row`;
+  if (typeof m.id === 'number') wrap.dataset.mid = m.id;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  bubble.innerHTML = mdLite(m.content || '');
+  wrap.appendChild(bubble);
+  threadLogEl.appendChild(wrap);
+}
+
+async function sendThread() {
+  if (!openThread) return;
+  const text = threadComposer.value.trim();
+  if (!text) return;
+  const threadId = openThread.id;
+  // optimistic bubble
+  const w = document.createElement('div'); w.className = 'msg user pending thread-msg-row';
+  const b = document.createElement('div'); b.className = 'bubble'; b.innerHTML = mdLite(text); w.appendChild(b);
+  threadLogEl.querySelector('.thread-empty')?.remove();
+  threadLogEl.appendChild(w);
+  threadLogEl.scrollTop = threadLogEl.scrollHeight;
+  threadComposer.value = ''; updateThreadSend(); resizeThreadComposer();
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/threads/${threadId}/say`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, modality: 'electron' }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { w.classList.remove('pending'); w.classList.add('failed'); w.title = `Couldn't send: ${d.error || res.status}`; return; }
+    // Sunday's reply streams over the WS into the panel; stream_end refreshes.
+    setTimeout(() => loadThread(threadId, { quiet: true }), 50);
+  } catch (err) {
+    w.classList.remove('pending'); w.classList.add('failed'); w.title = `Couldn't send: ${err.message}`;
+  }
+}
+
+function updateThreadSend() { threadSendBtn.disabled = !threadComposer.value.trim(); }
+function resizeThreadComposer() { threadComposer.style.height = 'auto'; threadComposer.style.height = Math.min(threadComposer.scrollHeight, 160) + 'px'; }
+
+// A quiet "Sunday is replying…" line at the bottom of the open panel while a
+// thread turn streams (its tokens render only on stream_end, so this is the
+// live cue). No-op if no panel is open.
+function showThreadThinking(on) {
+  if (!openThread) return;
+  let el = threadLogEl.querySelector('.thread-thinking');
+  if (!on) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'reasoning live thread-thinking';
+    el.innerHTML = '<summary><span class="spin"></span>thinking…</summary>';
+    threadLogEl.appendChild(el);
+    threadLogEl.scrollTop = threadLogEl.scrollHeight;
+  }
+}
+
+$('#thread-back')?.addEventListener('click', closeThreadPanel);
+$('#thread-close')?.addEventListener('click', closeThreadPanel);
+threadScrim?.addEventListener('click', closeThreadPanel);
+threadSendBtn?.addEventListener('click', sendThread);
+threadComposer?.addEventListener('input', () => { resizeThreadComposer(); updateThreadSend(); });
+threadComposer?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendThread(); }
+  else if (e.key === 'Escape') { closeThreadPanel(); }
+});
+// Open-thread links inside the panel (mdLite turns URLs into <a>) go to the OS browser.
+threadLogEl?.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href]');
+  if (!a) return;
+  const href = a.getAttribute('href') || '';
+  if (!/^https?:\/\//i.test(href)) return;
+  e.preventDefault();
+  window.sunday?.openExternal(href);
+});
 
 function buildToolRow(m) {
   const row = document.createElement('div');
@@ -427,6 +669,7 @@ function mdLite(raw) {
 function copyIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`; }
 function checkIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`; }
 function editIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`; }
+function threadIcon() { return `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>`; }
 
 // ── edit + rewind ───────────────────────────────────────────────────────────
 // Edit a previous user message; on save, the daemon drops that message and

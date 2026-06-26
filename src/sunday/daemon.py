@@ -341,11 +341,13 @@ class Daemon:
         text: str,
         modality: str,
         attachments: list[dict] | None = None,
+        thread_id: int | None = None,
     ) -> dict[str, Any]:
-        # If a task is already running, a new message isn't a queued turn — it's
-        # the user grabbing the wheel. Fold it into the live loop as steering
-        # instead of blocking behind the lock until the task finishes.
-        if self._turn_lock.locked() and self._active_control is not None:
+        # If a MAIN-timeline task is running, a new main message isn't a queued
+        # turn — it's the user grabbing the wheel; fold it in as steering. A
+        # thread post is a deliberate side-bar reply, never steering, so it
+        # always waits for the lock and runs as its own scoped turn.
+        if thread_id is None and self._turn_lock.locked() and self._active_control is not None:
             self._active_control.steer(text)
             return {"steered": True, "reply": None}
         # Conversational off-switch: if the user tells Sunday to stop checking
@@ -356,8 +358,8 @@ class Daemon:
         # Serialize turns: a user turn and a sub-agent wake turn must not run
         # concurrently or they'd interleave messages in the single chat.
         async with self._turn_lock:
-            reply = await self._run_turn(text, modality, attachments=attachments)
-        return {"reply": reply}
+            reply = await self._run_turn(text, modality, attachments=attachments, thread_id=thread_id)
+        return {"reply": reply, "thread_id": thread_id}
 
     async def _run_turn(
         self,
@@ -365,9 +367,15 @@ class Daemon:
         modality: str,
         attachments: list[dict] | None = None,
         user_metadata: dict[str, Any] | None = None,
+        thread_id: int | None = None,
     ) -> str:
         """One agent turn: drive the loop, broadcast the reply, kick off the
-        background memory + compaction passes. Caller MUST hold _turn_lock."""
+        background memory + compaction passes. Caller MUST hold _turn_lock.
+
+        `thread_id` scopes the turn to a Slack-style thread — the messages land
+        in that thread and the brain's context is the thread, not the main chat.
+        Main-only background work (rolling summary, fact extraction) is skipped
+        for thread turns since the summary describes the main timeline."""
         control = TurnControl()
         self._active_control = control
         from sunday import obs
@@ -378,6 +386,7 @@ class Daemon:
                 runtime=self.runtime,
                 attachments=attachments,
                 user_metadata=user_metadata,
+                thread_id=thread_id,
                 extras={
                     "broadcast": self._broadcast,
                     "devices":   self.devices,
@@ -405,7 +414,12 @@ class Daemon:
         finally:
             self._active_control = None
         obs.end_turn(_trace, _tok)
-        await self._broadcast({"type": "reply", "modality": modality, "content": reply})
+        await self._broadcast({"type": "reply", "modality": modality, "content": reply, "thread_id": thread_id})
+        # Thread turns are scoped side-bars: they don't feed the main-timeline
+        # rolling summary or fact extraction (both describe the main chat), so
+        # skip the background passes entirely for them.
+        if thread_id is not None:
+            return reply
         # Buffer this exchange; extract facts in batches (every few turns) on the
         # cheap utility model instead of one full-model call per turn.
         if self.memory.available:
@@ -711,10 +725,87 @@ class Daemon:
             limit = int(request.query.get("limit", "20"))
         except ValueError:
             limit = 20
-        return web.json_response(
-            {"messages": [m.to_json() for m in self.chat.recent(limit=limit)
-                          if not (m.metadata or {}).get("hidden")]}
-        )
+        # recent() is main-timeline only (thread replies stay off the main log).
+        # reply_counts lets the renderer badge rooted messages with "N replies"
+        # without a per-message round-trip. Keyed by root_message_id.
+        return web.json_response({
+            "messages": [m.to_json() for m in self.chat.recent(limit=limit)
+                         if not (m.metadata or {}).get("hidden")],
+            "reply_counts": {str(k): v for k, v in self.chat.reply_counts().items()},
+        })
+
+    # ─── threads (Slack-style reply branches) ────────────────────────────
+
+    async def _http_threads_list(self, request: web.Request) -> web.Response:
+        """All threads, most-recently-active first, each with a root preview +
+        reply count."""
+        try:
+            limit = int(request.query.get("limit", "100"))
+        except ValueError:
+            limit = 100
+        return web.json_response({"threads": self.chat.list_threads(limit=limit)})
+
+    async def _http_thread_create(self, request: web.Request) -> web.Response:
+        """Open a thread off an existing main-timeline message. Idempotent: a
+        message has at most one thread, so a repeat call returns the same id."""
+        body = await request.json() if request.body_exists else {}
+        try:
+            root_id = int(body.get("root_message_id"))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "'root_message_id' is required"}, status=400)
+        root = self.chat.get(root_id)
+        if root is None:
+            return web.json_response({"error": "no such message"}, status=404)
+        if root.thread_id is not None:
+            return web.json_response({"error": "cannot thread off a thread reply"}, status=400)
+        title = (body.get("title") or "").strip() or None
+        thread_id = self.chat.create_thread(root_id, title=title)
+        thread = self.chat.get_thread(thread_id)
+        await self._broadcast({"type": "thread_created", "thread": thread})
+        return web.json_response({"ok": True, "thread": thread})
+
+    async def _http_thread_get(self, request: web.Request) -> web.Response:
+        """A thread's root message + its replies (oldest first)."""
+        try:
+            thread_id = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "invalid id"}, status=400)
+        thread = self.chat.get_thread(thread_id)
+        if thread is None:
+            return web.json_response({"error": "no such thread"}, status=404)
+        root = self.chat.get(thread["root_message_id"])
+        replies = self.chat.thread_messages(thread_id)
+        return web.json_response({
+            "thread": thread,
+            "root": root.to_json() if root else None,
+            "messages": [m.to_json() for m in replies
+                         if not (m.metadata or {}).get("hidden")],
+        })
+
+    async def _http_thread_say(self, request: web.Request) -> web.Response:
+        """Post a message into a thread — routes through the normal turn path
+        with thread_id set, so Sunday replies with thread-scoped context."""
+        try:
+            thread_id = int(request.match_info["id"])
+        except (KeyError, ValueError):
+            return web.json_response({"error": "invalid id"}, status=400)
+        if self.chat.get_thread(thread_id) is None:
+            return web.json_response({"error": "no such thread"}, status=404)
+        body = await request.json() if request.body_exists else {}
+        text = (body.get("text") or "").strip()
+        attachments = body.get("attachments")
+        if not text and not attachments:
+            return web.json_response({"error": "'text' or 'attachments' is required"}, status=400)
+        try:
+            result = await self._say(
+                text, body.get("modality") or "electron",
+                attachments if isinstance(attachments, list) else None,
+                thread_id=thread_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("http thread say failed")
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response(result)
 
     async def _http_status(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("status", {}))
@@ -3006,6 +3097,10 @@ class Daemon:
         app.router.add_post("/v1/chat/clear", self._http_chat_clear)
         app.router.add_get("/v1/export", self._http_export)
         app.router.add_get("/v1/log", self._http_log)
+        app.router.add_get("/v1/threads", self._http_threads_list)
+        app.router.add_post("/v1/threads", self._http_thread_create)
+        app.router.add_get("/v1/threads/{id:[0-9]+}", self._http_thread_get)
+        app.router.add_post("/v1/threads/{id:[0-9]+}/say", self._http_thread_say)
         app.router.add_get("/v1/status", self._http_status)
         app.router.add_get("/v1/health", self._http_health)
         app.router.add_get("/v1/admin/health", self._http_admin_health)   # rich, auth-gated

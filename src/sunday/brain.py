@@ -150,17 +150,51 @@ def _since_last_line(chat: Chat, now_ts: float) -> str | None:
     return f"It's been {rel} since you last talked to Sunday."
 
 
-def _context_messages(chat: Chat, memory_block: str = "") -> list[dict]:
+def _thread_tail(chat: Chat, thread_id: int) -> list:
+    """The verbatim message list for a threaded turn: the root message (for
+    context) followed by the thread's own replies, oldest first, trimmed to the
+    same token budget as the main tail so a long thread can't blow up context.
+
+    Scope is exactly the thread + its root — NOT the main timeline. That's the
+    Slack semantic: a thread is its own little conversation hanging off one
+    message; replies in it shouldn't drag the whole main chat along, and the
+    main chat shouldn't see the thread."""
+    replies = chat.thread_messages(thread_id)
+    th = chat.get_thread(thread_id)
+    root = chat.get(th["root_message_id"]) if th else None
+
+    # Same backward-budget walk as compaction.tail_messages, kept local so the
+    # root is always retained (it's the anchor): keep the most recent replies
+    # that fit, but never drop the root. When nothing is trimmed, `kept` is just
+    # all the replies, so the prepend-root return covers both cases.
+    from sunday.compaction import TAIL_TOKEN_BUDGET, estimate_tokens
+    budget = TAIL_TOKEN_BUDGET
+    kept_rev: list = []
+    for m in reversed(replies):
+        budget -= estimate_tokens(m.content)
+        kept_rev.append(m)
+        if budget <= 0:
+            break
+    kept = list(reversed(kept_rev))
+    return ([root] if root else []) + kept
+
+
+def _context_messages(chat: Chat, memory_block: str = "", thread_id: int | None = None) -> list[dict]:
     """Build the messages list for the next provider call.
 
-    The sent context is [rolling summary] + [token-budgeted tail] — the
-    Hermes-style compaction shape (see sunday.compaction). The tail is the
-    recent messages that fit the token budget, boundary-aligned to a user
-    turn; everything older is represented by the rolling summary, which gets
-    folded in the background by compaction.maybe_compact.
+    On the MAIN timeline the sent context is [rolling summary] + [token-budgeted
+    tail] — the Hermes-style compaction shape (see sunday.compaction). The tail
+    is the recent main-timeline messages that fit the token budget, boundary-
+    aligned to a user turn; everything older is represented by the rolling
+    summary, folded in the background by compaction.maybe_compact.
+
+    In a THREAD (thread_id set) the context is instead the thread's own
+    messages + its root message (and a short reference to the main chat via the
+    rolling summary), scoped so a threaded turn answers about the side-bar, not
+    the whole main chat — and so the main chat never inherits thread chatter.
 
     Both context blocks — the conversation summary AND the memory recall — are
-    prepended to the LATEST user message, never injected into the system
+    prepended as a leading system message, never injected into the system
     prompt. That keeps the system prefix byte-stable across turns so providers'
     prompt cache fires on every turn after the first (60-90% cheaper + faster
     TTFT), exactly like Hermes keeps its breakpoint-1 system prompt immutable.
@@ -169,13 +203,17 @@ def _context_messages(chat: Chat, memory_block: str = "") -> list[dict]:
     sanitization + role-alternation repair. Both are no-ops on healthy
     histories and silent fixes when something's off.
     """
-    messages = [m.to_llm() for m in tail_messages(chat)]
+    if thread_id is not None:
+        messages = [m.to_llm() for m in _thread_tail(chat, thread_id)]
+    else:
+        messages = [m.to_llm() for m in tail_messages(chat)]
 
     # Compose the prepended context block: the rolling conversation summary
     # (the THREAD) on top, then memory recall (durable FACTS), then the
     # user's actual words. The summary belongs to THE chat — subagents run on
     # ephemeral in-memory chats and must not inherit the main thread's
-    # summary, so only the persistent canonical chat gets it.
+    # summary, so only the persistent canonical chat gets it. In a thread the
+    # summary serves as the "what's going on in the main chat" reference.
     from sunday.paths import db_path
     summary = conversation_summary_block() if chat.path == db_path() else ""
     prefix_parts = [summary, memory_block]
@@ -220,8 +258,15 @@ async def respond(
     user_metadata: dict | None = None,
     timings: dict | None = None,
     max_iterations: int | None = None,
+    thread_id: int | None = None,
 ) -> str:
     """Take a user message, drive the tool-call loop, return the final reply.
+
+    `thread_id` scopes the whole turn to a Slack-style thread: the user message,
+    every assistant/tool message produced this turn, and the steering messages
+    all land with that thread_id (so they stay off the main timeline), and the
+    per-turn context is the thread + its root rather than the main chat. None
+    (the default) is an ordinary main-timeline turn — unchanged behaviour.
 
     `attachments` is a list of Attachment-shaped dicts (see sunday.attachments)
     that get stored on the user message metadata and forwarded to the model
@@ -237,7 +282,7 @@ async def respond(
     user_meta: dict = dict(user_metadata or {})
     if attachments:
         user_meta["attachments"] = attachments
-    chat.append("user", user_text, modality, metadata=user_meta or None)
+    chat.append("user", user_text, modality, metadata=user_meta or None, thread_id=thread_id)
 
     rt = runtime or build_runtime(config)
     ctx = ToolContext(chat=chat, config=config, modality=modality, extras=extras or {})
@@ -383,6 +428,7 @@ async def respond(
             "type": "stream_start",
             "stream_id": stream_id,
             "modality": modality,
+            "thread_id": thread_id,   # so the UI routes the stream to the thread panel
         })
 
     # Local eval tracing — opens an interaction for this turn (inert in prod).
@@ -398,13 +444,13 @@ async def respond(
             for steer_text in control.drain_steering():
                 # Land it in the log as a user turn so the next provider call
                 # picks it up via _context_messages — no manual splicing.
-                chat.append("user", steer_text, modality, metadata={"steer": True})
+                chat.append("user", steer_text, modality, metadata={"steer": True}, thread_id=thread_id)
                 log.info("turn steered", text=steer_text[:120])
                 if broadcast is not None:
                     await broadcast({"type": "steered", "stream_id": stream_id, "text": steer_text})
             if control.should_stop():
                 stopped = "Stopped — tell me how you want to pick it back up."
-                chat.append("sunday", stopped, modality, metadata={"stopped": True, "budget_used": budget.used})
+                chat.append("sunday", stopped, modality, metadata={"stopped": True, "budget_used": budget.used}, thread_id=thread_id)
                 log.info("turn stopped by user", iteration=iteration)
                 tracing.finish_turn(_trace, stopped)
                 if broadcast is not None:
@@ -425,7 +471,7 @@ async def respond(
         _t_llm = time.perf_counter()
         result = await rt.complete(
             system_prompt=system_prompt or stable_prefix(),
-            messages=_context_messages(chat, memory_block=memory_block),
+            messages=_context_messages(chat, memory_block=memory_block, thread_id=thread_id),
             tools_schema=_schema(),   # rebuilt each iteration — find_tools grows it mid-turn
             on_delta=_emit_delta,
             on_reasoning=_emit_reasoning,
@@ -454,6 +500,7 @@ async def respond(
                 result.content,
                 modality,
                 metadata=meta,
+                thread_id=thread_id,
             )
 
             assert registry is not None
@@ -514,6 +561,7 @@ async def respond(
                     content,
                     modality,
                     metadata={"tool_call_id": tc["id"], "tool_name": tc["name"]},
+                    thread_id=thread_id,
                 )
             continue
 
@@ -521,7 +569,7 @@ async def respond(
         final_meta: dict = {"runtime": rt.name}
         if result.raw.get("reasoning_content"):
             final_meta["reasoning_content"] = result.raw["reasoning_content"]
-        chat.append("sunday", reply, modality, metadata=final_meta)
+        chat.append("sunday", reply, modality, metadata=final_meta, thread_id=thread_id)
         T["total_ms"] = round((time.perf_counter() - t_turn0) * 1000)
         T["iterations"] = iteration
         log.info(
@@ -541,7 +589,7 @@ async def respond(
         return reply
 
     truncated = "I hit my tool-call ceiling. Let me know if you want me to keep going."
-    chat.append("sunday", truncated, modality, metadata={"truncated": True, "budget_used": budget.used})
+    chat.append("sunday", truncated, modality, metadata={"truncated": True, "budget_used": budget.used}, thread_id=thread_id)
     log.warning("tool loop ceiling reached", budget_used=budget.used, budget_max=budget.max_total)
     if broadcast is not None:
         await broadcast({
