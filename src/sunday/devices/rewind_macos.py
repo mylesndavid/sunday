@@ -42,6 +42,17 @@ DEFAULT_INTERVAL_SECONDS = 300   # 5 minutes
 HASH_PREFIX_BYTES        = 16
 RETENTION_DAYS           = 3     # keep ~last few days of frames; older get pruned
 
+# Frame footprint controls. A raw retina screencapture JPEG is ~1.2 MB; OCR
+# does NOT need retina resolution. Downscaling the longest edge to MAX_EDGE_PX
+# and recompressing at JPEG_QUALITY cuts each frame ~8× (measured: 1227 KB →
+# 157 KB) while keeping menu-bar/app/window text readable. At ~212 frames/day
+# that's ~33 MB/day, ~100 MB at 3-day retention — vs ~254 MB/day before.
+MAX_EDGE_PX  = 1440   # longest edge after downscale (sips -Z)
+JPEG_QUALITY = 40     # sips -s formatOptions (0–100); 40 stays OCR-legible
+# Hard backstop: even if per-frame assumptions change, the rewind dir total can
+# never exceed this. _prune() deletes oldest frames until under it.
+MAX_TOTAL_MB = 400
+
 _watcher_task: asyncio.Task | None = None
 _last_hash: str | None = None
 
@@ -128,7 +139,33 @@ async def _capture() -> tuple[Path, bytes]:
                 "System Settings → Privacy & Security → Screen Recording → enable it."
             )
         raise RuntimeError(f"screencapture failed: {raw}")
+    await _downscale(path)
     return path, path.read_bytes()
+
+
+async def _downscale(path: Path) -> None:
+    """Shrink the just-captured JPEG in place: longest edge → MAX_EDGE_PX,
+    quality → JPEG_QUALITY, via macOS `sips`. This is the main footprint
+    lever (~8× smaller) and OCR still reads the result fine. If `sips` is
+    missing or fails, we leave the original frame untouched — never lose the
+    capture, never crash the watcher."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/sips",
+            "-Z", str(MAX_EDGE_PX),
+            "-s", "formatOptions", str(JPEG_QUALITY),
+            str(path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _out, err = await asyncio.wait_for(proc.communicate(), timeout=15)
+        if proc.returncode != 0:
+            log.warning(
+                "rewind downscale failed; keeping full-size frame",
+                error=err.decode("utf-8", errors="replace").strip(),
+            )
+    except Exception as exc:  # noqa: BLE001 — never let resizing kill a capture
+        log.warning("rewind downscale errored; keeping full-size frame", error=str(exc))
 
 
 # ─── OCR via Apple Vision (free + local) ────────────────────────────────
@@ -212,9 +249,67 @@ async def capture_text() -> dict[str, Any]:
 # ─── watcher loop ────────────────────────────────────────────────────────
 
 
+def _dir_total_bytes() -> int:
+    """Total bytes of all JPEG frames under REWIND_DIR (recursively). Cheap
+    enough to call each prune; ignores the DB file itself."""
+    total = 0
+    if not REWIND_DIR.exists():
+        return 0
+    for f in REWIND_DIR.rglob("*.jpg"):
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _prune_to_size_cap(conn: sqlite3.Connection) -> None:
+    """Backstop prune: if the rewind dir total exceeds MAX_TOTAL_MB, delete the
+    oldest frames (image file + its DB row) until back under the cap. Belt-and-
+    suspenders alongside the time-based prune — guarantees the footprint can
+    never run away even if per-frame size assumptions change."""
+    import shutil
+    cap = MAX_TOTAL_MB * 1024 * 1024
+    total = _dir_total_bytes()
+    if total <= cap:
+        return
+    # Walk indexed frames oldest-first, deleting until under the cap.
+    rows = conn.execute("SELECT id, image_path FROM frames ORDER BY ts ASC").fetchall()
+    deleted_ids: list[int] = []
+    for fid, p in rows:
+        if total <= cap:
+            break
+        try:
+            sz = Path(p).stat().st_size
+        except OSError:
+            sz = 0
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        deleted_ids.append(fid)
+        total -= sz
+    if deleted_ids:
+        conn.executemany("DELETE FROM frames WHERE id = ?", [(i,) for i in deleted_ids])
+        conn.commit()
+        log.info("rewind size-cap prune", removed=len(deleted_ids), under_mb=MAX_TOTAL_MB)
+    # Still over cap with no indexed frames left to drop? Sweep oldest day-folders
+    # of orphan (captured-but-unindexed) frames until under the cap.
+    if total > cap and REWIND_DIR.exists():
+        days = sorted(
+            d for d in REWIND_DIR.iterdir()
+            if d.is_dir() and len(d.name) == 10
+        )
+        for d in days:
+            if _dir_total_bytes() <= cap:
+                break
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def _prune(conn: sqlite3.Connection) -> None:
     """Drop frames older than RETENTION_DAYS — both the image files and their
-    index rows — so rewind stays bounded instead of growing forever."""
+    index rows — so rewind stays bounded instead of growing forever. Then apply
+    the MAX_TOTAL_MB size cap as a hard backstop."""
     import shutil
     cutoff = time.time() - RETENTION_DAYS * 86400
     try:
@@ -233,6 +328,11 @@ def _prune(conn: sqlite3.Connection) -> None:
                 shutil.rmtree(d, ignore_errors=True)
     except Exception as exc:  # noqa: BLE001
         log.warning("rewind prune failed", error=str(exc))
+    # Hard backstop independent of time: keep total footprint under MAX_TOTAL_MB.
+    try:
+        _prune_to_size_cap(conn)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rewind size-cap prune failed", error=str(exc))
 
 
 async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
