@@ -94,6 +94,62 @@ def _is_texting(modality: str) -> bool:
     return modality.startswith("imessage") or modality == "sms"
 
 
+def _relative_since(seconds: float) -> str | None:
+    """A short, human "time since last contact" phrase from an elapsed gap.
+
+    Returns None for a gap that isn't worth mentioning (under ~2 minutes —
+    that's the same active exchange, not a return after being away). Otherwise
+    a casual relative string the model can fold into a greeting:
+      "a few minutes" / "12 minutes" / "an hour" / "3 hours" /
+      "yesterday" / "5 days" / "2 weeks".
+
+    Deliberately coarse — this is recency feel, not a stopwatch. The brain only
+    needs to know "they just stepped away" vs "it's been days."
+    """
+    if seconds is None or seconds < 120:  # under ~2 min: same exchange, stay quiet
+        return None
+    minutes = seconds / 60
+    if minutes < 10:
+        return "a few minutes"
+    if minutes < 60:
+        return f"{int(round(minutes))} minutes"
+    hours = minutes / 60
+    if hours < 2:
+        return "an hour"
+    if hours < 24:
+        return f"{int(round(hours))} hours"
+    days = hours / 24
+    if days < 2:
+        return "yesterday"
+    if days < 14:
+        return f"{int(round(days))} days"
+    weeks = days / 7
+    return f"{int(round(weeks))} weeks"
+
+
+def _since_last_line(chat: Chat, now_ts: float) -> str | None:
+    """The "it's been <relative> since you last talked to Sunday" line, or None.
+
+    Reads the timestamp of the message right before the current turn (the new
+    user message has already been appended by respond(), so the prior contact
+    is the second-most-recent row). Omits the line entirely when there's no
+    prior message (first message ever), when the gap is too short to be worth
+    noting, or if anything goes wrong reading the store — never blocks a turn.
+    """
+    try:
+        prev_ts = chat.previous_message_time()
+    except Exception:  # noqa: BLE001 — recency is a nicety; never block the turn
+        return None
+    if prev_ts is None:
+        return None
+    rel = _relative_since(now_ts - prev_ts)
+    if rel is None:
+        return None
+    if rel == "yesterday":
+        return "You last talked to Sunday yesterday."
+    return f"It's been {rel} since you last talked to Sunday."
+
+
 def _context_messages(chat: Chat, memory_block: str = "") -> list[dict]:
     """Build the messages list for the next provider call.
 
@@ -255,6 +311,17 @@ async def respond(
         + _now.strftime("%A, %B %d, %Y, %-I:%M %p")
         + f" {_tz} — {_part} on a {_daytype}."
     )
+
+    # Recency: how long since the user last talked to Sunday. This is the time
+    # signal the owner cares about more than the absolute clock — so the model
+    # can naturally open with "hey, it's been a few days" instead of being blind
+    # to elapsed time. Only appended when there IS a prior message and the gap
+    # is meaningful (>~2 min); silently omitted otherwise. The current user
+    # message is already in the chat (respond() appended it above), so the prior
+    # contact is the second-most-recent row.
+    since_line = _since_last_line(chat, _now.timestamp())
+    if since_line:
+        now_line = now_line + " " + since_line
 
     memory_block = now_line
     if memory is not None and getattr(memory, "available", False):

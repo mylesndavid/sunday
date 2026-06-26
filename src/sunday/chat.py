@@ -225,6 +225,18 @@ class Chat:
         row = self._conn.execute("SELECT MAX(id) FROM messages").fetchone()
         return row[0] or 0
 
+    def previous_message_time(self) -> float | None:
+        """created_at of the SECOND-most-recent message — i.e. the last contact
+        BEFORE the current turn. respond() appends the new user message before
+        building the per-turn context, so the most recent row is this turn and
+        the one before it is "when we last talked." Returns None when there's
+        no prior message (the very first message ever). Cheap: indexed, no
+        content read."""
+        row = self._conn.execute(
+            "SELECT created_at FROM messages ORDER BY id DESC LIMIT 1 OFFSET 1"
+        ).fetchone()
+        return row[0] if row else None
+
     def range(self, after_id: int, before_id: int, limit: int = 400) -> list[Message]:
         """Messages with after_id < id <= before_id, oldest first — used by
         compaction to fold aged-out turns into the running summary."""
