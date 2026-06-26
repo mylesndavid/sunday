@@ -17,6 +17,7 @@ Credentials (via `sunday credential set` or env):
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -232,27 +233,38 @@ async def get_call(call_id: str) -> dict[str, Any]:
     }
 
 
-# ─── webhook ─────────────────────────────────────────────────────────────
+# ─── shared "a call just ended" surfacing ─────────────────────────────────
+#
+# Both paths that learn a call finished — VAPI's webhook (when reachable) and
+# our own polling (the local-daemon reality) — funnel through here so the
+# end-of-call report lands in the chat exactly once, the same way.
+
+# VAPI call statuses that mean "no more updates coming".
+_TERMINAL_STATUSES = {"ended"}
 
 
-async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
+async def handle_call_completed(daemon: Any, call: dict[str, Any]) -> None:
+    """Surface a finished call into the conversation/app.
+
+    `call` is a normalized dict carrying any of: id, to, endedReason,
+    durationSeconds, summary, transcript. Both the webhook and the poller
+    build this shape and hand it here, so the end-of-call report is written
+    once, identically, regardless of which path noticed the call ended.
+
+    Never raises — the surfacing is best-effort.
+    """
     try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        return web.json_response({"error": "invalid JSON"}, status=400)
-
-    msg = body.get("message") or {}
-    event = msg.get("type") or ""
-    call = msg.get("call") or {}
-
-    if event in ("end-of-call-report", "call-end"):
-        to = (call.get("customer") or {}).get("number") or "?"
-        transcript = msg.get("transcript") or ""
-        summary = msg.get("summary") or ""
-        reason = msg.get("endedReason") or "ended"
-        duration = msg.get("durationSeconds") or msg.get("duration") or 0
+        to = call.get("to") or "?"
+        transcript = call.get("transcript") or ""
+        summary = call.get("summary") or ""
+        reason = call.get("endedReason") or "ended"
+        duration = call.get("durationSeconds") or call.get("duration") or 0
+        try:
+            duration_str = f"{float(duration):.0f}s"
+        except (TypeError, ValueError):
+            duration_str = f"{duration}s"
         body_text = (
-            f"Call to {to} ended ({reason}, {duration:.0f}s).\n"
+            f"Call to {to} ended ({reason}, {duration_str}).\n"
             + (f"Summary: {summary}\n\n" if summary else "")
             + (f"Transcript:\n{transcript}" if transcript else "")
         ).strip()
@@ -268,6 +280,127 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
             },
         )
         log.info("vapi call recorded", call_id=call.get("id"), reason=reason)
+    except Exception:  # noqa: BLE001 — surfacing must never crash a caller/task
+        log.exception("vapi handle_call_completed failed", call_id=call.get("id"))
+
+
+async def poll_call_until_done(
+    daemon: Any,
+    call_id: str,
+    *,
+    interval: float = 5.0,
+    max_seconds: float = 720.0,
+) -> None:
+    """Poll VAPI for a call's outcome until it ends, then surface the report.
+
+    VAPI's webhook can't reach the local (127.0.0.1) daemon, so instead of
+    waiting for a push we pull `get_call(call_id)` every `interval` seconds
+    until the call reaches a terminal status ("ended"), `max_seconds` elapses,
+    or the API errors too many times in a row. On a terminal status we call
+    `handle_call_completed`; on timeout we drop a brief note into the chat.
+
+    Fire-and-forget: spawned with `asyncio.create_task` so the placing turn
+    returns immediately. Logs and swallows everything — it must never raise
+    out of the background task or block the event loop (only the sleeps await).
+    """
+    if not call_id:
+        return
+    loop = asyncio.get_event_loop()
+    started = loop.time()
+    errors = 0
+    _MAX_CONSECUTIVE_ERRORS = 5
+    try:
+        while True:
+            elapsed = loop.time() - started
+            if elapsed >= max_seconds:
+                minutes = int(max_seconds // 60) or 1
+                try:
+                    daemon.chat.append(
+                        "sunday",
+                        f"The call (id {call_id}) didn't complete within {minutes} "
+                        "minutes — I stopped watching it. Check the Calls view for "
+                        "the latest status.",
+                        "vapi",
+                        metadata={"call_id": call_id, "poll": "timeout"},
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("vapi poll timeout note failed", call_id=call_id)
+                log.info("vapi poll timed out", call_id=call_id, max_seconds=max_seconds)
+                return
+
+            await asyncio.sleep(interval)
+
+            try:
+                call = await get_call(call_id)
+            except Exception:  # noqa: BLE001 — network/parse hiccup; keep polling
+                errors += 1
+                log.warning("vapi poll get_call raised", call_id=call_id, errors=errors)
+                if errors >= _MAX_CONSECUTIVE_ERRORS:
+                    log.error("vapi poll giving up after errors", call_id=call_id)
+                    return
+                continue
+
+            if isinstance(call, dict) and call.get("error"):
+                errors += 1
+                log.warning(
+                    "vapi poll get_call error", call_id=call_id,
+                    err=call.get("error"), errors=errors,
+                )
+                if errors >= _MAX_CONSECUTIVE_ERRORS:
+                    log.error("vapi poll giving up after api errors", call_id=call_id)
+                    return
+                continue
+
+            errors = 0  # a clean read resets the strike count
+            status = (call or {}).get("status")
+            if status in _TERMINAL_STATUSES:
+                await handle_call_completed(daemon, call)
+                log.info("vapi poll saw terminal status", call_id=call_id, status=status)
+                return
+            log.debug("vapi poll still in progress", call_id=call_id, status=status)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 — last-ditch: never crash the daemon
+        log.exception("vapi poll_call_until_done crashed", call_id=call_id)
+
+
+def spawn_call_poller(daemon: Any, call_id: str | None, status: Any) -> None:
+    """If a freshly-placed call isn't already terminal, start watching it in
+    the background. Shared by the call_phone tool and the /v1/vapi/test
+    endpoint so both learn the outcome the same way."""
+    if not call_id:
+        return
+    if status in _TERMINAL_STATUSES:
+        return
+    try:
+        asyncio.create_task(poll_call_until_done(daemon, str(call_id)))
+    except RuntimeError:
+        # No running loop (e.g. called outside the daemon's async context).
+        log.warning("vapi could not spawn poller (no running loop)", call_id=call_id)
+
+
+# ─── webhook ─────────────────────────────────────────────────────────────
+
+
+async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.json_response({"error": "invalid JSON"}, status=400)
+
+    msg = body.get("message") or {}
+    event = msg.get("type") or ""
+    call = msg.get("call") or {}
+
+    if event in ("end-of-call-report", "call-end"):
+        await handle_call_completed(daemon, {
+            "id": call.get("id"),
+            "to": (call.get("customer") or {}).get("number") or "?",
+            "transcript": msg.get("transcript") or "",
+            "summary": msg.get("summary") or "",
+            "endedReason": msg.get("endedReason") or "ended",
+            "durationSeconds": msg.get("durationSeconds") or msg.get("duration") or 0,
+        })
         return web.json_response({"ok": True})
 
     if event == "status-update":
@@ -313,7 +446,33 @@ async def _t_call_phone(args: dict[str, Any], ctx: ToolContext) -> Any:
     if not to or not purpose:
         return {"error": "'to' and 'purpose' are required"}
     context = args.get("context")
-    return await _create_call(str(to), str(purpose), ctx.config, str(context) if context else None)
+    result = await _create_call(str(to), str(purpose), ctx.config, str(context) if context else None)
+    if isinstance(result, dict) and result.get("error"):
+        return result
+
+    # The call is placed but its outcome arrives asynchronously. VAPI's webhook
+    # can't reach the local daemon, so we poll for the result in the background
+    # and surface the end-of-call report (summary + transcript) into this chat
+    # when it lands. The turn returns now so Sunday can tell the user it's on it.
+    call_id = result.get("call_id") if isinstance(result, dict) else None
+    status = result.get("status") if isinstance(result, dict) else None
+    daemon = ctx.extras.get("daemon")
+    if daemon is not None:
+        spawn_call_poller(daemon, call_id, status)
+
+    return {
+        "ok": True,
+        "call_id": call_id,
+        "status": status,
+        "outcome": "pending",
+        "note": (
+            f"Call to {to} placed (status: {status or 'queued'}). The outcome — "
+            "ended reason, summary, and transcript — will arrive in this chat "
+            "automatically once the call finishes. Tell the user the call is "
+            "happening now and that you'll report back how it goes; don't claim "
+            "an outcome yet."
+        ),
+    }
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:

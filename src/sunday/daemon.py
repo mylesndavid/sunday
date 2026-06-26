@@ -359,6 +359,10 @@ class Daemon:
                     "broadcast": self._broadcast,
                     "devices":   self.devices,
                     "cockpit":   self.cockpit,
+                    # the daemon itself — tools that surface async results back
+                    # into the conversation (e.g. call_phone's outcome poller)
+                    # use this to reach self.chat / append the end-of-call report.
+                    "daemon":    self,
                     "memory":    self.memory,
                     "runtime":       self.runtime,
                     # tiered tools: lean core + whatever find_tools has pulled in
@@ -1675,7 +1679,7 @@ class Daemon:
         from the desktop. Dials the number the owner entered with a short,
         self-describing purpose; the transcript + summary land in the one chat
         (modality='vapi') when the call ends, same as any other call."""
-        from sunday.channels.vapi import _create_call
+        from sunday.channels.vapi import _create_call, spawn_call_poller
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
@@ -1694,6 +1698,10 @@ class Daemon:
             return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=502)
         if isinstance(result, dict) and result.get("error"):
             return web.json_response({"ok": False, "error": result["error"]}, status=400)
+        # Learn the outcome: VAPI's webhook can't reach the local daemon, so
+        # poll for the end-of-call report in the background. It lands in the
+        # one chat (modality='vapi') just like a real call's outcome.
+        spawn_call_poller(self, result.get("call_id"), result.get("status"))
         return web.json_response({"ok": True, "result": result})
 
     async def _http_vapi_calls(self, request: web.Request) -> web.Response:

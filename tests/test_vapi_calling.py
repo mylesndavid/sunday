@@ -326,3 +326,215 @@ def test_http_vapi_call_get_missing_id_is_400(monkeypatch):
     body = json.loads(resp.body.decode("utf-8"))
     assert resp.status == 400
     assert "id" in body["error"]
+
+
+# ─── call-completion polling: learn the outcome without a webhook ──────────
+
+
+class _RecordingChat:
+    """Captures chat.append calls so tests can assert what got surfaced."""
+
+    def __init__(self):
+        self.appends = []
+
+    def append(self, role, content, modality, metadata=None):
+        self.appends.append(
+            {"role": role, "content": content, "modality": modality, "metadata": metadata}
+        )
+        return len(self.appends)
+
+
+class _FakeDaemon:
+    def __init__(self):
+        self.chat = _RecordingChat()
+
+
+def _instant_sleep(monkeypatch):
+    """Make asyncio.sleep a no-op so the poll loop runs without wall-clock waits."""
+    async def _noop(_secs):
+        return None
+    monkeypatch.setattr(vapi.asyncio, "sleep", _noop)
+
+
+def test_handle_call_completed_builds_report_shape():
+    daemon = _FakeDaemon()
+    asyncio.run(vapi.handle_call_completed(daemon, {
+        "id": "call_1",
+        "to": "+15551112222",
+        "endedReason": "customer-ended-call",
+        "durationSeconds": 73,
+        "summary": "Booked the table.",
+        "transcript": "AI: Hi\nUser: Hello",
+    }))
+    assert len(daemon.chat.appends) == 1
+    rec = daemon.chat.appends[0]
+    assert rec["role"] == "sunday"
+    assert rec["modality"] == "vapi"
+    assert "Call to +15551112222 ended (customer-ended-call, 73s)." in rec["content"]
+    assert "Summary: Booked the table." in rec["content"]
+    assert "Transcript:\nAI: Hi\nUser: Hello" in rec["content"]
+    assert rec["metadata"] == {
+        "call_id": "call_1",
+        "ended_reason": "customer-ended-call",
+        "duration": 73,
+        "to": "+15551112222",
+    }
+
+
+def test_handle_call_completed_never_raises(monkeypatch):
+    class _BoomChat:
+        def append(self, *a, **k):
+            raise RuntimeError("db down")
+
+    class _BoomDaemon:
+        chat = _BoomChat()
+
+    # Must swallow the failure rather than propagate it to the caller/task.
+    asyncio.run(vapi.handle_call_completed(_BoomDaemon(), {"id": "x", "to": "+1"}))
+
+
+def test_poll_reaches_terminal_and_handles_once(monkeypatch):
+    _instant_sleep(monkeypatch)
+    daemon = _FakeDaemon()
+
+    # in-progress for the first two polls, then "ended".
+    seq = iter([
+        {"id": "c1", "status": "in-progress"},
+        {"id": "c1", "status": "ringing"},
+        {"id": "c1", "status": "ended", "to": "+15550001111",
+         "endedReason": "assistant-ended-call", "durationSeconds": 30,
+         "summary": "Done.", "transcript": "AI: hi"},
+    ])
+
+    calls = {"n": 0}
+
+    async def _fake_get(call_id):
+        calls["n"] += 1
+        return next(seq)
+
+    monkeypatch.setattr(vapi, "get_call", _fake_get)
+    asyncio.run(vapi.poll_call_until_done(daemon, "c1", interval=0.0, max_seconds=60))
+
+    # surfaced exactly once, with the terminal call's content.
+    assert len(daemon.chat.appends) == 1
+    assert "Call to +15550001111 ended (assistant-ended-call, 30s)." in daemon.chat.appends[0]["content"]
+    # stopped polling at the terminal read — didn't keep going.
+    assert calls["n"] == 3
+
+
+def test_poll_timeout_surfaces_note(monkeypatch):
+    _instant_sleep(monkeypatch)
+    daemon = _FakeDaemon()
+
+    # A monotonically advancing clock so max_seconds is exceeded quickly.
+    ticks = iter([0.0, 0.0, 5.0, 10.0, 100.0, 200.0, 999.0])
+
+    class _Loop:
+        def time(self):
+            try:
+                return next(ticks)
+            except StopIteration:
+                return 9999.0
+
+    monkeypatch.setattr(vapi.asyncio, "get_event_loop", lambda: _Loop())
+
+    async def _always_in_progress(call_id):
+        return {"id": call_id, "status": "in-progress"}
+
+    monkeypatch.setattr(vapi, "get_call", _always_in_progress)
+    asyncio.run(vapi.poll_call_until_done(daemon, "c1", interval=0.0, max_seconds=20))
+
+    assert len(daemon.chat.appends) == 1
+    note = daemon.chat.appends[0]
+    assert "didn't complete" in note["content"]
+    assert note["metadata"]["poll"] == "timeout"
+
+
+def test_poll_gives_up_after_repeated_api_errors(monkeypatch):
+    _instant_sleep(monkeypatch)
+    daemon = _FakeDaemon()
+
+    calls = {"n": 0}
+
+    async def _always_error(call_id):
+        calls["n"] += 1
+        return {"error": "vapi 500: boom"}
+
+    monkeypatch.setattr(vapi, "get_call", _always_error)
+    asyncio.run(vapi.poll_call_until_done(daemon, "c1", interval=0.0, max_seconds=60))
+
+    # capped at the consecutive-error limit; nothing surfaced.
+    assert daemon.chat.appends == []
+    assert calls["n"] == 5
+
+
+def test_poll_noop_on_empty_call_id(monkeypatch):
+    daemon = _FakeDaemon()
+
+    async def _should_not_run(call_id):  # pragma: no cover - must not be reached
+        raise AssertionError("get_call should not be called for an empty id")
+
+    monkeypatch.setattr(vapi, "get_call", _should_not_run)
+    asyncio.run(vapi.poll_call_until_done(daemon, "", interval=0.0, max_seconds=60))
+    assert daemon.chat.appends == []
+
+
+def test_call_phone_returns_pending_and_spawns_poller(monkeypatch):
+    # _create_call succeeds with a non-terminal status → tool returns "pending"
+    # guidance and a background poller is started.
+    async def _fake_create(to, purpose, config, ctx=None):
+        return {"ok": True, "call_id": "c1", "status": "queued", "data": {}}
+
+    monkeypatch.setattr(vapi, "_create_call", _fake_create)
+
+    spawned = {}
+
+    def _fake_spawn(daemon, call_id, status):
+        spawned["call_id"] = call_id
+        spawned["status"] = status
+
+    monkeypatch.setattr(vapi, "spawn_call_poller", _fake_spawn)
+
+    daemon = _FakeDaemon()
+    ctx = ToolContext(
+        chat=_NoopChat(), config=SundayConfig(), modality="chat",
+        extras={"daemon": daemon},
+    )
+    out = asyncio.run(
+        vapi._t_call_phone({"to": "+15551234567", "purpose": "say hi"}, ctx)
+    )
+    assert out["ok"] is True
+    assert out["call_id"] == "c1"
+    assert out["outcome"] == "pending"
+    assert "automatically" in out["note"]
+    assert spawned == {"call_id": "c1", "status": "queued"}
+
+
+def test_call_phone_does_not_spawn_on_create_error(monkeypatch):
+    async def _fake_create(to, purpose, config, ctx=None):
+        return {"error": "VAPI_API_KEY is missing."}
+
+    monkeypatch.setattr(vapi, "_create_call", _fake_create)
+
+    def _boom_spawn(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("must not spawn a poller when the call wasn't placed")
+
+    monkeypatch.setattr(vapi, "spawn_call_poller", _boom_spawn)
+
+    ctx = ToolContext(
+        chat=_NoopChat(), config=SundayConfig(), modality="chat",
+        extras={"daemon": _FakeDaemon()},
+    )
+    out = asyncio.run(
+        vapi._t_call_phone({"to": "+15551234567", "purpose": "say hi"}, ctx)
+    )
+    assert "error" in out
+
+
+def test_spawn_call_poller_skips_terminal_status(monkeypatch):
+    # An already-ended call needs no poller (and create_task must not be hit).
+    def _boom(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("create_task should not run for a terminal call")
+
+    monkeypatch.setattr(vapi.asyncio, "create_task", _boom)
+    vapi.spawn_call_poller(_FakeDaemon(), "c1", "ended")  # no exception = pass
