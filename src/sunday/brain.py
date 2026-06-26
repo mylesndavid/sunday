@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import structlog
 
@@ -234,8 +234,27 @@ async def respond(
     # Always tell the model the current date/time so it never burns a tool
     # call (shell `date`, etc.) just to find out what day it is. Computed once
     # per turn and carried in the per-turn context block (not the cached
-    # system prompt). UTC — the model converts to the user's tz from memory.
-    now_line = "Right now it's " + datetime.now(timezone.utc).strftime("%A, %B %d, %Y, %H:%M UTC") + "."
+    # system prompt). LOCAL time on the user's own machine — a personal
+    # assistant should think in the user's day (and feel the difference between
+    # 9am and 2am), not UTC.
+    _now = datetime.now().astimezone()
+    _h = _now.hour
+    _part = (
+        "the middle of the night" if _h < 5 else
+        "early morning" if _h < 8 else
+        "morning" if _h < 12 else
+        "midday" if _h < 14 else
+        "afternoon" if _h < 18 else
+        "evening" if _h < 22 else
+        "late night"
+    )
+    _daytype = "weekend" if _now.weekday() >= 5 else "weekday"
+    _tz = _now.tzname() or _now.strftime("%Z")
+    now_line = (
+        "Right now it's "
+        + _now.strftime("%A, %B %d, %Y, %-I:%M %p")
+        + f" {_tz} — {_part} on a {_daytype}."
+    )
 
     memory_block = now_line
     if memory is not None and getattr(memory, "available", False):
