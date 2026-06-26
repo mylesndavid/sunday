@@ -174,9 +174,33 @@ function handleWs(ev) {
       stream.el.classList.remove('streaming');
       stream = null; showStop(false); refreshLog(); refreshStatus(); return;
     case 'reply': if (!stream) refreshLog(); return;
+    case 'interjection':
+      // A proactive note Sunday surfaced unprompted (e.g. a time-gap check-in).
+      // It's already folded into the chat server-side, so pull it in; if the
+      // daemon flagged notify, raise a real desktop notification too.
+      if (!stream) refreshLog();
+      if (ev.notify && ev.text) showDesktopNotification(ev.notify_title || 'Sunday', ev.text);
+      return;
     case 'browser_frame': case 'device_browser_frame': case 'device_screen': showLiveFrame(ev); return;
     case 'device_online': case 'device_offline': refreshStatus(); return;
   }
+}
+
+// macOS desktop notification via the renderer's native Notification API
+// (Electron maps this to a real system notification). Best-effort — asks once
+// for permission, swallows any failure so a missing entitlement can't break
+// the chat. Clicking the notification focuses the Sunday window.
+function showDesktopNotification(title, body) {
+  try {
+    const fire = () => {
+      const n = new Notification(title, { body, silent: false });
+      n.onclick = () => { try { window.focus(); } catch {} };
+    };
+    if (Notification.permission === 'granted') { fire(); return; }
+    if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((p) => { if (p === 'granted') fire(); }).catch(() => {});
+    }
+  } catch {}
 }
 
 function beginStream(ev) {

@@ -137,6 +137,24 @@ def get_or_create_auth_token() -> str:
 _AUTH_EXEMPT_PREFIXES = ("/webhooks/", "/v1/health", "/v1/auth/check", "/v1/ws", "/v1/cockpit/ws", "/v1/cockpit/precheck")
 
 
+# Conversational off-switch for proactive check-ins. Deliberately narrow — it
+# must catch a clear "stop reaching out" instruction without misfiring on the
+# user simply *checking in* about something. Requires both a stop/quiet verb
+# AND a reference to the check-in/pinging/reaching-out behavior.
+_STOP_VERBS = ("stop", "don't", "dont", "quit", "no more", "cut", "knock it off",
+               "turn off", "disable", "stop with", "enough with", "lay off", "ease off")
+_CHECKIN_NOUNS = ("check in", "check-in", "checking in", "checkin", "reaching out",
+                  "reach out", "messaging me", "pinging me", "texting me first",
+                  "messaging me first", "the pings", "unprompted")
+
+
+def _wants_to_stop_checkins(text: str) -> bool:
+    t = (text or "").lower()
+    if not any(n in t for n in _CHECKIN_NOUNS):
+        return False
+    return any(v in t for v in _STOP_VERBS)
+
+
 @web.middleware
 async def _auth_middleware(request: web.Request, handler):
     """Reject any request without a valid bearer token. Covers ALL `/v1/*`
@@ -330,6 +348,11 @@ class Daemon:
         if self._turn_lock.locked() and self._active_control is not None:
             self._active_control.steer(text)
             return {"steered": True, "reply": None}
+        # Conversational off-switch: if the user tells Sunday to stop checking
+        # in, honor it immediately (the model still replies normally on this
+        # turn — this just flips the persisted flag). Err toward easy-to-silence.
+        if _wants_to_stop_checkins(text):
+            self.pause_checkins(reason="user said so in chat")
         # Serialize turns: a user turn and a sub-agent wake turn must not run
         # concurrently or they'd interleave messages in the single chat.
         async with self._turn_lock:
@@ -1107,6 +1130,18 @@ class Daemon:
 
         self.interjections.mark_engaged(iid, feedback=feedback, reply=reply)
 
+        # If this was a proactive check-in and the user actually replied, clear
+        # the back-off streak — they engaged, so Sunday is welcome to keep
+        # reaching out. A bare dismiss (no reply) leaves it "ignored".
+        if match.get("trigger") == "checkin" and reply:
+            try:
+                from sunday import checkin
+                st = checkin.load_state()
+                if checkin.record_engagement(st, iid):
+                    checkin.save_state(st)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("checkin engagement record failed", error=str(exc))
+
         # Fold into main chat: Sunday's note becomes a sunday-role message
         # (with metadata so the UI can show it as proactive). If the user
         # replied, that becomes a user-role message and we run a turn.
@@ -1133,6 +1168,201 @@ class Daemon:
             return web.json_response({"error": "bad id"}, status=400)
         self.interjections.mark_dismissed(iid)
         return web.json_response({"ok": True})
+
+    # ─── proactive check-in ────────────────────────────────────────────────
+
+    async def _http_checkin_state(self, request: web.Request) -> web.Response:
+        """Current check-in settings + a little observability (last ping,
+        recent engagement). Read-only."""
+        from sunday import checkin
+        st = checkin.load_state()
+        s = st.settings
+        return web.json_response({
+            "enabled": s.enabled,
+            "gap_min_hours": s.gap_min_hours,
+            "gap_max_hours": s.gap_max_hours,
+            "quiet_start_hour": s.quiet_start_hour,
+            "quiet_end_hour": s.quiet_end_hour,
+            "cooldown_hours": s.cooldown_hours,
+            "last_checkin_at": st.last_checkin_at or None,
+            "recent_outcomes": st.ledger[-5:],
+        })
+
+    async def _http_checkin_set(self, request: web.Request) -> web.Response:
+        """Update check-in settings. Partial — only the keys present are
+        changed. {enabled: bool, gap_min_hours, gap_max_hours,
+        quiet_start_hour, quiet_end_hour, cooldown_hours}. The off-switch is
+        just {enabled: false}, persisted, effective immediately."""
+        from sunday import checkin
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        st = checkin.load_state()
+        s = st.settings
+        if "enabled" in body:
+            s.enabled = bool(body["enabled"])
+        for key in ("gap_min_hours", "gap_max_hours", "cooldown_hours"):
+            if key in body:
+                try:
+                    setattr(s, key, float(body[key]))
+                except (TypeError, ValueError):
+                    return web.json_response({"error": f"{key} must be a number"}, status=400)
+        for key in ("quiet_start_hour", "quiet_end_hour"):
+            if key in body:
+                try:
+                    setattr(s, key, int(body[key]))
+                except (TypeError, ValueError):
+                    return web.json_response({"error": f"{key} must be an integer"}, status=400)
+        checkin.save_state(st)
+        log.info("checkin settings updated", enabled=s.enabled)
+        return web.json_response({"ok": True, "enabled": s.enabled})
+
+    def pause_checkins(self, reason: str = "user asked") -> None:
+        """The conversational off-switch: when the user tells Sunday to stop
+        checking in, disable it. Persisted so it survives restarts; re-enable
+        from Settings (or by asking)."""
+        try:
+            from sunday import checkin
+            st = checkin.load_state()
+            st.settings.enabled = False
+            checkin.save_state(st)
+            log.info("check-ins disabled", reason=reason)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("pause_checkins failed", error=str(exc))
+
+    def _user_is_active(self, now_ts: float) -> bool:
+        """Best-effort 'is the user here right now' for the recent-activity
+        guard. True if the ambient observer has a fresh activity line (they're
+        clearly around) — the gap check covers chat recency separately."""
+        upd = self._now.get("updated_at")
+        return bool(upd and (now_ts - upd) < 120 and self._now.get("now"))
+
+    def _checkin_context(self) -> tuple[list[str], list[str]]:
+        """Gather the contextual hooks for a check-in: open working threads
+        (atoms) + a few durable memory facts. Both best-effort; the quality
+        gate decides whether they're enough to actually send."""
+        threads: list[str] = []
+        try:
+            for a in self.atoms.list(state="active", limit=40):
+                if a.get("kind") in ("thread", "commitment", "deadline"):
+                    t = (a.get("text") or "").strip()
+                    if t:
+                        threads.append(t)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin atoms read failed", error=str(exc))
+        notes: list[str] = []
+        try:
+            if getattr(self.memory, "available", False):
+                # the freshest durable facts read like "what's going on with them"
+                for row in self.memory.all(limit=6):
+                    txt = (getattr(row, "content", "") or "").strip()
+                    if txt:
+                        notes.append(txt)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin memory read failed", error=str(exc))
+        return threads[:5], notes[:5]
+
+    async def _maybe_check_in(self) -> bool:
+        """One evaluation cycle. Decide → (if open) generate-with-quality-gate
+        → deliver. Returns True if a check-in actually went out. Never raises."""
+        import random as _random
+        from datetime import datetime as _dt
+        from sunday import checkin
+
+        now = _dt.now().astimezone()
+        now_ts = now.timestamp()
+        state = checkin.load_state()
+
+        # When did we last hear from the user? Most-recent message that isn't
+        # one of Sunday's own proactive pings.
+        last_activity = self._last_user_activity_ts()
+
+        decision = checkin.should_check_in(
+            now=now, now_ts=now_ts,
+            last_user_activity_ts=last_activity,
+            state=state,
+            is_active=self._user_is_active(now_ts),
+            rng=_random.Random(),
+        )
+        if not decision.go:
+            log.debug("checkin skipped", reason=decision.reason)
+            return False
+
+        # Gate is open — but the quality gate still has the final say.
+        gap = now_ts - (last_activity or now_ts)
+        threads, notes = self._checkin_context()
+        text = await checkin.generate_checkin_text(
+            config=self.config, now=now, gap_seconds=gap,
+            open_threads=threads, memory_notes=notes,
+        )
+        if not text:
+            log.info("checkin quality-gated; nothing worth saying this cycle")
+            return False
+
+        await self._deliver_checkin(text, now_ts, state)
+        return True
+
+    def _last_user_activity_ts(self) -> float | None:
+        """Timestamp of the user's last real message — ignoring Sunday's own
+        proactive pings (so an unanswered check-in doesn't reset the silence
+        clock and suppress the next one forever)."""
+        try:
+            for m in reversed(self.chat.recent(limit=30)):
+                if m.role == "user":
+                    return m.created_at
+        except Exception as exc:  # noqa: BLE001
+            log.warning("last user activity read failed", error=str(exc))
+        return None
+
+    async def _deliver_checkin(self, text: str, now_ts: float, state: "Any") -> None:
+        """Fold the check-in into the one chat AND fire a real desktop
+        notification — reusing the interjection substrate so engage/dismiss
+        flows the same as any other proactive note."""
+        from sunday import checkin
+        iid = 0
+        try:
+            iid = self.interjections.add(
+                kind="proac", trigger="checkin", text=text,
+                evidence="proactive check-in (time gap)", confidence=1.0,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin interjection store failed", error=str(exc))
+
+        # Land it in the conversation immediately so it's waiting when the app
+        # opens — not gated behind engagement like knowledge-gap proacs.
+        try:
+            self.chat.append("sunday", text, modality="checkin",
+                             metadata={"proactive": True, "checkin": True,
+                                       "interjection_id": iid})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin chat append failed", error=str(exc))
+
+        # Stamp cooldown + ledger BEFORE broadcasting so a crash mid-broadcast
+        # can't double-fire.
+        try:
+            checkin.record_checkin(state, now_ts, iid=iid)
+            checkin.save_state(state)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin state persist failed", error=str(exc))
+
+        # Broadcast: `notify: true` tells the app to raise a macOS desktop
+        # notification; `type: interjection` reuses the existing flare path so
+        # the chat refreshes and the note is engageable.
+        payload = {
+            "type": "interjection",
+            "id": iid,
+            "kind": "proac",
+            "trigger": "checkin",
+            "text": text,
+            "notify": True,
+            "notify_title": "Sunday",
+        }
+        try:
+            await self._broadcast(payload)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("checkin broadcast failed", error=str(exc))
+        log.info("proactive check-in sent", preview=text[:60])
 
     async def _http_observer_buffer(self, request: web.Request) -> web.Response:
         """The conversation Sunday is CURRENTLY buffering — not yet closed +
@@ -2860,6 +3090,8 @@ class Daemon:
         app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
         app.router.add_get("/v1/rewind/state", self._http_rewind_state)
         app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)
+        app.router.add_get("/v1/checkin/state", self._http_checkin_state)
+        app.router.add_post("/v1/checkin/set", self._http_checkin_set)
         app.router.add_get("/v1/ws", self._ws_handler)
         # Satellite devices connect here.
         app.router.add_get("/v1/devices/ws", self.devices.handle_ws)
@@ -2944,6 +3176,27 @@ class Daemon:
             except Exception as exc:  # noqa: BLE001
                 log.warning("memory vector backfill failed", error=str(exc))
         self._bg_tasks.append(asyncio.create_task(_index_memory()))
+
+        # Proactive check-in worker. The timer is permission to CONSIDER, not an
+        # obligation to send — the heavy lifting (quiet hours, jittered gap,
+        # cooldown, back-off, and the quality gate) lives in _maybe_check_in.
+        # We tick on a coarse, slightly-irregular cadence so even the
+        # *evaluation* isn't clockwork. Fully wrapped: a failure logs and
+        # retries next cycle, never crashing the daemon.
+        async def _checkin_worker():
+            import random as _r
+            await asyncio.sleep(120)  # let boot settle; don't ping the instant we start
+            while not self._stop.is_set():
+                try:
+                    await self._maybe_check_in()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("checkin cycle failed", error=str(exc))
+                # ~20–35 min between evaluations, jittered so it's never on a grid.
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=_r.uniform(20 * 60, 35 * 60))
+                except asyncio.TimeoutError:
+                    pass
+        self._bg_tasks.append(asyncio.create_task(_checkin_worker()))
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

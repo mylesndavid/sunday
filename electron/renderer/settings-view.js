@@ -1707,6 +1707,9 @@ function wire() {
   // ── transcription status ──
   wireTranscription();
 
+  // ── proactive check-ins (Reaching out) ──
+  wireCheckin();
+
   // ── developer diagnostics (Argus) ──
   wireArgus();
 
@@ -1994,6 +1997,38 @@ function wireTranscription() {
 }
 
 // ── developer diagnostics (Argus) ───────────────────────────────────────────
+// ── proactive check-ins ──────────────────────────────────────────────────────
+// Sunday occasionally reaching out first. One obvious toggle; defaults ON but
+// conservative on the daemon side. "stop checking in" in chat also turns it off.
+function wireCheckin() {
+  const statusEl = $('#set-checkin-status');
+  const btn = $('#set-checkin-toggle');
+  if (!btn) return;
+  function paint(s) {
+    const on = !!s.enabled;
+    btn.textContent = on ? 'Turn off' : 'Turn on';
+    statusEl.dataset.state = on ? 'ok' : '';
+    statusEl.textContent = on ? 'On' : 'Off';
+  }
+  async function refresh() {
+    try { paint(await (await fetch(`${DAEMON_HTTP}/v1/checkin/state`)).json()); }
+    catch { statusEl.textContent = ''; }
+  }
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const cur = await (await fetch(`${DAEMON_HTTP}/v1/checkin/state`)).json();
+      const r = await (await fetch(`${DAEMON_HTTP}/v1/checkin/set`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !cur.enabled }),
+      })).json();
+      paint(r);
+    } catch { statusEl.dataset.state = 'fail'; statusEl.textContent = 'failed'; }
+    finally { btn.disabled = false; }
+  });
+  refresh();
+}
+
 function wireArgus() {
   async function refreshArgusUI() {
     const statusEl = $('#set-argus-status');
