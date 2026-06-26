@@ -50,15 +50,15 @@ let currentView = 'chat';
 // {root_message_id: reply_count} — refreshed with the main log, drives the
 // "N replies" badge under each rooted message.
 let replyCounts = {};
-// The thread currently open in the side panel, or null. Holds the thread id and
-// the set of reply ids already rendered (so a refresh appends, not duplicates).
+// The thread currently open in the full thread view, or null. Holds the thread
+// id and the set of reply ids already rendered (so a refresh appends, not
+// duplicates). When set, the thread view has taken over the main area.
 let openThread = null;
-const threadPanel   = $('#thread-panel');
-const threadScrim   = $('#thread-scrim');
 const threadLogEl   = $('#thread-log');
 const threadComposer = $('#thread-composer');
 const threadSendBtn = $('#thread-send-btn');
 const threadSubEl   = $('#thread-panel-sub');
+const threadJumpBtn = $('#thread-jump-btn');
 
 // ─── boot ──────────────────────────────────────────────────────────────
 async function boot() {
@@ -214,7 +214,7 @@ function handleWs(ev) {
       stream.el.classList.remove('streaming');
       stream = null; showStop(false); refreshLog(); refreshStatus(); return;
     case 'thread_created': refreshLog(); return;
-    case 'cleared': if (openThread) closeThreadPanel(); return;
+    case 'cleared': if (openThread) closeThreadView(); return;
     case 'reply': if (!stream && ev.thread_id == null) refreshLog(); return;
     case 'interjection':
       // A proactive note Sunday surfaced unprompted (e.g. a time-gap check-in).
@@ -430,9 +430,15 @@ function syncThreadBadges() {
   });
 }
 
-// ─── thread panel: open, render, send ─────────────────────────────────────
+// ─── thread view: open, render, send ──────────────────────────────────────
+// Opening a thread REPLACES the main chat with a full thread view — root anchor
+// at top, its replies below, and a scoped composer at the bottom. A back button
+// (or Esc) restores the main timeline. The view follows the same .view/.active
+// pattern as Chat/Calls/etc., so it's fully hidden until a thread is opened —
+// nothing renders or intercepts in the default state.
+
 // Open the thread rooted at a main-timeline message — creating it first if one
-// doesn't exist yet (idempotent server-side), then loading + showing the panel.
+// doesn't exist yet (idempotent server-side), then loading + showing the view.
 async function openThreadForMessage(rootId) {
   try {
     const res = await fetch(`${DAEMON_HTTP}/v1/threads`, {
@@ -441,25 +447,44 @@ async function openThreadForMessage(rootId) {
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok || !d.thread) { console.warn('create thread failed', d.error || res.status); return; }
-    openThreadPanel(d.thread.id);
+    openThreadView(d.thread.id);
   } catch (err) { console.warn('open thread failed', err); }
 }
 
-function openThreadPanel(threadId) {
+function openThreadView(threadId) {
   openThread = { id: threadId, renderedIds: new Set() };
   threadLogEl.innerHTML = '';
-  threadPanel.hidden = false;
-  threadScrim.hidden = false;
+  threadSubEl.textContent = '';
+  threadComposer.value = '';
+  resizeThreadComposer();
+  showThreadStop(false);
+  // Loading cue until the first render lands.
+  const loading = document.createElement('div');
+  loading.className = 'thread-empty thread-loading'; loading.textContent = 'Loading thread…';
+  threadLogEl.appendChild(loading);
+  // Hand off to the view switcher — hides chat, shows the thread view.
+  showThreadView();
   loadThread(threadId);
   updateThreadSend();
   requestAnimationFrame(() => threadComposer.focus());
 }
 
-function closeThreadPanel() {
+// Reveal the full thread view, hiding whatever view was active. Mirrors the
+// .tab/.view pattern but the thread view has no tab — it's entered from a
+// message, left via back.
+function showThreadView() {
+  currentView = 'thread';   // not a tab; disables chat-only affordances (drag-drop)
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-thread'));
+  document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+}
+
+// Back to the main timeline. Tears down thread state, restores the chat view,
+// and re-focuses + reconciles the main composer/scroll.
+function closeThreadView() {
   openThread = null;
-  threadPanel.hidden = true;
-  threadScrim.hidden = true;
   threadComposer.value = '';
+  showThreadStop(false);
+  switchView('chat');
 }
 
 async function loadThread(threadId, opts = {}) {
@@ -477,6 +502,9 @@ function renderThread(d, opts = {}) {
   const replies = d.messages || [];
   const sub = (root && (root.content || '').trim().slice(0, 60)) || '';
   threadSubEl.textContent = sub;
+
+  // Clear the initial "Loading thread…" cue once the first payload lands.
+  threadLogEl.querySelector('.thread-loading')?.remove();
 
   // The root anchor is rendered once at the top; replies append incrementally.
   const atBottom = threadLogEl.scrollHeight - threadLogEl.scrollTop - threadLogEl.clientHeight < 90;
@@ -539,7 +567,7 @@ async function sendThread() {
   const b = document.createElement('div'); b.className = 'bubble'; b.innerHTML = mdLite(text); w.appendChild(b);
   threadLogEl.querySelector('.thread-empty')?.remove();
   threadLogEl.appendChild(w);
-  threadLogEl.scrollTop = threadLogEl.scrollHeight;
+  threadScrollToEnd();
   threadComposer.value = ''; updateThreadSend(); resizeThreadComposer();
   try {
     const res = await fetch(`${DAEMON_HTTP}/v1/threads/${threadId}/say`, {
@@ -548,7 +576,7 @@ async function sendThread() {
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { w.classList.remove('pending'); w.classList.add('failed'); w.title = `Couldn't send: ${d.error || res.status}`; return; }
-    // Sunday's reply streams over the WS into the panel; stream_end refreshes.
+    // Sunday's reply streams over the WS into the thread view; stream_end refreshes.
     setTimeout(() => loadThread(threadId, { quiet: true }), 50);
   } catch (err) {
     w.classList.remove('pending'); w.classList.add('failed'); w.title = `Couldn't send: ${err.message}`;
@@ -558,11 +586,26 @@ async function sendThread() {
 function updateThreadSend() { threadSendBtn.disabled = !threadComposer.value.trim(); }
 function resizeThreadComposer() { threadComposer.style.height = 'auto'; threadComposer.style.height = Math.min(threadComposer.scrollHeight, 160) + 'px'; }
 
-// A quiet "Sunday is replying…" line at the bottom of the open panel while a
-// thread turn streams (its tokens render only on stream_end, so this is the
-// live cue). No-op if no panel is open.
+// Thread-view scroll helpers — mirror the main timeline's jump pill behaviour.
+function threadNearBottom() { return threadLogEl.scrollHeight - threadLogEl.scrollTop - threadLogEl.clientHeight < 90; }
+function threadScrollToEnd() { threadLogEl.scrollTop = threadLogEl.scrollHeight; if (threadJumpBtn) threadJumpBtn.hidden = true; }
+
+// Stop the running thread turn. Shown only while a thread turn streams.
+const threadStopBtn = $('#thread-stop-btn');
+function showThreadStop(on) { if (threadStopBtn) threadStopBtn.hidden = !on; }
+threadStopBtn?.addEventListener('click', async () => {
+  threadStopBtn.disabled = true;
+  try { await fetch(`${DAEMON_HTTP}/v1/task/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  catch {}
+  finally { threadStopBtn.disabled = false; }
+});
+
+// A quiet "thinking…" line at the bottom of the thread view while a thread turn
+// streams (its tokens render only on stream_end, so this is the live cue). Also
+// reveals the Stop pill. No-op if no thread is open.
 function showThreadThinking(on) {
   if (!openThread) return;
+  showThreadStop(on);
   let el = threadLogEl.querySelector('.thread-thinking');
   if (!on) { el?.remove(); return; }
   if (!el) {
@@ -570,20 +613,19 @@ function showThreadThinking(on) {
     el.className = 'reasoning live thread-thinking';
     el.innerHTML = '<summary><span class="spin"></span>thinking…</summary>';
     threadLogEl.appendChild(el);
-    threadLogEl.scrollTop = threadLogEl.scrollHeight;
+    threadScrollToEnd();
   }
 }
 
-$('#thread-back')?.addEventListener('click', closeThreadPanel);
-$('#thread-close')?.addEventListener('click', closeThreadPanel);
-threadScrim?.addEventListener('click', closeThreadPanel);
+$('#thread-back')?.addEventListener('click', closeThreadView);
 threadSendBtn?.addEventListener('click', sendThread);
 threadComposer?.addEventListener('input', () => { resizeThreadComposer(); updateThreadSend(); });
 threadComposer?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendThread(); }
-  else if (e.key === 'Escape') { closeThreadPanel(); }
 });
-// Open-thread links inside the panel (mdLite turns URLs into <a>) go to the OS browser.
+threadLogEl?.addEventListener('scroll', () => { if (threadJumpBtn) threadJumpBtn.hidden = threadNearBottom(); });
+threadJumpBtn?.addEventListener('click', threadScrollToEnd);
+// Open-thread links inside the thread view (mdLite turns URLs into <a>) go to the OS browser.
 threadLogEl?.addEventListener('click', (e) => {
   const a = e.target.closest && e.target.closest('a[href]');
   if (!a) return;
@@ -981,6 +1023,10 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && connPopOpen) closeConnPop();
+  // Esc from inside the full thread view returns to the main timeline (unless a
+  // popover claimed it above, or the user is mid-edit in a thread composer with
+  // text — handled by the composer's own keydown, which doesn't preventDefault).
+  else if (e.key === 'Escape' && openThread) { e.preventDefault(); closeThreadView(); }
 });
 window.addEventListener('resize', () => connPopOpen && positionConnPop());
 
@@ -1031,6 +1077,9 @@ $('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.clic
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
   if (!['chat', 'memory', 'calls', 'rewind', 'settings'].includes(name)) return;
+  // Leaving for a real tab while a thread view is open tears its state down so
+  // nothing lingers (e.g. a click on Memory from inside a thread).
+  if (openThread && name !== 'chat') { openThread = null; threadComposer.value = ''; showThreadStop(false); }
   currentView = name;
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));

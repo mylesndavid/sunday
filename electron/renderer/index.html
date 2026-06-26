@@ -49,30 +49,37 @@
         </button>
       </div>
     </div>
+  </section>
 
-    <!-- ─── THREAD PANEL — Slack-style reply branch, slides in from the right ── -->
-    <aside class="thread-panel" id="thread-panel" hidden aria-label="Thread">
-      <div class="thread-panel-bar">
-        <button class="iconbtn thread-back" id="thread-back" title="Back to chat" aria-label="Back to chat">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  <!-- ─── THREAD — full view that takes over the main area when a thread opens.
+       Same message + composer chrome as chat; a back button restores the
+       timeline. Hidden by default; shown only via openThreadForMessage. ─── -->
+  <section class="view view-thread" id="view-thread">
+    <header class="thread-bar">
+      <button class="iconbtn thread-back" id="thread-back" title="Back to chat" aria-label="Back to chat">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="thread-bar-title">
+        <span class="thread-bar-h">Thread</span>
+        <span class="thread-bar-sub" id="thread-panel-sub"></span>
+      </div>
+    </header>
+    <div class="thread thread-log" id="thread-log" aria-live="polite" aria-label="Thread"></div>
+    <button class="jump-btn" id="thread-jump-btn" hidden title="Jump to latest" aria-label="Jump to latest">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+    </button>
+    <div class="composer-wrap">
+      <button id="thread-stop-btn" class="stop-pill" hidden>
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        Stop
+      </button>
+      <div class="composer">
+        <textarea id="thread-composer" rows="1" placeholder="Reply in thread…" aria-label="Reply in thread"></textarea>
+        <button id="thread-send-btn" class="send-btn" title="Send (↵)" aria-label="Send reply" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
         </button>
-        <div class="thread-panel-title">
-          <span class="thread-panel-h">Thread</span>
-          <span class="thread-panel-sub" id="thread-panel-sub"></span>
-        </div>
-        <button class="iconbtn thread-close" id="thread-close" title="Close" aria-label="Close">×</button>
       </div>
-      <div class="thread-log" id="thread-log" aria-live="polite"></div>
-      <div class="thread-composer-wrap">
-        <div class="composer thread-composer">
-          <textarea id="thread-composer" rows="1" placeholder="Reply in thread…" aria-label="Reply in thread"></textarea>
-          <button id="thread-send-btn" class="send-btn" title="Send (↵)" aria-label="Send reply" disabled>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-          </button>
-        </div>
-      </div>
-    </aside>
-    <div class="thread-scrim" id="thread-scrim" hidden></div>
+    </div>
   </section>
 
   <!-- ─── MEMORY — "What Sunday Knows" ─────────────────────────────── -->
