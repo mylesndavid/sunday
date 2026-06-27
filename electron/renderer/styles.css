@@ -91,22 +91,23 @@ body { display: flex; flex-direction: column; }
 }
 @keyframes caret { 0%,100%{opacity:.55} 50%{opacity:.1} }
 
-/* finish time + duration — floats at the outer thread edge, vertically
- * centered to the bubble. Absolutely positioned so it reserves no space
- * and never shifts the layout; only fades in on hover. */
+/* relative timestamp — floats at the outer thread edge, vertically centered to
+ * the bubble. Absolutely positioned so it reserves no space and never shifts
+ * the layout. Subtle at rest (the only thing showing), a touch firmer on hover.
+ * The exact clock time + generation latency live in its title tooltip. */
 .msg-meta {
   position: absolute;
   top: 50%; transform: translateY(-50%);
   font: 500 11px/1 var(--font-mono);
   color: var(--text-3);
   display: flex; gap: 8px; white-space: nowrap;
-  opacity: 0; pointer-events: none;
+  opacity: 0.45;
   transition: opacity var(--t-fast) var(--ease);
 }
 .msg.sunday .msg-meta { right: 4px; }
 .msg.user   .msg-meta { left: 4px; }
 .msg:hover .msg-meta { opacity: 1; }
-.msg-meta .dur { color: var(--accent-press); }
+.msg-meta .time { cursor: default; }
 
 /* per-bubble copy on hover */
 .bubble-copy {

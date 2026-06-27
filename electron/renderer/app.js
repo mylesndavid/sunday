@@ -391,11 +391,16 @@ function appendMessage(m) {
     wrap.appendChild(aw);
   }
 
-  // finish time + duration (floats on hover)
-  let html = '';
-  if (role === 'sunday' && lastUserTs && m.created_at > lastUserTs) html += `<span class="dur">${fmtDur(m.created_at - lastUserTs)}</span>`;
-  if (m.created_at) html += `<span class="time" title="${esc(fmtFull(m.created_at))}">${esc(fmtClock(m.created_at))} · ${esc(fmtRel(m.created_at))}</span>`;
-  if (html) { const meta = document.createElement('div'); meta.className = 'msg-meta'; meta.innerHTML = html; wrap.appendChild(meta); }
+  // Resting meta: one subtle relative timestamp ("6h ago"). The exact clock
+  // time and the generation latency live in its title tooltip — no clutter at
+  // rest, full detail on hover.
+  if (m.created_at) {
+    let tip = fmtFull(m.created_at);
+    if (role === 'sunday' && lastUserTs && m.created_at > lastUserTs) tip += ` · generated in ${fmtDur(m.created_at - lastUserTs)}`;
+    const meta = document.createElement('div'); meta.className = 'msg-meta';
+    meta.innerHTML = `<span class="time" title="${esc(tip)}">${esc(fmtRel(m.created_at))}</span>`;
+    wrap.appendChild(meta);
+  }
 
   placeRow(wrap, side);
 
