@@ -3278,20 +3278,10 @@ class Daemon:
         # We tick on a coarse, slightly-irregular cadence so even the
         # *evaluation* isn't clockwork. Fully wrapped: a failure logs and
         # retries next cycle, never crashing the daemon.
-        async def _checkin_worker():
-            import random as _r
-            await asyncio.sleep(120)  # let boot settle; don't ping the instant we start
-            while not self._stop.is_set():
-                try:
-                    await self._maybe_check_in()
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("checkin cycle failed", error=str(exc))
-                # ~20–35 min between evaluations, jittered so it's never on a grid.
-                try:
-                    await asyncio.wait_for(self._stop.wait(), timeout=_r.uniform(20 * 60, 35 * 60))
-                except asyncio.TimeoutError:
-                    pass
-        self._bg_tasks.append(asyncio.create_task(_checkin_worker()))
+        # Proactive check-ins were removed — they felt bolted-on and unintentional.
+        # The worker is deliberately not started, so Sunday never reaches out
+        # unprompted. (checkin.py + the /v1/checkin endpoints remain as inert
+        # dead-code for now; nothing calls the worker.)
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):

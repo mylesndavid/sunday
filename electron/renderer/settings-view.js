@@ -1707,8 +1707,7 @@ function wire() {
   // ── transcription status ──
   wireTranscription();
 
-  // ── proactive check-ins (Reaching out) ──
-  wireCheckin();
+  // proactive check-ins removed (felt bolted-on); wireCheckin() left unused.
 
   // ── developer diagnostics (Argus) ──
   wireArgus();
