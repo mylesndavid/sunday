@@ -2206,6 +2206,22 @@ class Daemon:
                 # `text`, so alias it when no explicit body is present.
                 if not merged.get("body") and raw.get("text"):
                     merged["body"] = raw.get("text")
+                # Email rows only carry a truncated preview from the sync — fetch
+                # the FULL message from AgentMail on open so the detail shows the
+                # real email, not a snippet. Best-effort; falls back to preview.
+                if row.get("channel") == "email":
+                    try:
+                        from sunday.channels.agentmail import _fetch_message, discover_inbox_id
+                        inbox_id = await discover_inbox_id()
+                        pid = row.get("provider_id") or item_id
+                        full = await _fetch_message(inbox_id, pid) if inbox_id else None
+                        if full:
+                            if full.get("text"):
+                                merged["body"] = full["text"]
+                            if full.get("subject"):
+                                merged["subject"] = full["subject"]
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("inbox email body fetch failed", error=str(exc))
                 # The renderer's bubble alignment compares direction against the
                 # long form ('outbound'/'inbound'); the store keeps the short
                 # 'out'/'in'. Map it so a sent message renders as an outbound

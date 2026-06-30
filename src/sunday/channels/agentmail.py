@@ -782,7 +782,14 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "reply_to_message_id; subject is then inherited). Auto-retries on "
             "transient AgentMail 5xx errors. Use this when Sunday is emailing "
             "from HER OWN address — NOT when acting on the user's Gmail (for "
-            "that, use the Gmail tools)."
+            "that, use the Gmail tools).\n"
+            "CRITICAL: `text` is the LITERAL email the recipient reads — write "
+            "ONLY the email itself, signed off, ready to send. NEVER put your "
+            "reasoning, recommendations, caveats, or notes to the user in it "
+            "(no 'take the 3pm', no 'send this:', no 'don't gamble on…'). Those "
+            "go in your chat with the user, never in the body. A stranger or a "
+            "business reads this — it must contain nothing but the message to "
+            "them."
         ),
         parameters=_SEND_PARAMS,
         run=_t_agentmail_send,
