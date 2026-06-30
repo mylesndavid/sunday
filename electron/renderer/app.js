@@ -124,6 +124,10 @@ async function refreshLog() {
     removeSkeleton();
     removeEmpty();
     for (const m of msgs) {
+      // Email is QUIET: never render email_agentmail:*-modality turns in the
+      // main timeline on load (they live in the Inbox). notify_user posts under
+      // a normal modality, so it still shows. Texting/normal chat untouched.
+      if (isEmailModality(m.modality)) continue;
       if (typeof m.id === 'number' && renderedIds.has(m.id)) {
         if (m.role === 'user') lastUserTs = m.created_at;
         continue;
@@ -177,7 +181,21 @@ let stream = null;
 // pulls the finished replies on stream_end) instead of leaking a bubble into
 // the main timeline.
 const threadStreams = new Set();
+// Email is handled QUIETLY: email-driven brain turns carry an
+// `email_agentmail:*` modality and must NEVER render in the main chat (email
+// lives in the Inbox). Suppress those stream/reply events here, the same way
+// thread streams are suppressed above. `notify_user` posts under a normal
+// modality (not email_agentmail), so it still shows. Texting (imessage_*) and
+// normal chat are unaffected — only this exact prefix is hidden.
+function isEmailModality(modality) {
+  return typeof modality === 'string' && modality.startsWith('email_agentmail');
+}
+
 function handleWs(ev) {
+  // Drop main-chat rendering of email-modality stream/reply events outright.
+  // These event types all carry `modality`; non-stream events (inbox, device_*)
+  // don't, so the guard simply doesn't match them.
+  if (isEmailModality(ev.modality)) return;
   switch (ev.type) {
     case 'stream_start':
       // A thread turn streams into the panel, never the main chat. We render the

@@ -37,6 +37,10 @@ ToolFn = Callable[[dict[str, Any], "ToolContext"], Awaitable[Any]]
 CORE_TOOLS = frozenset({
     "find_tools", "sunday_config",
     "remember", "recall", "search_history",
+    # notify_user: the brain's only way to reach the MAIN chat from a QUIET
+    # email turn — used solely when she needs the user mid-email (decision /
+    # missing info / judgment call). Always-on so it's there every email turn.
+    "notify_user",
     # Skills: list/load/save are promised by the system prompt ("save it as a
     # skill with save_skill right then. Do not ask permission; just do it") so
     # they must stay visible — a prompt promise about an unseen tool makes the
@@ -239,6 +243,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
     for module_path in (
         "sunday.memory_tools",
         "sunday.history_tools",
+        "sunday.notify_tools",
         "sunday.introspect",
         "sunday.web_search",
         "sunday.skills",

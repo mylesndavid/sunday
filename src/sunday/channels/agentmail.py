@@ -380,6 +380,10 @@ async def _process_inbound(
                     "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None),
                     # the activity store, so the outbound email tool records sends.
                     "activity": daemon.activity,
+                    # The canonical chat, so notify_user can post ONE message to
+                    # the MAIN timeline when Sunday needs the user mid-email.
+                    # (Email turns are otherwise hidden from the main chat UI.)
+                    "chat": daemon.chat,
                     # Tiered tools, same as the desktop chat + Sendblue paths:
                     # send the lean core instead of the full schema and let
                     # find_tools surface the rest on demand. Shares the daemon's
