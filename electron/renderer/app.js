@@ -215,6 +215,12 @@ function handleWs(ev) {
       if (!stream || stream.id !== ev.stream_id) return;
       stream.el.classList.remove('streaming');
       stream = null; showStop(false); refreshLog(); refreshStatus(); return;
+    case 'inbox':
+      // A text/email/voice message was sent or received. Live-refresh the Inbox
+      // list — but ONLY when the Inbox is the active view, so we never fetch in
+      // the background while the user is in chat/settings/etc.
+      if (currentView === 'inbox') inboxView.refresh();
+      return;
     case 'thread_created': refreshLog(); return;
     case 'cleared': if (openThread) closeThreadView(); return;
     case 'reply': if (!stream && ev.thread_id == null) refreshLog(); return;

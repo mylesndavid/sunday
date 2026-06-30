@@ -329,6 +329,31 @@ async def _process_inbound(
     endpoint instead of Sendblue's send."""
     t0 = time.perf_counter()
 
+    # Record the inbound email into the activity store so it shows in the Inbox,
+    # then live-refresh any open Inbox. The provider message_id is the row id so
+    # the webhook+poll paths dedup (append is idempotent) and a later resync
+    # never double-inserts. Wrapped so a store hiccup never breaks the reply.
+    try:
+        act = getattr(daemon, "activity", None)
+        if act is not None:
+            from datetime import datetime as _dt, timezone as _tz
+            await act.append({
+                "id": message_id,
+                "channel": "email",
+                "direction": "in",
+                "peer": sender,
+                "ts": _dt.now(_tz.utc).isoformat(),
+                "preview": str(subject or text)[:120],
+                "status": "received",
+                "thread_id": thread_id,
+                "provider_id": message_id,
+                "raw_json": {"subject": subject, "text": text, "from": sender, "direction": "in"},
+            })
+        if hasattr(daemon, "_broadcast"):
+            await daemon._broadcast({"type": "inbox", "channel": "email"})
+    except Exception:  # noqa: BLE001
+        log.warning("agentmail inbound activity record failed", message_id=message_id)
+
     # Give the brain the email context up front. Sendblue passes bare text; email
     # has a subject + sender that materially change the reply, so we prefix them
     # into the user turn (the brain has no other place to learn them).
@@ -353,6 +378,8 @@ async def _process_inbound(
             runtime=getattr(daemon, "runtime", None),
             extras={"broadcast": daemon._broadcast, "devices": daemon.devices,
                     "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None),
+                    # the activity store, so the outbound email tool records sends.
+                    "activity": daemon.activity,
                     # Tiered tools, same as the desktop chat + Sendblue paths:
                     # send the lean core instead of the full schema and let
                     # find_tools surface the rest on demand. Shares the daemon's
@@ -632,13 +659,45 @@ async def _t_agentmail_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     # Subject only matters for a fresh compose; default it so a brain that
     # forgets a subject still sends a sane email rather than an empty one.
     subject = args.get("subject") or ("" if reply_id else "(no subject)")
-    return await _send_agentmail(
+    result = await _send_agentmail(
         str(to),
         str(subject),
         str(text),
         html=args.get("html"),
         reply_to_message_id=str(reply_id) if reply_id else None,
     )
+
+    # Record the sent email into the activity store so it shows in the Inbox,
+    # then live-refresh any open Inbox. Best-effort: a store hiccup or a missing
+    # store must never turn a successful send into a tool error.
+    if isinstance(result, dict) and result.get("ok"):
+        act = ctx.extras.get("activity")
+        if act is not None:
+            try:
+                import uuid as _uuid
+                from datetime import datetime as _dt, timezone as _tz
+                mid = result.get("message_id") or _uuid.uuid4().hex
+                await act.append({
+                    "id": mid,
+                    "channel": "email",
+                    "direction": "out",
+                    "peer": str(to),
+                    "ts": _dt.now(_tz.utc).isoformat(),
+                    "preview": str(subject or text)[:120],
+                    "status": "sent",
+                    "thread_id": result.get("thread_id"),
+                    "provider_id": mid,
+                    "raw_json": {"subject": subject, "text": text, "to": to, "direction": "out"},
+                })
+            except Exception:  # noqa: BLE001
+                log.warning("agentmail outbound activity record failed", to=str(to))
+        bc = ctx.extras.get("broadcast")
+        if bc:
+            try:
+                await bc({"type": "inbox", "channel": "email"})
+            except Exception:  # noqa: BLE001
+                pass
+    return result
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:

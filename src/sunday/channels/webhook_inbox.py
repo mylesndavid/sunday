@@ -287,6 +287,8 @@ async def _process_event(daemon: Any, slug: str, event_text: str) -> None:
             runtime=getattr(daemon, "runtime", None),
             extras={"broadcast": daemon._broadcast, "devices": daemon.devices,
                     "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None),
+                    # the activity store, available for parity with other channels.
+                    "activity": daemon.activity,
                     # Tiered tools, same as the desktop chat + Sendblue paths:
                     # send the lean core schema and let find_tools surface the
                     # rest on demand, sharing the daemon's session-wide active

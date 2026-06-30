@@ -442,6 +442,30 @@ async def _process_inbound(
     before this even starts."""
     t0 = time.perf_counter()
 
+    # Record the inbound text into the activity store so it shows in the Inbox,
+    # then live-refresh any open Inbox. The provider uid is the row id so the
+    # webhook+poll paths dedup (append is idempotent) and a later resync never
+    # double-inserts. Wrapped so a store hiccup never breaks the reply.
+    try:
+        act = getattr(daemon, "activity", None)
+        if act is not None:
+            await act.append({
+                "id": uid,
+                "channel": "text",
+                "direction": "in",
+                "peer": sender,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "preview": str(text)[:120],
+                "status": "received",
+                "thread_id": None,
+                "provider_id": uid,
+                "raw_json": {"body": text, "from": sender, "direction": "in"},
+            })
+        if hasattr(daemon, "_broadcast"):
+            await daemon._broadcast({"type": "inbox", "channel": "text"})
+    except Exception:  # noqa: BLE001
+        log.warning("sendblue inbound activity record failed", uid=uid)
+
     timings: dict[str, Any] = {}
     t_respond = time.perf_counter()
     try:
@@ -454,6 +478,8 @@ async def _process_inbound(
             runtime=getattr(daemon, "runtime", None),
             extras={"broadcast": daemon._broadcast, "devices": daemon.devices,
                     "memory": daemon.memory, "runtime": getattr(daemon, "runtime", None),
+                    # the activity store, so the outbound text tool records sends.
+                    "activity": daemon.activity,
                     # Tiered tools, same as the desktop chat path: send the lean
                     # core (~4.3k tok) instead of the full 72-tool schema (~10.5k
                     # tok), and let find_tools surface the rest on demand. Texting
@@ -648,12 +674,44 @@ async def _t_sendblue_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     body = args.get("body")
     if not to or not body:
         return {"error": "'to' and 'body' are required"}
-    return await _send_sendblue(
+    result = await _send_sendblue(
         str(to),
         str(body),
         args.get("media_url"),
         args.get("from_number"),
     )
+
+    # Record the sent text into the activity store so it shows in the Inbox,
+    # then live-refresh any open Inbox. Best-effort: a store hiccup or a missing
+    # store must never turn a successful send into a tool error.
+    if isinstance(result, dict) and result.get("ok"):
+        act = ctx.extras.get("activity")
+        if act is not None:
+            try:
+                import uuid as _uuid
+                data = result.get("data") if isinstance(result.get("data"), dict) else {}
+                mid = data.get("message_handle") or data.get("uuid") or _uuid.uuid4().hex
+                await act.append({
+                    "id": mid,
+                    "channel": "text",
+                    "direction": "out",
+                    "peer": str(to),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "preview": str(body)[:120],
+                    "status": "sent",
+                    "thread_id": None,
+                    "provider_id": mid,
+                    "raw_json": {"body": str(body), "to": str(to), "direction": "out"},
+                })
+            except Exception:  # noqa: BLE001
+                log.warning("sendblue outbound activity record failed", to=str(to))
+        bc = ctx.extras.get("broadcast")
+        if bc:
+            try:
+                await bc({"type": "inbox", "channel": "text"})
+            except Exception:  # noqa: BLE001
+                pass
+    return result
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:

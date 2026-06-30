@@ -402,6 +402,9 @@ class Daemon:
                     # use this to reach self.chat / append the end-of-call report.
                     "daemon":    self,
                     "memory":    self.memory,
+                    # the activity store, so outbound channel tools can record
+                    # what they sent into the Inbox's source of truth.
+                    "activity":  self.activity,
                     "runtime":       self.runtime,
                     # tiered tools: lean core + whatever find_tools has pulled in
                     # this session (persists across turns until the daemon restarts)
@@ -2167,6 +2170,26 @@ class Daemon:
                 # A voice row that somehow landed in the store: still prefer the
                 # live VAPI detail for transcript/recording.
                 return await self._inbox_voice_detail(item_id)
+            # Spread raw_json's fields up to the top level so the UI's
+            # renderThreadDetail sees body/subject — without overwriting the
+            # canonical id/channel the row carries.
+            raw = row.get("raw_json")
+            if isinstance(raw, dict):
+                merged = {**raw, **row}
+                # The thread renderer reads `body`; email stores its body under
+                # `text`, so alias it when no explicit body is present.
+                if not merged.get("body") and raw.get("text"):
+                    merged["body"] = raw.get("text")
+                # The renderer's bubble alignment compares direction against the
+                # long form ('outbound'/'inbound'); the store keeps the short
+                # 'out'/'in'. Map it so a sent message renders as an outbound
+                # bubble ("Sunday") rather than an inbound one.
+                _dir = (merged.get("direction") or "").lower()
+                if _dir == "out":
+                    merged["direction"] = "outbound"
+                elif _dir == "in":
+                    merged["direction"] = "inbound"
+                return web.json_response(merged)
             return web.json_response(row)
 
         # Unknown to the store → treat as a live voice call id.
@@ -2939,6 +2962,7 @@ class Daemon:
         ctx = ToolContext(chat=self.chat, config=self.config, modality="voice", extras={
             "broadcast": self._broadcast, "devices": self.devices, "cockpit": self.cockpit,
             "memory": self.memory,
+            "activity": self.activity,
             "runtime": self.runtime, "registry": self.registry, "active_tools": self._active_tools,
             "inject_and_wake": self._inject_and_wake,
         })

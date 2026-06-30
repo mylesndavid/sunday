@@ -48,6 +48,15 @@ export function init(config, refs) {
 export function setDaemon(http) { cfg.daemonHttp = http; }
 export function isLoaded() { return loaded; }
 
+// Live-refresh the list in place: re-paints the active facet preserving the
+// selection (fetchList keeps selectedId), without touching the right pane. Used
+// by the WS 'inbox' broadcast when a message is sent/received while the Inbox is
+// open. Only meaningful once the view has been opened at least once.
+export function refresh() {
+  if (!els) return;
+  fetchList();
+}
+
 // load() paints the shell instantly and kicks the list fetch off async. It
 // never awaits the network before returning control, so the tab is interactive
 // the moment it's shown.

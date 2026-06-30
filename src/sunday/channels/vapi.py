@@ -275,6 +275,15 @@ async def _sync_calls_to_store(daemon: Any) -> None:
             log.exception("vapi store sync row failed", call_id=row.get("id"))
     log.info("vapi store sync done", fetched=len(calls), stored=stored)
 
+    # Live-refresh any open Inbox after the sweep so the Voice facet updates
+    # without a manual reload. Best-effort — never let a broadcast hiccup sink
+    # the sync.
+    if stored and hasattr(daemon, "_broadcast"):
+        try:
+            await daemon._broadcast({"type": "inbox", "channel": "voice"})
+        except Exception:  # noqa: BLE001
+            log.debug("vapi store sync broadcast failed")
+
 
 async def _vapi_poller(daemon: Any) -> None:
     """Background task: keep the activity store warm with voice rows so the
