@@ -1,0 +1,33 @@
+name: Deploy relay to Fly
+
+# The hosted relay (relay-service/) auto-deploys on any push to main that
+# touches it — so nobody runs `fly deploy` by hand. The app release pipeline
+# (release.yml) is separate and untouched by this.
+#
+# Auth: FLY_API_TOKEN repo secret (a Fly deploy token). fly.toml in
+# relay-service/ pins the app (sunday-relay), region, volume, and the
+# never-suspend settings the persistent-WebSocket relay needs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'relay-service/**'
+      - '.github/workflows/relay-deploy.yml'
+
+# One deploy at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: deploy-relay
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        working-directory: relay-service
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --ha=false

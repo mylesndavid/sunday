@@ -1,0 +1,43 @@
+# Sunday Relay — Fly.io deployment.
+#
+# The relay is the only hosted component in Sunday and deliberately the least
+# powerful one (stateless socket-broker; see server.py / spec §2-3). This config
+# reflects two non-obvious requirements:
+#
+#   1. It holds LONG-LIVED WebSockets (daemons dial out and stay connected). So
+#      auto_stop_machines MUST be off and min_machines_running MUST be 1 — Fly's
+#      default "stop the machine when HTTP is idle" would silently drop every
+#      daemon's socket. A relay that gets suspended is a relay that loses events.
+#   2. The agent registry is its only state; it persists to /data/agents.json on
+#      a volume so self-registered daemons survive restarts/redeploys.
+
+app = "sunday-relay"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  RELAY_AGENTS_FILE = "/data/agents.json"
+
+[http_service]
+  internal_port = 8787          # the app listens on $PORT (Dockerfile ENV PORT=8787)
+  force_https = true
+  auto_stop_machines = false    # see note 1 — never suspend; we hold sockets
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[mounts]
+  source = "relay_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
