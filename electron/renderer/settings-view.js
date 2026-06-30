@@ -112,6 +112,7 @@ export async function loadAll() {
   loadMcp();
   loadGmailStatus();
   loadCockpitStatus();
+  loadAccount();
   loadRelayStatus();
   loadVapiStatus();
   loadAgentmailStatus();
@@ -1550,6 +1551,77 @@ function relayMode() {
   return document.querySelector('#relay-mode .seg-btn.active')?.dataset.mode || 'off';
 }
 
+// ── account (Sunday hosted backend) ─────────────────────────────────────────
+async function loadAccount() {
+  const panel = $('#account-panel'); if (!panel) return;
+  let res, d;
+  try { res = await fetch(`${DAEMON_HTTP}/v1/account`); }
+  catch { return; }   // daemon unreachable — other loaders report
+  if (res.status === 404) { panel.hidden = true; return; }   // daemon predates account
+  panel.hidden = false;
+  try { d = await res.json(); } catch { return; }
+  const out = $('#account-signedout');
+  const inn = $('#account-signedin');
+  if (!d.signed_in) {
+    if (out) out.hidden = false;
+    if (inn) inn.hidden = true;
+    return;
+  }
+  if (out) out.hidden = true;
+  if (inn) inn.hidden = false;
+  if ($('#account-email')) $('#account-email').textContent = d.email || '—';
+  if ($('#account-plan')) $('#account-plan').textContent = d.plan || 'free';
+  if ($('#account-usage')) {
+    const used = d.used ?? 0, limit = d.limit;
+    $('#account-usage').textContent = (limit == null) ? `${used} used` : `${used} / ${limit}`;
+  }
+  const fbtn = $('#account-use-free');
+  const fline = $('#account-free-status');
+  if (d.using_free_tier) {
+    if (fbtn) { fbtn.disabled = true; fbtn.textContent = "Using Sunday's free models"; }
+    if (fline) { fline.dataset.state = 'ok'; fline.textContent = 'active'; }
+  } else {
+    if (fbtn) { fbtn.disabled = false; fbtn.textContent = "Use Sunday's free models"; }
+    if (fline) { fline.dataset.state = ''; fline.textContent = ''; }
+  }
+}
+
+async function startSundaySignin() {
+  const line = $('#account-signin-status');
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'opening sign-in…'; }
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/account/signin`, { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+    if (d.auth_url) window.sunday.openExternal(d.auth_url);
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'finish in your browser, then return here'; }
+    // Poll a few times so the panel updates once the callback lands.
+    let tries = 0;
+    const t = setInterval(async () => {
+      tries += 1;
+      await loadAccount();
+      if ($('#account-signedin') && !$('#account-signedin').hidden) { clearInterval(t); if (line) line.textContent = ''; }
+      else if (tries > 60) { clearInterval(t); }
+    }, 2000);
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+async function useFreeTier() {
+  const line = $('#account-free-status');
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'switching…'; }
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/account/use-free-tier`, { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`);
+    await loadAccount();
+    await loadAll();   // reflect the new provider/model in the Model page
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
 async function loadRelayStatus() {
   const panel = $('#relay-panel'); if (!panel) return;
   let res, d;
@@ -1758,6 +1830,10 @@ function wire() {
   $('#vapi-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); placeTestCall(); } });
 
   // Relay (transport for texts/emails/webhooks — no DNS/tunnels)
+  // Account (Sunday hosted backend)
+  $('#account-signin')?.addEventListener('click', () => startSundaySignin());
+  $('#account-use-free')?.addEventListener('click', () => useFreeTier());
+
   document.querySelectorAll('#relay-mode .seg-btn').forEach((b) => b.addEventListener('click', () => setRelayMode(b.dataset.mode)));
   $('#relay-save')?.addEventListener('click', () => saveRelay());
   $('#relay-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveRelay(); } });

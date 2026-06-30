@@ -411,6 +411,7 @@ textarea#composer::placeholder { color: var(--text-3); }
 .set-field { display: block; margin: 0 0 12px; }
 .set-field[hidden] { display: none; }
 .set-field-l { display: block; font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); margin-bottom: 7px; }
+.set-field-v { display: block; font-size: 13px; color: var(--text); }
 .set-field-inline { display: block; margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 

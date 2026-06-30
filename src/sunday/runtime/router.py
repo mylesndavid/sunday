@@ -56,10 +56,11 @@ def _credentialed_providers(config: SundayConfig) -> list[str]:
     """Order of providers to TRY based on which credentials exist on this host."""
     primary = config.model.provider
     chain: list[str] = [primary]
-    for candidate in ("openrouter", "openai", "deepseek-direct"):
+    for candidate in ("sunday", "openrouter", "openai", "deepseek-direct"):
         if candidate == primary:
             continue
         cred_key = {
+            "sunday": "SUNDAY_KEY",
             "openrouter": "OPENROUTER_API_KEY",
             "openai": "OPENAI_API_KEY",
             "deepseek-direct": "DEEPSEEK_API_KEY",
@@ -91,6 +92,8 @@ def _build_provider(config: SundayConfig, provider_name: str) -> Provider:
             "openrouter":      ("deepseek/deepseek-chat",         "https://openrouter.ai/api/v1"),
             "openai":          ("gpt-4o-mini",                    "https://api.openai.com/v1"),
             "deepseek-direct": ("deepseek-chat",                  "https://api.deepseek.com/v1"),
+            # Sunday's hosted free-tier gateway (metered, proxies to OpenRouter).
+            "sunday":          ("openai/gpt-4o-mini",             "https://sunday-backend.fly.dev/v1"),
         }
         if provider_name == "codex":
             # Codex uses your ChatGPT subscription; ChatGPT accounts accept the

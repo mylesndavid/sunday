@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-ProviderName = Literal["openrouter", "openai", "anthropic", "deepseek-direct", "codex", "ollama", "offline"]
+ProviderName = Literal["openrouter", "openai", "anthropic", "deepseek-direct", "codex", "ollama", "sunday", "offline"]
 
 
 @dataclass

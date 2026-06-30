@@ -81,6 +81,20 @@ class OpenAICompatProvider:
             self._client_cache = AsyncOpenAI(api_key=key, base_url=self.config.model.base_url)
             return self._client_cache
 
+        if provider == "sunday":
+            # Sunday's hosted free-tier gateway — OpenAI-compatible, metered,
+            # authed with the account's SUNDAY_KEY (minted at sign-in). Proxies
+            # to OpenRouter on the backend.
+            key = get_credential("SUNDAY_KEY")
+            if not key:
+                raise RuntimeError(
+                    "SUNDAY_KEY is not set. Sign in to Sunday (Settings → Account) "
+                    "to use the free tier."
+                )
+            base = self.config.model.base_url or "https://sunday-backend.fly.dev/v1"
+            self._client_cache = AsyncOpenAI(api_key=key, base_url=base)
+            return self._client_cache
+
         if provider == "ollama":
             # Local models via Ollama's OpenAI-compatible endpoint. No real key
             # (Ollama ignores it); just needs a non-empty string for the client.

@@ -308,6 +308,7 @@
   <section class="view view-settings" id="view-settings">
     <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings">
       <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
+      <button type="button" class="set-navitem" data-page="page-account">Account</button>
       <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
       <button type="button" class="set-navitem" data-page="page-channels">Channels</button>
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
@@ -362,6 +363,45 @@
         </section>
 
         <!-- ═══ MODEL & DATA PATH ══════════════════════════════════════════ -->
+        <section class="set-page" id="page-account">
+          <h2>Account</h2>
+          <p class="set-help">Sign in to Sunday for a stable account identity and access to Sunday's hosted free models.</p>
+
+          <div class="set-panel" id="account-panel">
+            <div class="brain-label">Sunday account</div>
+
+            <!-- Signed-out state -->
+            <div id="account-signedout">
+              <p class="set-help set-help-tight">Signing in gives Sunday a stable account identity (used by the relay) and lets you route the brain through Sunday's hosted free tier — no API key needed.</p>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="account-signin">Sign in to Sunday</button>
+                <span class="set-verify" id="account-signin-status" aria-live="polite"></span>
+              </div>
+            </div>
+
+            <!-- Signed-in state -->
+            <div id="account-signedin" hidden>
+              <div class="set-field">
+                <span class="set-field-l">Email</span>
+                <span class="set-field-v mono" id="account-email"></span>
+              </div>
+              <div class="set-field">
+                <span class="set-field-l">Plan</span>
+                <span class="set-field-v" id="account-plan"></span>
+              </div>
+              <div class="set-field">
+                <span class="set-field-l">Usage</span>
+                <span class="set-field-v mono" id="account-usage"></span>
+              </div>
+              <p class="set-help set-help-tight">Route Sunday's brain through the hosted free models — metered to your plan. Your own keys (if any) still serve as failover.</p>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="account-use-free">Use Sunday's free models</button>
+                <span class="set-verify" id="account-free-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section class="set-page" id="page-model">
           <h2>Model and data path</h2>
           <p class="set-help">Where Sunday runs, which model it thinks with, and what that means for your data.</p>

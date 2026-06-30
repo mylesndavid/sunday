@@ -275,6 +275,12 @@ class Daemon:
         # localhost:1455 callback server that catches OpenAI's redirect.
         self._codex_login: dict[str, Any] | None = None
         self._codex_cb_runner: web.AppRunner | None = None
+        # One-click Sunday account sign-in (hosted backend): in-flight state +
+        # the temporary localhost:1456 callback server that catches WorkOS's
+        # redirect and reads agent_id / relay_token / sunday_key.
+        self._sunday_signin: dict[str, Any] | None = None
+        self._sunday_cb_runner: web.AppRunner | None = None
+        self._sunday_cb_port: int = 1456
         # Buffered (user, reply) exchanges awaiting batched fact extraction.
         self._extract_buf: list[tuple[str, str]] = []
         self._stop = asyncio.Event()
@@ -1711,9 +1717,21 @@ class Daemon:
         if "provider" in body:
             from dataclasses import replace
             prov = body["provider"]
-            valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex", "ollama"}
+            valid = {"openrouter", "openai", "anthropic", "deepseek-direct", "codex", "ollama", "sunday"}
             if prov not in valid:
                 return web.json_response({"error": f"provider must be one of {sorted(valid)}"}, status=400)
+            if prov == "sunday":
+                # Sunday's hosted free-tier gateway; needs the account key + a
+                # default free model unless one's already pinned.
+                from sunday.credentials import get_credential
+                if not get_credential("SUNDAY_KEY"):
+                    return web.json_response({"error": (
+                        "Not signed in to Sunday. Sign in (Settings → Account) to use the free tier."
+                    )}, status=400)
+                self.config.model = replace(self.config.model, base_url=f"{self.SUNDAY_BACKEND}/v1")
+                if not self.config.model.name or "/" not in (self.config.model.name or ""):
+                    self.config.model = replace(self.config.model, name=self.SUNDAY_FREE_MODEL)
+                    applied["model_name"] = self.SUNDAY_FREE_MODEL
             if prov == "ollama":
                 # Local models via Ollama's OpenAI-compatible endpoint — point the
                 # config there so the next turn talks to localhost:11434.
@@ -2287,6 +2305,158 @@ class Daemon:
         self.config.model = replace(self.config.model, provider="codex")
         from sunday.runtime import build_runtime
         self.runtime = build_runtime(self.config)
+
+    # ─── Sunday account sign-in (hosted backend) ─────────────────────────────
+
+    SUNDAY_BACKEND = "https://sunday-backend.fly.dev"
+    SUNDAY_FREE_MODEL = "openai/gpt-4o-mini"  # default free-tier brain; easily changed
+
+    async def _http_sunday_signin(self, request: web.Request) -> web.Response:
+        """Start a one-click Sunday account sign-in. Spins up the localhost
+        callback server, returns the authorize URL for the app to open. The
+        WorkOS redirect lands on the callback below, which reads agent_id /
+        relay_token / sunday_key from the query string and persists them."""
+        self._sunday_signin = {"connected": False, "email": None, "error": None}
+        try:
+            await self._start_sunday_signin()
+        except OSError as exc:
+            self._sunday_signin = None
+            return web.json_response(
+                {"error": f"could not open the sign-in listener on port {self._sunday_cb_port} ({exc})"},
+                status=500,
+            )
+        from urllib.parse import quote
+        cb = f"http://127.0.0.1:{self._sunday_cb_port}/cb"
+        auth_url = f"{self.SUNDAY_BACKEND}/auth/start?cb={quote(cb, safe='')}"
+        return web.json_response({"auth_url": auth_url})
+
+    async def _start_sunday_signin(self) -> None:
+        """Temporary aiohttp server on 127.0.0.1:<port> (no auth middleware) that
+        catches the WorkOS redirect. Reads agent_id / relay_token / sunday_key
+        from the query string, persists them, then tears itself down."""
+        from sunday.credentials import set_credential
+        from sunday.relay import state as relay_state
+
+        done_html = ("<!doctype html><meta charset=utf-8><title>Sunday</title>"
+                     "<body style=\"font-family:-apple-system,system-ui;background:#f7f4ef;"
+                     "color:#1c1b19;display:flex;align-items:center;justify-content:center;"
+                     "height:100vh;margin:0\"><div style=\"text-align:center\">"
+                     "<h2 style=\"font-weight:650\">{title}</h2><p style=\"color:#6b6357\">{msg}</p>"
+                     "</div>")
+
+        async def _cb(req: web.Request) -> web.Response:
+            login = self._sunday_signin or {}
+            agent_id = req.query.get("agent_id")
+            relay_token = req.query.get("relay_token")
+            sunday_key = req.query.get("sunday_key")
+            err = req.query.get("error")
+            if err:
+                login["error"] = req.query.get("error_description") or err
+                asyncio.create_task(self._stop_sunday_signin())
+                return web.Response(text=done_html.format(title="Sign-in cancelled",
+                    msg="You can close this tab."), content_type="text/html")
+            if not (agent_id and relay_token and sunday_key):
+                login["error"] = "missing sign-in parameters"
+                asyncio.create_task(self._stop_sunday_signin())
+                return web.Response(text=done_html.format(title="Sign-in failed",
+                    msg="Incomplete response. Close this tab and try again."),
+                    content_type="text/html", status=400)
+            try:
+                # The account now issues the relay identity: agent_id is the
+                # stable public id, relay_token the socket secret.
+                relay_state.set_agent_id(agent_id)
+                set_credential("RELAY_TOKEN", relay_token)
+                set_credential("SUNDAY_KEY", sunday_key)
+                # Pull the email for the UI (best-effort).
+                try:
+                    login["email"] = await self._sunday_account_email(sunday_key)
+                except Exception:  # noqa: BLE001
+                    pass
+                login["connected"] = True
+                log.info("sunday account signed in", agent_id=agent_id, email=login.get("email"))
+            except Exception as exc:  # noqa: BLE001
+                login["error"] = str(exc)
+                log.exception("sunday sign-in persist failed")
+                asyncio.create_task(self._stop_sunday_signin())
+                return web.Response(text=done_html.format(title="Sign-in failed",
+                    msg="Something went wrong. Close this tab and try again."),
+                    content_type="text/html", status=500)
+            asyncio.create_task(self._stop_sunday_signin())
+            return web.Response(text=done_html.format(title="You're signed in",
+                msg="Return to Sunday — you can close this tab."), content_type="text/html")
+
+        await self._stop_sunday_signin()
+        app = web.Application()
+        app.router.add_get("/cb", _cb)
+        # Browsers send every localhost cookie back on the redirect; raise the
+        # header limits so a cookie-heavy dev machine can't blow past them.
+        runner = web.AppRunner(app, max_line_size=131072, max_field_size=131072)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", self._sunday_cb_port)
+        await site.start()
+        self._sunday_cb_runner = runner
+
+    async def _stop_sunday_signin(self) -> None:
+        if self._sunday_cb_runner is not None:
+            try:
+                await self._sunday_cb_runner.cleanup()
+            except Exception:  # noqa: BLE001
+                pass
+            self._sunday_cb_runner = None
+
+    async def _sunday_account_email(self, key: str) -> str | None:
+        import httpx
+        async with httpx.AsyncClient(timeout=6) as c:
+            r = await c.get(f"{self.SUNDAY_BACKEND}/account",
+                            headers={"Authorization": f"Bearer {key}"})
+            r.raise_for_status()
+            return (r.json() or {}).get("email")
+
+    async def _http_sunday_account(self, request: web.Request) -> web.Response:
+        """Proxy to the backend /account using the stored SUNDAY_KEY. Returns
+        {signed_in:false} when no key; otherwise {signed_in:true, email, plan,
+        used, limit, agent_id, using_free_tier}."""
+        from sunday.credentials import get_credential
+        key = get_credential("SUNDAY_KEY")
+        if not key:
+            return web.json_response({"signed_in": False})
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(f"{self.SUNDAY_BACKEND}/account",
+                                headers={"Authorization": f"Bearer {key}"})
+                r.raise_for_status()
+                data = r.json() or {}
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"signed_in": True, "error": str(exc)[:200]}, status=502)
+        data["signed_in"] = True
+        data["using_free_tier"] = (self.config.model.provider == "sunday")
+        return web.json_response(data)
+
+    async def _http_sunday_use_free_tier(self, request: web.Request) -> web.Response:
+        """Flip the brain onto Sunday's hosted free-tier gateway: provider=sunday,
+        base_url=<backend>/v1, name=<default free model>. Rebuilds the runtime."""
+        from sunday.credentials import get_credential
+        if not get_credential("SUNDAY_KEY"):
+            return web.json_response(
+                {"error": "Not signed in to Sunday. Sign in first to use the free tier."},
+                status=400,
+            )
+        from dataclasses import replace
+        self.config.model = replace(
+            self.config.model,
+            provider="sunday",
+            base_url=f"{self.SUNDAY_BACKEND}/v1",
+            name=self.SUNDAY_FREE_MODEL,
+        )
+        from sunday.runtime import build_runtime
+        self.runtime = build_runtime(self.config)
+        log.info("brain switched to sunday free tier", model=self.SUNDAY_FREE_MODEL)
+        return web.json_response({
+            "ok": True,
+            "provider": "sunday",
+            "model_name": self.SUNDAY_FREE_MODEL,
+        })
 
     async def _http_memory_facts(self, request: web.Request) -> web.Response:
         """List facts (newest first), or — when `q` is present — FTS-search
@@ -3404,6 +3574,9 @@ class Daemon:
         app.router.add_post("/v1/relay/enable", self._http_relay_enable)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
+        app.router.add_post("/v1/account/signin", self._http_sunday_signin)
+        app.router.add_get("/v1/account", self._http_sunday_account)
+        app.router.add_post("/v1/account/use-free-tier", self._http_sunday_use_free_tier)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
         app.router.add_get("/v1/cockpit/status", self._http_cockpit_status)
         app.router.add_get("/v1/vapi/status", self._http_vapi_status)
