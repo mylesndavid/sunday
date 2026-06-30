@@ -1,158 +1,110 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sunday — a personal AI that's yours</title>
-  <meta name="description" content="Sunday is a personal AI with its own phone number, its own email, its own voice. It runs on your own machine, not a company's cloud." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sunday — a personal AI that's actually yours</title>
+  <meta name="description" content="Sunday is a personal AI with its own number and its own voice. You text it like a person. It runs on your machine — not our cloud." />
+  <meta name="theme-color" content="#05060b" />
 
-  <meta property="og:title" content="Sunday — a personal AI that's yours" />
-  <meta property="og:description" content="Her own number. Her own voice. One inbox. Running on your machine, not our cloud." />
   <meta property="og:type" content="website" />
-  <meta name="theme-color" content="#13100c" />
+  <meta property="og:title" content="Sunday — a personal AI that's actually yours" />
+  <meta property="og:description" content="Its own number. Its own voice. One inbox. It runs on your machine — not our cloud." />
 
-  <!-- Type: Fraunces (characterful optical serif) for display, JetBrains Mono for labels/UI -->
+  <!-- Fonts: Space Grotesk (display) + Inter (body/UI). One link, no serif. -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- The sun: a single warm disc that travels and arcs as you scroll. -->
-  <div class="sky" aria-hidden="true">
-    <div class="sun" id="sun"></div>
+  <!-- Fixed full-screen WebGL canvas. The cosmos lives here; text floats over it.
+       aria-hidden because it's purely decorative — all real copy is in the DOM. -->
+  <canvas id="cosmos" aria-hidden="true"></canvas>
+
+  <!-- CSS deep-space fallback, shown only if WebGL is unavailable (app.js toggles a
+       class on <html>). Tasteful radial dark + a sprinkle of CSS stars. -->
+  <div id="fallback-sky" aria-hidden="true">
+    <span class="star"></span><span class="star"></span><span class="star"></span>
+    <span class="star"></span><span class="star"></span><span class="star"></span>
+    <span class="star"></span><span class="star"></span><span class="star"></span>
+    <span class="star"></span><span class="star"></span><span class="star"></span>
+    <span class="fallback-sun"></span>
   </div>
 
-  <a class="skip" href="#dawn">Skip to content</a>
-
+  <!-- Minimal fixed top bar: wordmark + two links. -->
   <header class="topbar">
-    <span class="wordmark">Sunday</span>
-    <nav aria-label="Primary">
-      <!-- Becomes the real dashboard URL once it ships. -->
-      <a href="https://smooth-light-56-staging.authkit.app">Sign in</a>
+    <a class="wordmark" href="#top">Sunday</a>
+    <nav class="topnav" aria-label="Primary">
+      <a class="nav-link" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
+      <!-- Staging AuthKit URL — becomes the real dashboard URL later. -->
+      <a class="nav-link nav-link--quiet" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
     </nav>
   </header>
 
-  <main>
-    <!-- ───────────────── HERO · pre-dawn ───────────────── -->
-    <section class="hero" id="dawn" data-phase="dawn">
-      <div class="wrap">
-        <p class="eyebrow reveal">A personal AI · est. quietly</p>
-        <h1 class="display reveal">Sunday</h1>
-        <p class="lede reveal">
-          The one day that's yours. Now it's also the name of the thing
-          that handles the rest of them.
-        </p>
+  <!-- The scroll content. Each beat is a tall panel; its copy fades in as the
+       camera reaches that beat. Real text, semantic, legible without the canvas. -->
+  <main id="top">
+    <section class="beat beat--hero" aria-labelledby="hero-line">
+      <div class="beat-inner">
+        <p class="eyebrow">A personal AI</p>
+        <h1 id="hero-line" class="display">A personal AI<br />that's actually yours.</h1>
+        <p class="lede">Not an assistant you rent by the seat. One that lives with you.</p>
       </div>
-      <a class="scrollcue reveal" href="#number" aria-label="Scroll to begin the day">
-        <span>scroll to begin the day</span>
-        <span class="scrollcue__line" aria-hidden="true"></span>
-      </a>
+      <p class="scroll-cue" aria-hidden="true">Scroll</p>
     </section>
 
-    <!-- ───────────────── BEAT 1 · she has her own number ───────────────── -->
-    <section class="beat" id="number" data-phase="morning">
-      <div class="wrap">
-        <p class="eyebrow reveal">06:40 · she wakes before you do</p>
-        <h2 class="line reveal">She has her own phone&nbsp;number.</h2>
-        <p class="prose reveal">
-          Not a chat window you open. A number you save in your contacts and
-          text like a friend. You write the way you'd write anyone.
-        </p>
+    <section class="beat" aria-labelledby="beat-number">
+      <div class="beat-inner">
+        <h2 id="beat-number" class="display display--md">It has its own number.<br />You text it like a person.</h2>
+        <p class="lede">No app to open. No prompt box. Just a thread, the way you talk to anyone.</p>
+      </div>
+    </section>
 
-        <!-- Sparse, type-driven hint of a text exchange — not a glossy mockup. -->
-        <div class="thread reveal" role="img" aria-label="A text exchange. You: move my dentist to Thursday and can you call and ask them. Sunday: on it, they open at nine, I'll ring then and tell you how it goes.">
-          <p class="msg msg--out">move my dentist to thursday<br />&amp; can you call &amp; ask them?</p>
-          <p class="msg msg--in">on it. they open at nine —<br />I'll ring then and tell you how it goes.</p>
-          <p class="msg msg--meta">delivered · 06:41</p>
+    <section class="beat" aria-labelledby="beat-voice">
+      <div class="beat-inner">
+        <h2 id="beat-voice" class="display display--md">Its own voice, too.<br />It can pick up the phone.</h2>
+        <p class="lede">When something needs a real call, it makes one — in a voice that's its own.</p>
+      </div>
+    </section>
+
+    <section class="beat" aria-labelledby="beat-inbox">
+      <div class="beat-inner">
+        <h2 id="beat-inbox" class="display display--md">Everything lands<br />in one inbox.</h2>
+        <p class="lede">Messages, mail, calls — gathered into a single place that's quiet by default.</p>
+      </div>
+    </section>
+
+    <section class="beat" aria-labelledby="beat-local">
+      <div class="beat-inner">
+        <h2 id="beat-local" class="display display--md">It runs on your machine —<br />not our cloud.</h2>
+        <p class="lede">Yours stays yours. The whole thing lives on the computer in front of you.</p>
+      </div>
+    </section>
+
+    <section class="beat beat--close" aria-labelledby="close-line">
+      <div class="beat-inner beat-inner--center">
+        <h2 id="close-line" class="display display--xl">Sunday.</h2>
+        <p class="lede lede--center">Yours. On your machine. In its own voice.</p>
+        <div class="cta-row">
+          <a class="cta" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
+          <!-- Staging AuthKit URL — swap for the production dashboard URL later. -->
+          <a class="cta cta--quiet" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
         </div>
-      </div>
-    </section>
-
-    <!-- ───────────────── BEAT 2 · she makes the call ───────────────── -->
-    <section class="beat" id="call" data-phase="midday">
-      <div class="wrap">
-        <p class="eyebrow reveal">09:02 · sun's up · you're in a meeting</p>
-        <h2 class="line reveal">So she makes the&nbsp;call.</h2>
-        <p class="prose reveal">
-          A real voice on a real line. She waits through the hold music, talks
-          to the person who answers, moves the appointment, and never once
-          asks you to confirm you are not a robot.
-        </p>
-        <p class="prose prose--quiet reveal">
-          You feel the phone buzz once. It's already done.
-        </p>
-      </div>
-    </section>
-
-    <!-- ───────────────── BEAT 3 · one inbox ───────────────── -->
-    <section class="beat" id="inbox" data-phase="afternoon">
-      <div class="wrap">
-        <p class="eyebrow reveal">17:30 · the light goes long</p>
-        <h2 class="line reveal">It all comes home to one&nbsp;inbox.</h2>
-        <p class="prose reveal">
-          Every text, every call, every email she sent on your behalf — kept in
-          one quiet place. Nothing to dig for. The unread marks are the only
-          colour she allows herself.
-        </p>
-
-        <!-- A restrained list, not cards. The dot = unread / a thing handled. -->
-        <ul class="ledger reveal" aria-label="A few things Sunday handled today">
-          <li><span class="dot" aria-hidden="true"></span><span class="ledger__what">Dentist — moved to Thursday</span><span class="ledger__when">call · 9:07</span></li>
-          <li><span class="dot" aria-hidden="true"></span><span class="ledger__what">Replied to the landlord about the lease</span><span class="ledger__when">email · 11:20</span></li>
-          <li><span class="ledger__what">Forwarded the receipt you asked for</span><span class="ledger__when">text · 14:48</span></li>
-          <li><span class="ledger__what">Booked the 7pm table for two</span><span class="ledger__when">call · 16:15</span></li>
-        </ul>
-      </div>
-    </section>
-
-    <!-- ───────────────── BEAT 4 · the conviction · she lives on your machine ───────────────── -->
-    <section class="beat beat--conviction" id="yours" data-phase="dusk">
-      <div class="wrap">
-        <p class="eyebrow reveal">20:50 · last light</p>
-        <h2 class="line reveal">And she lives on your&nbsp;machine.</h2>
-        <p class="prose reveal">
-          Not our cloud. Not a server farm three states away holding your
-          messages and quietly learning from them. Sunday runs on the computer
-          on your desk — the one you already trust with everything else.
-        </p>
-        <p class="prose reveal">
-          What she knows about you stays where you can reach out and touch it.
-          That's the whole conviction. A personal AI should be exactly that:
-          <em>personal</em>, and <em>yours</em>.
-        </p>
-      </div>
-    </section>
-
-    <!-- ───────────────── CLOSE · sun sets · night ───────────────── -->
-    <section class="close" id="close" data-phase="night">
-      <div class="wrap">
-        <p class="eyebrow reveal">the day folds shut</p>
-        <h2 class="closing reveal">Some things should feel like a&nbsp;Sunday.<br />Even the work.</h2>
-
-        <div class="cta reveal">
-          <a class="btn" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
-          <!-- Staging AuthKit; becomes the real dashboard URL once it ships. -->
-          <a class="signin" href="https://smooth-light-56-staging.authkit.app">or sign in</a>
-        </div>
-
-        <p class="maker reveal">
-          Made by one person, on a Sunday, on a Mac like yours.
-        </p>
       </div>
     </section>
   </main>
 
-  <footer class="footer">
-    <span>Sunday</span>
-    <span>local-first · yours</span>
-  </footer>
-
-  <!-- Motion: Lenis (smooth scroll) + GSAP/ScrollTrigger (orchestration), CDN. -->
-  <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
-  <script src="app.js" defer></script>
+  <!-- Three.js + Lenis from CDN. No build step. Import map keeps the module clean. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "lenis": "https://cdn.jsdelivr.net/npm/lenis@1.1.18/dist/lenis.mjs"
+    }
+  }
+  </script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

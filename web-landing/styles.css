@@ -1,469 +1,323 @@
-/* =========================================================
-   Sunday — a day with Sunday.
-   The sun moves through a day as you scroll. The background
-   shifts subtly through warm tones: pre-dawn → day → dusk → night.
-   Type and space are the design. One accent: the sun.
-   ========================================================= */
+/* =========================================================================
+   Sunday — cosmos landing
+   Type carries the design over a real WebGL star field. Jewel-dark palette,
+   one warm sun accent. Inter + Space Grotesk, no serif.
+   ========================================================================= */
 
 :root {
-  /* Warm near-monochrome */
-  --ink:        #f2e9da;   /* bone / cream — the text */
-  --ink-soft:   #b9ad99;   /* muted bone */
-  --ink-faint:  #6f6657;   /* whisper */
-  --sun:        #e8a13c;   /* the single accent — dusty gold/amber */
-  --sun-warm:   #f0b454;
+  /* Palette — space near-black deepening to indigo/violet, cream ink, one amber. */
+  --space:        #05060b;   /* base void */
+  --space-deep:   #090a14;   /* deepening */
+  --indigo:       #141632;   /* violet hint in the void */
+  --ink:          #eef0f6;   /* soft white/cream ink */
+  --ink-dim:      #aab0c4;   /* dimmed ink for ledes */
+  --ink-faint:    #6b7088;   /* faint ink for eyebrows/cues */
+  --sun:          #f1b24a;   /* the one warm accent — amber/gold */
+  --sun-soft:     #f6c873;
+  --hairline:     rgba(238, 240, 246, 0.12);
 
-  /* Day phases — the base shifts subtly through these (warm, not rainbow). */
-  --bg:         #13100c;   /* current background, animated by JS */
-  --bg-dawn:    #14110d;   /* pre-dawn, warm near-black */
-  --bg-morning: #1b1611;
-  --bg-midday:  #221a12;   /* warmest, day */
-  --bg-dusk:    #1a130f;
-  --bg-night:   #0e0b08;   /* deepest */
+  --display: "Space Grotesk", system-ui, sans-serif;
+  --body:    "Inter", system-ui, -apple-system, sans-serif;
 
-  --maxw: 64rem;
-  --serif: "Fraunces", Georgia, "Times New Roman", serif;
-  --mono:  "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --max:     min(92vw, 980px);
 }
 
 * { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; }
-
-body {
+html, body {
   margin: 0;
-  background: var(--bg);
+  padding: 0;
+  background: var(--space);
   color: var(--ink);
-  font-family: var(--serif);
-  font-optical-sizing: auto;
-  line-height: 1.55;
+  font-family: var(--body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+body {
+  /* Lenis drives scroll; native smooth off so it doesn't fight. */
   overflow-x: hidden;
-  transition: background-color 0.6s linear;
 }
 
-/* JS adds .is-ready once the smooth-scroll engine is up. */
-body:not(.is-ready) { /* nothing special; reveals still run via fallback */ }
-
-::selection { background: rgba(232, 161, 60, 0.28); color: var(--ink); }
-
-a { color: inherit; }
-
-img { max-width: 100%; }
-
-/* ---------- accessibility helpers ---------- */
-.skip {
-  position: fixed;
-  left: -999px;
-  top: 0.75rem;
-  z-index: 100;
-  background: var(--sun);
-  color: #1a120a;
-  padding: 0.5rem 0.9rem;
-  border-radius: 2px;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-}
-.skip:focus { left: 0.75rem; }
+a { color: inherit; text-decoration: none; }
 
 :focus-visible {
   outline: 2px solid var(--sun);
-  outline-offset: 4px;
+  outline-offset: 3px;
   border-radius: 2px;
 }
 
-/* =========================================================
-   THE SUN — single fixed disc, positioned by JS as you scroll.
-   Default (no-JS / reduced-motion): it simply sits, low and warm.
-   ========================================================= */
-.sky {
+/* ------------------------------------------------------------------ canvas */
+
+#cosmos {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  display: block;
+  z-index: 0;
+  /* The void shows through before the scene warms up, and stays behind it. */
+  background:
+    radial-gradient(120% 90% at 50% 18%, var(--indigo) 0%, var(--space-deep) 42%, var(--space) 100%);
+}
+
+/* ----------------------------------------------------- CSS fallback sky */
+
+#fallback-sky { display: none; }
+
+html.no-webgl #cosmos { display: none; }
+
+html.no-webgl #fallback-sky {
+  display: block;
   position: fixed;
   inset: 0;
   z-index: 0;
-  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 50% 30%, var(--indigo) 0%, var(--space-deep) 45%, var(--space) 100%);
   overflow: hidden;
 }
 
-.sun {
+#fallback-sky .star {
   position: absolute;
-  left: 50%;
-  /* JS drives --x (vw from center) and --y (vh from top) and --scale. */
-  --x: 0vw;
-  --y: 82vh;
-  --scale: 1;
-  top: var(--y);
-  transform: translate(calc(-50% + var(--x)), -50%) scale(var(--scale));
-  width: 17rem;
-  height: 17rem;
+  width: 2px;
+  height: 2px;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%,
-              var(--sun-warm) 0%,
-              var(--sun) 42%,
-              rgba(232, 161, 60, 0.0) 70%);
-  /* soft, tasteful glow — not effect-soup */
-  box-shadow: 0 0 9rem 3rem rgba(232, 161, 60, 0.16);
-  will-change: transform;
-  opacity: 0.92;
+  background: var(--ink);
+  opacity: 0.7;
+  box-shadow: 0 0 4px rgba(238, 240, 246, 0.6);
 }
+/* Scatter the handful of CSS stars. */
+#fallback-sky .star:nth-child(1)  { top: 12%; left: 18%; opacity: .5; }
+#fallback-sky .star:nth-child(2)  { top: 22%; left: 72%; }
+#fallback-sky .star:nth-child(3)  { top: 34%; left: 38%; opacity: .4; }
+#fallback-sky .star:nth-child(4)  { top: 18%; left: 88%; opacity: .6; }
+#fallback-sky .star:nth-child(5)  { top: 48%; left: 10%; }
+#fallback-sky .star:nth-child(6)  { top: 58%; left: 64%; opacity: .5; }
+#fallback-sky .star:nth-child(7)  { top: 66%; left: 28%; opacity: .4; }
+#fallback-sky .star:nth-child(8)  { top: 76%; left: 82%; }
+#fallback-sky .star:nth-child(9)  { top: 8%;  left: 52%; opacity: .5; }
+#fallback-sky .star:nth-child(10) { top: 84%; left: 46%; opacity: .6; }
+#fallback-sky .star:nth-child(11) { top: 40%; left: 92%; opacity: .4; }
+#fallback-sky .star:nth-child(12) { top: 90%; left: 16%; opacity: .5; }
 
-/* A faint horizon band, so the sun feels like it rises/sets through something. */
-.sky::after {
-  content: "";
+#fallback-sky .fallback-sun {
   position: absolute;
-  left: -10%;
-  right: -10%;
-  bottom: 0;
-  height: 38vh;
-  background: linear-gradient(to top,
-              rgba(232, 161, 60, 0.05),
-              rgba(232, 161, 60, 0.0));
-  pointer-events: none;
+  top: 26%;
+  left: 50%;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--sun-soft) 0%, var(--sun) 38%, rgba(241,178,74,0) 72%);
+  filter: blur(2px);
 }
 
-/* =========================================================
-   CHROME
-   ========================================================= */
+/* --------------------------------------------------------------- top bar */
+
 .topbar {
   position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 50;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.3rem clamp(1.25rem, 5vw, 3rem);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  mix-blend-mode: difference; /* legible over both light sun and dark sky */
+  padding: clamp(16px, 2.2vw, 26px) clamp(18px, 4vw, 48px);
+  /* No solid bar — it floats over the cosmos. A faint top fade keeps contrast. */
+  background: linear-gradient(180deg, rgba(5,6,11,0.55) 0%, rgba(5,6,11,0) 100%);
+  pointer-events: none;
 }
-.topbar .wordmark {
-  font-family: var(--serif);
-  font-weight: 500;
-  font-size: 1.05rem;
+.topbar a { pointer-events: auto; }
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(17px, 1.5vw, 20px);
   letter-spacing: 0.01em;
-}
-.topbar nav a {
-  text-decoration: none;
-  color: #fff;
-  opacity: 0.85;
-  transition: opacity 0.3s var(--ease);
-}
-.topbar nav a:hover { opacity: 1; }
-
-/* =========================================================
-   LAYOUT — deep whitespace, everything sits above the sky.
-   ========================================================= */
-main { position: relative; z-index: 2; }
-
-.wrap {
-  width: min(var(--maxw), 100% - clamp(2.5rem, 10vw, 8rem));
-  margin-inline: auto;
+  color: var(--ink);
 }
 
-section { position: relative; }
-
-.hero,
-.beat,
-.close {
-  min-height: 100vh;
-  min-height: 100svh;
+.topnav {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-block: 14vh;
+  align-items: center;
+  gap: clamp(16px, 2.4vw, 30px);
 }
 
-/* =========================================================
-   TYPE — the design.
-   ========================================================= */
+.nav-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+  opacity: 0.92;
+  transition: color 0.25s ease, opacity 0.25s ease;
+}
+.nav-link:hover { color: var(--sun); opacity: 1; }
+
+.nav-link--quiet { color: var(--ink-dim); font-weight: 400; }
+.nav-link--quiet:hover { color: var(--sun); }
+
+/* --------------------------------------------------------------- content */
+
+main {
+  position: relative;
+  z-index: 2;
+}
+
+.beat {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  padding: 14vh clamp(20px, 6vw, 80px);
+}
+
+.beat--hero { align-items: center; }
+.beat--close { align-items: center; }
+
+.beat-inner {
+  width: var(--max);
+  margin: 0 auto;
+  max-width: 100%;
+  /* Each beat's copy is animated in by app.js via a class toggle. With JS off
+     or reduced motion, it's fully visible (see overrides at the bottom). */
+}
+
+.beat-inner--center { text-align: center; }
+
+/* Eyebrow / cue — faint mono-ish uppercase using Inter tight tracking. */
 .eyebrow {
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  letter-spacing: 0.18em;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--ink-soft);
-  margin: 0 0 1.6rem;
+  color: var(--ink-faint);
+  margin: 0 0 22px;
 }
 
 .display {
-  font-family: var(--serif);
-  font-weight: 400;
-  font-size: clamp(5rem, 26vw, 22rem);
-  line-height: 0.86;
-  letter-spacing: -0.03em;
+  font-family: var(--display);
+  font-weight: 600;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--ink);
   margin: 0;
-  font-variation-settings: "SOFT" 0, "WONK" 1;
+  text-wrap: balance;
+  /* Lift text off the bright void a touch for contrast over stars. */
+  text-shadow: 0 2px 30px rgba(5, 6, 11, 0.55);
 }
+
+.display { font-size: clamp(38px, 7.2vw, 92px); }     /* hero */
+.display--md { font-size: clamp(30px, 5vw, 58px); }
+.display--xl { font-size: clamp(56px, 12vw, 150px); letter-spacing: -0.04em; }
 
 .lede {
-  font-size: clamp(1.3rem, 2.6vw, 2.05rem);
-  line-height: 1.34;
-  font-weight: 300;
-  max-width: 34ch;
-  margin: 2.4rem 0 0;
-  color: var(--ink);
+  font-size: clamp(16px, 1.7vw, 21px);
+  line-height: 1.55;
+  color: var(--ink-dim);
+  margin: 26px 0 0;
+  max-width: 46ch;
+  text-shadow: 0 1px 20px rgba(5, 6, 11, 0.5);
 }
+.lede--center { margin-left: auto; margin-right: auto; }
 
-.line {
-  font-family: var(--serif);
-  font-weight: 400;
-  font-size: clamp(2.6rem, 8vw, 6rem);
-  line-height: 1.0;
-  letter-spacing: -0.02em;
-  margin: 0 0 2rem;
-  max-width: 18ch;
-}
-.beat--conviction .line { max-width: 16ch; }
-
-.prose {
-  font-size: clamp(1.15rem, 2vw, 1.55rem);
-  font-weight: 300;
-  line-height: 1.5;
-  max-width: 40ch;
-  margin: 0 0 1.4rem;
-  color: var(--ink);
-}
-.prose--quiet { color: var(--ink-soft); font-style: italic; }
-.prose em { font-style: italic; color: var(--sun-warm); }
-
-/* =========================================================
-   HERO — scroll cue
-   ========================================================= */
-.scrollcue {
+/* Scroll cue at the bottom of the hero. */
+.scroll-cue {
   position: absolute;
-  bottom: 7vh;
+  bottom: clamp(22px, 5vh, 44px);
   left: 50%;
   transform: translateX(-50%);
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0;
+  animation: cue-pulse 2.8s ease-in-out infinite;
+}
+@keyframes cue-pulse {
+  0%, 100% { opacity: 0.35; transform: translate(-50%, 0); }
+  50%      { opacity: 0.85; transform: translate(-50%, 5px); }
+}
+
+/* CTAs at the close. */
+.cta-row {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.9rem;
-  text-decoration: none;
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  transition: color 0.3s var(--ease);
-}
-.scrollcue:hover { color: var(--ink); }
-.scrollcue__line {
-  width: 1px;
-  height: 3.5rem;
-  background: linear-gradient(to bottom, var(--sun), transparent);
-  animation: drip 2.4s var(--ease) infinite;
-  transform-origin: top;
-}
-@keyframes drip {
-  0%   { transform: scaleY(0); opacity: 0; }
-  35%  { transform: scaleY(1); opacity: 1; }
-  100% { transform: scaleY(1) translateY(2.2rem); opacity: 0; }
-}
-
-/* =========================================================
-   BEAT 1 — the text thread (type-driven, no glossy mockup)
-   ========================================================= */
-.thread {
-  margin-top: 3.5rem;
-  max-width: 30rem;
-  font-family: var(--mono);
-}
-.msg {
-  display: inline-block;
-  clear: both;
-  margin: 0 0 0.7rem;
-  padding: 0.8rem 1.1rem;
-  border-radius: 1.2rem;
-  font-size: 0.95rem;
-  line-height: 1.45;
-  max-width: 88%;
-}
-.msg--out {
-  float: right;
-  background: rgba(232, 161, 60, 0.14);
-  border: 1px solid rgba(232, 161, 60, 0.28);
-  border-bottom-right-radius: 0.3rem;
-  text-align: left;
-}
-.msg--in {
-  float: left;
-  background: rgba(242, 233, 218, 0.05);
-  border: 1px solid rgba(242, 233, 218, 0.12);
-  border-bottom-left-radius: 0.3rem;
-  color: var(--ink);
-}
-.msg--meta {
-  float: right;
-  clear: both;
-  background: none;
-  padding: 0.2rem 0.4rem 0;
-  font-size: 0.66rem;
-  letter-spacing: 0.1em;
-  color: var(--ink-faint);
-  text-transform: uppercase;
-}
-
-/* =========================================================
-   BEAT 3 — the ledger (restrained list, unread dots)
-   ========================================================= */
-.ledger {
-  list-style: none;
-  margin: 3.2rem 0 0;
-  padding: 0;
-  max-width: 42rem;
-  font-family: var(--mono);
-}
-.ledger li {
-  display: grid;
-  grid-template-columns: 1.4rem 1fr auto;
-  align-items: baseline;
-  gap: 0.4rem;
-  padding: 1rem 0;
-  border-top: 1px solid rgba(242, 233, 218, 0.1);
-  font-size: 0.95rem;
-}
-.ledger li:last-child { border-bottom: 1px solid rgba(242, 233, 218, 0.1); }
-.dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--sun);
-  align-self: center;
-  box-shadow: 0 0 0.7rem rgba(232, 161, 60, 0.6);
-}
-.ledger__what { color: var(--ink); font-family: var(--serif); font-size: 1.15rem; }
-.ledger li:not(:has(.dot)) .ledger__what { grid-column: 2; color: var(--ink-soft); }
-.ledger__when {
-  color: var(--ink-faint);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-/* =========================================================
-   CLOSE
-   ========================================================= */
-.closing {
-  font-family: var(--serif);
-  font-weight: 400;
-  font-style: italic;
-  font-size: clamp(2.2rem, 6vw, 4.6rem);
-  line-height: 1.08;
-  letter-spacing: -0.015em;
-  margin: 0 0 3.5rem;
-  max-width: 20ch;
+  justify-content: center;
+  gap: clamp(14px, 2vw, 24px);
+  margin-top: 40px;
+  flex-wrap: wrap;
 }
 
 .cta {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  flex-wrap: wrap;
+  font-family: var(--body);
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: var(--space);
+  background: var(--sun);
+  padding: 14px 26px;
+  border-radius: 999px;
+  transition: transform 0.2s ease, background 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 0 0 rgba(241, 178, 74, 0);
 }
-.btn {
-  display: inline-block;
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  letter-spacing: 0.06em;
-  text-decoration: none;
-  color: var(--ink);
-  padding: 0.85rem 0;
-  border-bottom: 1px solid var(--sun);
-  position: relative;
-  transition: color 0.35s var(--ease);
+.cta:hover {
+  background: var(--sun-soft);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 30px rgba(241, 178, 74, 0.28);
 }
-.btn::after {
-  content: "→";
-  margin-left: 0.6rem;
-  display: inline-block;
-  transition: transform 0.35s var(--ease);
+
+.cta--quiet {
+  color: var(--ink-dim);
+  background: transparent;
+  padding: 14px 8px;
+  box-shadow: none;
+}
+.cta--quiet:hover {
   color: var(--sun);
-}
-.btn:hover { color: var(--sun-warm); }
-.btn:hover::after { transform: translateX(0.35rem); }
-
-.signin {
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  text-decoration: none;
-  color: var(--ink-faint);
-  border-bottom: 1px solid transparent;
-  transition: color 0.3s var(--ease), border-color 0.3s var(--ease);
-}
-.signin:hover { color: var(--ink-soft); border-color: var(--ink-faint); }
-
-.maker {
-  margin: 4.5rem 0 0;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  background: transparent;
+  transform: none;
+  box-shadow: none;
 }
 
-/* =========================================================
-   FOOTER
-   ========================================================= */
-.footer {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  justify-content: space-between;
-  padding: 2.5rem clamp(1.25rem, 5vw, 3rem);
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  border-top: 1px solid rgba(242, 233, 218, 0.08);
-}
+/* ---------------------------------------------------- motion entrances */
 
-/* =========================================================
-   REVEALS — handled by JS (GSAP) when available.
-   This is the JS-off / pre-init baseline: visible & legible.
-   When JS is active it adds .js to <html> and hides until revealed.
-   ========================================================= */
-.reveal { opacity: 1; transform: none; }
-
-html.js .reveal {
+/* Default (JS-driven) hidden state. app.js adds .is-in when a beat is reached. */
+html.js .beat-inner > * {
   opacity: 0;
-  transform: translateY(1.4rem);
-  transition: opacity 0.9s var(--ease), transform 0.9s var(--ease);
+  transform: translateY(22px);
+  transition: opacity 0.9s cubic-bezier(.16,1,.3,1), transform 0.9s cubic-bezier(.16,1,.3,1);
 }
-html.js .reveal.is-in {
+html.js .beat-inner.is-in > * {
   opacity: 1;
   transform: none;
 }
+/* Stagger the children a little. */
+html.js .beat-inner.is-in > *:nth-child(2) { transition-delay: 0.08s; }
+html.js .beat-inner.is-in > *:nth-child(3) { transition-delay: 0.16s; }
+html.js .beat-inner.is-in > *:nth-child(4) { transition-delay: 0.24s; }
 
-/* =========================================================
-   RESPONSIVE — degrade pinning to a clean vertical sequence.
-   ========================================================= */
-@media (max-width: 700px) {
-  .sun { width: 12rem; height: 12rem; box-shadow: 0 0 6rem 2rem rgba(232,161,60,0.16); }
-  .topbar { padding: 1rem 1.25rem; }
-  .hero, .beat, .close { padding-block: 12vh; min-height: 92vh; }
-  .lede { margin-top: 1.8rem; }
-  .cta { gap: 1.4rem; }
-  .ledger li { grid-template-columns: 1.2rem 1fr; }
-  .ledger__when { grid-column: 2; padding-left: 0; }
-  .ledger li:not(:has(.dot)) .ledger__when { grid-column: 1 / -1; }
-  .footer { flex-direction: column; gap: 0.6rem; }
+/* ---------------------------------------------------- responsive / mobile */
+
+@media (max-width: 640px) {
+  :root { --max: 90vw; }
+  .beat { padding: 16vh 22px; }
+  .lede { font-size: 16px; }
+  .topnav .nav-link { font-size: 13px; }
+  /* On the smallest screens, drop the download link from the bar to avoid crowding;
+     it still lives in the close CTA. */
+  .topnav .nav-link:not(.nav-link--quiet) { display: none; }
 }
 
-/* =========================================================
-   REDUCED MOTION — full static fallback.
-   The sun just sits, low and warm. No drift, no drip, no reveal anim.
-   ========================================================= */
+/* ---------------------------------------------------- reduced motion / no-JS */
+
+/* If the user prefers reduced motion, OR JS never ran, everything is visible and
+   still. The scene falls back to a static starfield (handled in app.js). */
 @media (prefers-reduced-motion: reduce) {
-  * { scroll-behavior: auto !important; }
-  html.js .reveal { opacity: 1; transform: none; transition: none; }
-  .scrollcue__line { animation: none; opacity: 0.7; }
-  body { transition: none; }
-  .sun {
-    --x: 0vw; --y: 24vh; --scale: 1;
-    transition: none;
-  }
+  html.js .beat-inner > * { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .scroll-cue { animation: none; }
 }
+
+/* No-JS safety: <html> only gets .js when the module runs. Without it, show all. */
+html:not(.js) .beat-inner > * { opacity: 1; transform: none; }
