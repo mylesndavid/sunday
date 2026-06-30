@@ -75,16 +75,27 @@ the loop. The account/plan is the *default*, never a dependency.
 4. **Billing (later).** Stripe on top of the same usage counters. Out of scope
    for now.
 
+## Stack (decided)
+
+- **Auth: WorkOS** (AuthKit — magic-link + Google). Identity only.
+- **Data: SQLite on a Fly volume.** WorkOS doesn't store app data, so a tiny
+  SQLite DB holds accounts/keys/usage. No Postgres — keeps it lightweight.
+- **One service: `sunday-backend`** (https://sunday-backend.fly.dev) — WorkOS
+  auth + account issuance + the model gateway + metering, in a single Fly app
+  with a `/data` volume. The relay stays separate and calls this service to
+  validate `agent_id`s (replacing TOFU).
+
 ## What this needs from the user (the only blockers)
 
 Everything else — all code, all Fly deploys, all testing — is mine.
 
-1. **A Supabase project** (free tier). It's the backbone: auth + the
-   accounts/keys/usage DB. I need: the project URL, the `anon` key (client), and
-   the `service_role` key (backend). Create at supabase.com → new project.
-2. **An OpenRouter API key with some credit** — the gateway's upstream that the
-   free tier draws from. (This is "Sunday's" master key; the free tier is a
-   budget we meter on top of it.)
+1. **A WorkOS project.** Create at dashboard.workos.com → enable **AuthKit**,
+   turn on Google + email (magic-link), and add the redirect URI
+   `https://sunday-backend.fly.dev/auth/callback`. Then send me the
+   **`WORKOS_API_KEY`** (sk_…) and **`WORKOS_CLIENT_ID`** (client_…).
+2. **An OpenRouter API key with some credit** — the gateway's upstream the free
+   tier draws from. (Sunday's master key; the free tier is a budget metered on
+   top of it.)
 
 ## Open questions
 

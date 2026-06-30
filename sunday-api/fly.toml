@@ -1,0 +1,44 @@
+# Sunday API — Fly.io deployment.
+#
+# The thin hosted backbone (WorkOS auth + account/identity issuance + free-tier
+# model gateway + usage metering). Unlike the relay it holds NO long-lived
+# sockets — it's plain request/response — so it CAN scale to zero. But its SQLite
+# DB is its source of truth and must persist, so:
+#
+#   1. The accounts/usage DB lives on a volume at /data/sunday.db (SUNDAY_DB).
+#      Losing it would orphan every account and re-mint everyone's identity —
+#      breaking the "stable, recoverable identity" the whole service exists for.
+#   2. With a single volume there's a single machine; keep min_machines_running
+#      at 1 so a request never races a cold volume attach. (Scaling past one
+#      machine later means moving off single-file SQLite — out of scope here.)
+
+app = "sunday-backend"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SUNDAY_DB = "/data/sunday.db"
+
+[http_service]
+  internal_port = 8080          # the app listens on $PORT (Dockerfile ENV PORT=8080)
+  force_https = true
+  auto_stop_machines = false    # single SQLite volume → keep the one machine warm
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[mounts]
+  source = "sunday_api_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,0 +1,7 @@
+# Sunday API — the thin hosted backbone. Three small deps, matching the relay's
+# minimalism: aiohttp for the HTTP server, httpx for the outbound calls to WorkOS
+# and OpenRouter (no SDKs), structlog for the same structured logging the relay
+# uses. SQLite ships with the stdlib, so the account store needs nothing extra.
+aiohttp>=3.9,<4
+httpx>=0.27,<0.29
+structlog>=24.1
