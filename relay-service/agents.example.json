@@ -1,0 +1,24 @@
+{
+  "_comment": "Example registry. Copy to agents.json (or point RELAY_AGENTS_FILE at it). The DAEMON normally writes this via /admin/register; you can also hand-edit it. agent_id + token are 256-bit secrets the daemon mints — never the relay.",
+  "agents": {
+    "_paths": {
+      "_comment": "OPTIONAL global slug->local-path overrides. Prefer identity mapping and let the daemon remap. Only the blessed exception (e.g. a sendblue secret baked into the path) belongs here.",
+      "sendblue": "/webhooks/sendblue/REPLACE_WITH_DAEMON_SECRET"
+    },
+    "EXAMPLE_AGENT_ID_unguessable_256bit_hex": {
+      "token": "EXAMPLE_SOCKET_TOKEN_256bit_hex_minted_by_daemon",
+      "slugs": {
+        "coldhook": {
+          "_comment": "Per-hook shared token (spec §4). Provider must send ?token=... or X-Relay-Token: ...",
+          "token": "per_hook_rotatable_secret"
+        },
+        "stripe": {
+          "_comment": "HMAC-verified at the edge (spec §3.3). hmac_header + per-provider canonicalization may be needed; see registry._verify_hmac.",
+          "hmac_secret": "whsec_...",
+          "hmac_header": "Stripe-Signature",
+          "provider": "stripe"
+        }
+      }
+    }
+  }
+}

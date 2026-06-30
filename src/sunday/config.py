@@ -121,6 +121,24 @@ class VapiConfig:
 
 
 @dataclass
+class RelayConfig:
+    """Inbound event relay. Default points at Sunday's hosted relay; set
+    `url` to your own self-hosted relay to opt out of the shared one.
+    Empty/disabled → no relay; fall back to Tailscale Funnel or direct
+    (VPS + Caddy) ingress.
+
+    The relay is a dumb, stateless pipe: the daemon dials OUT to it over one
+    persistent WebSocket and the relay forwards inbound webhooks down that
+    socket. No inbound port on the user's machine — the tmate model. See
+    docs/relay-and-inbox-spec.md §2/§9.
+    """
+    enabled: bool = False                       # opt-in; off = today's behavior
+    url: str = "wss://relay.sunday.xyz"         # BYO: point at your own
+    agent_id: str = ""                          # minted on first enable, persisted
+    # token lives in credentials.env (RELAY_TOKEN), not here
+
+
+@dataclass
 class SundayConfig:
     """Root config."""
     home: Path = field(default_factory=lambda: Path.home() / ".sunday")
@@ -131,6 +149,7 @@ class SundayConfig:
     hermes: HermesConfig = field(default_factory=HermesConfig)
     cloudflare: CloudflareConfig = field(default_factory=CloudflareConfig)
     vapi: VapiConfig = field(default_factory=VapiConfig)
+    relay: RelayConfig = field(default_factory=RelayConfig)
     # Native iMessage channel: when on, the daemon watches this machine's own
     # Messages chat.db for inbound and replies via AppleScript — no Sendblue,
     # no send queue. Off by default; intended for the dedicated "Sunday"
@@ -174,4 +193,14 @@ def load_config() -> SundayConfig:
         cfg.imessage_native = True
     if os.environ.get("SUNDAY_IMESSAGE_INDICATORS", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.imessage_indicators = True
+    # Relay: BYO via env so a container / headless box can opt in without a
+    # YAML overlay. RELAY_TOKEN is a credential, not config — it never lives here.
+    if os.environ.get("SUNDAY_RELAY_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+        cfg.relay.enabled = True
+    relay_url = os.environ.get("SUNDAY_RELAY_URL")
+    if relay_url:
+        cfg.relay.url = relay_url.strip()
+    relay_agent_id = os.environ.get("SUNDAY_RELAY_AGENT_ID")
+    if relay_agent_id:
+        cfg.relay.agent_id = relay_agent_id.strip()
     return cfg

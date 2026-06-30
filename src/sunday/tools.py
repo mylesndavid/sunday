@@ -243,6 +243,14 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.channels.imessage_watch",
         "sunday.channels.sendblue",
         "sunday.channels.vapi",
+        "sunday.channels.agentmail",
+        "sunday.channels.webhook_inbox",
+        # Relay client — transport, not a channel. register() registers a
+        # background task ONLY when config.relay.enabled, which dials the
+        # hosted relay and replays inbound webhooks onto the local
+        # /webhooks/* loopback. A default (relay-off) install registers
+        # nothing here — today's behavior, no socket.
+        "sunday.relay.client",
         "sunday.cloud.cloudflare",
         "sunday.devices.tools",
         "sunday.integrations.google",

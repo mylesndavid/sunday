@@ -79,6 +79,7 @@ export async function loadAll() {
   loadGmailStatus();
   loadCockpitStatus();
   loadVapiStatus();
+  loadAgentmailStatus();
   loadNet();
   loadMemorySummary();
   loadSkills();
@@ -529,6 +530,55 @@ async function placeTestCall() {
     })).json();
     if (d.ok) { line.dataset.state = 'ok'; line.textContent = 'call placed — the transcript lands in your chat when it ends'; }
     else { line.dataset.state = 'fail'; line.textContent = d.error || 'call failed'; }
+  } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
+}
+
+// Email (Sunday's own inbox via AgentMail). Saves AGENTMAIL_API_KEY through the
+// standard saveBrain({credentials}) path, same as VAPI/Gmail/Cockpit; status
+// reflects whether the key is set and reaches a real inbox, and surfaces her
+// address. The test button sends a real email to whatever address the owner
+// enters. Distinct from the Gmail connector, which acts on the user's inbox.
+async function loadAgentmailStatus() {
+  const line = $('#am-status'); if (!line) return;
+  let d;
+  try { d = await (await fetch(`${DAEMON_HTTP}/v1/channels/agentmail/status`)).json(); }
+  catch { line.dataset.state = ''; line.textContent = ''; return; }
+  const addr = $('#am-address');
+  if (addr) addr.textContent = d.address || '—';
+  if (d.connected) { line.dataset.state = 'ok'; line.textContent = `connected — ${d.address || 'inbox ready'}`; return; }
+  if (d.configured && d.error) { line.dataset.state = 'fail'; line.textContent = d.error; return; }
+  if (d.configured) { line.dataset.state = 'wait'; line.textContent = 'key saved — checking the inbox…'; return; }
+  line.dataset.state = ''; line.textContent = 'Not configured';
+}
+
+async function saveAgentmailCreds() {
+  const key = $('#am-key')?.value.trim() || '';
+  const line = $('#am-status');
+  if (!key) {
+    if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter the AgentMail API key.'; }
+    return;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'saving…'; }
+  try {
+    await saveBrain({ credentials: { AGENTMAIL_API_KEY: key } });
+    if ($('#am-key')) $('#am-key').value = '';   // don't keep the secret on screen
+    await loadAgentmailStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+async function sendTestEmail() {
+  const to = ($('#am-test-to')?.value || '').trim();
+  const line = $('#am-test-status');
+  if (!to) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter an address to email.'; } return; }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'sending the email…'; }
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/channels/agentmail/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }),
+    })).json();
+    if (d.ok) { line.dataset.state = 'ok'; line.textContent = 'email sent — reply to it and it lands in your chat'; }
+    else { line.dataset.state = 'fail'; line.textContent = d.error || 'send failed'; }
   } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
 }
 
@@ -1599,6 +1649,14 @@ function wire() {
   $('#sb-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://dashboard.sendblue.com'); });
   $('#sb-test-send')?.addEventListener('click', () => sendTestText());
   $('#sb-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendTestText(); } });
+
+  // Email (Sunday's own inbox via AgentMail) — Save stores the key; Send test
+  // emails the entered address; open the AgentMail dashboard.
+  $('#am-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://agentmail.to'); });
+  $('#am-save')?.addEventListener('click', () => saveAgentmailCreds());
+  $('#am-key')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveAgentmailCreds(); } });
+  $('#am-test-send')?.addEventListener('click', () => sendTestEmail());
+  $('#am-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendTestEmail(); } });
 
   // Ollama wizard buttons
   $('#set-ollama-install')?.addEventListener('click', () => window.sunday.openExternal('https://ollama.com/download'));

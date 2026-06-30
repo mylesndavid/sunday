@@ -1250,19 +1250,36 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .conv-transcript summary::-webkit-details-marker { display: none; }
 .conv-transcript pre { margin: 8px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; font: 12px/1.5 var(--font-mono); color: var(--text-2); white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; overflow-x: hidden; }
 
-/* ── CALLS — phone calls Sunday placed (pulled from VAPI) ─────────────── */
-.view-calls { flex-direction: column; overflow-y: auto; }
+/* ── INBOX — unified activity feed (voice/text/email), seeded from Calls ─ */
+.view-inbox { flex-direction: column; overflow-y: auto; }
 .calls-list, .call-detail { width: 100%; max-width: 760px; margin: 0 auto; box-sizing: border-box; padding: 0 24px 40px; min-width: 0; }
 .call-detail[hidden] { display: none; }
 .calls-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 0 14px; background: var(--bg); }
 .calls-bar h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); }
 .call-back { padding: 6px 14px; font-size: 13px; }
 
+/* Channel filter — All · Voice · Text · Email pills under the bar. */
+.inbox-filter { display: flex; gap: 6px; padding: 0 0 14px; flex-wrap: wrap; }
+.inbox-pill {
+  font: 600 12px/1 var(--font-sans); letter-spacing: -0.005em;
+  padding: 7px 13px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface); color: var(--text-2); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.inbox-pill:hover { background: var(--surface-2); border-color: var(--text-3); }
+.inbox-pill.active { background: var(--text); border-color: var(--text); color: var(--bg); }
+
+/* Per-row channel badge — a small monospace tag (VOICE/TEXT/EMAIL/HOOK). */
+.call-channel {
+  font: 600 9.5px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 4px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-3); white-space: nowrap;
+}
+
 .calls-rows { display: flex; flex-direction: column; gap: 6px; }
 .calls-loading { padding: 24px 4px; font-size: 13px; color: var(--text-3); }
 .call-row {
   display: grid;
-  grid-template-columns: 116px 1fr minmax(0, 1.2fr) 52px auto;
+  grid-template-columns: auto 116px 1fr minmax(0, 1.2fr) 52px auto;
   align-items: center; gap: 14px;
   width: 100%; text-align: left; cursor: pointer;
   padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px;
@@ -1295,3 +1312,10 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .call-summary { font: 14px/1.6 var(--font-sans); color: var(--text); margin: 0; }
 .call-transcript { font: 13.5px/1.7 var(--font-sans); color: var(--text-2); }
 .call-line { margin: 0 0 4px; }
+
+/* Text/email thread bubbles in the detail view — inbound vs. Sunday's reply. */
+.inbox-thread { display: flex; flex-direction: column; gap: 10px; }
+.inbox-msg { max-width: 82%; padding: 10px 13px; border-radius: 14px; font: 13.5px/1.6 var(--font-sans); white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+.inbox-msg-in { align-self: flex-start; background: var(--surface-2); color: var(--text); border-bottom-left-radius: 4px; }
+.inbox-msg-out { align-self: flex-end; background: var(--text); color: var(--bg); border-bottom-right-radius: 4px; }
+.inbox-msg-meta { display: block; margin-top: 5px; font: 10.5px/1 var(--font-mono); opacity: 0.6; }

@@ -5,7 +5,7 @@
 import * as memoryView from './memory-view.js';
 import * as settingsView from './settings-view.js';
 import * as rewindView from './rewind-view.js';
-import * as callsView from './calls-view.js';
+import * as inboxView from './inbox-view.js';
 
 const $ = (s) => document.querySelector(s);
 const chatEl     = $('#chat');
@@ -75,13 +75,15 @@ async function boot() {
     enable: $('#rw-enable'), controls: $('#rw-controls'), text: $('#rw-text'), ocr: $('#rw-ocr'),
     slider: $('#rw-slider'), time: $('#rw-time'), play: $('#rw-play'), prev: $('#rw-prev'), next: $('#rw-next'), stop: $('#rw-stop'),
   });
-  callsView.init({ daemonHttp: DAEMON_HTTP }, {
-    list: $('#calls-list'), rows: $('#calls-rows'), refresh: $('#calls-refresh'),
-    empty: $('#calls-empty'), error: $('#calls-error'), errorSub: $('#calls-error-sub'),
-    detail: $('#call-detail'), back: $('#call-back'),
-    detailTo: $('#call-detail-to'), detailMeta: $('#call-detail-meta'),
-    audio: $('#call-audio'), noAudio: $('#call-no-audio'),
-    summaryWrap: $('#call-summary-wrap'), summary: $('#call-summary'), transcript: $('#call-transcript'),
+  inboxView.init({ daemonHttp: DAEMON_HTTP }, {
+    list: $('#inbox-list'), rows: $('#inbox-rows'), refresh: $('#inbox-refresh'),
+    filter: $('#inbox-filter'),
+    empty: $('#inbox-empty'), error: $('#inbox-error'), errorSub: $('#inbox-error-sub'),
+    detail: $('#inbox-detail'), back: $('#inbox-back'),
+    detailTo: $('#inbox-detail-to'), detailMeta: $('#inbox-detail-meta'),
+    voiceDetail: $('#inbox-voice-detail'), threadWrap: $('#inbox-thread-wrap'), thread: $('#inbox-thread'),
+    audio: $('#inbox-audio'), noAudio: $('#inbox-no-audio'),
+    summaryWrap: $('#inbox-summary-wrap'), summary: $('#inbox-summary'), transcript: $('#inbox-transcript'),
   });
   renderSkeleton();
   await refreshLog();
@@ -1081,7 +1083,7 @@ $('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.clic
 
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
-  if (!['chat', 'memory', 'calls', 'rewind', 'settings'].includes(name)) return;
+  if (!['chat', 'memory', 'inbox', 'rewind', 'settings'].includes(name)) return;
   // Leaving for a real tab while a thread view is open tears its state down so
   // nothing lingers (e.g. a click on Memory from inside a thread).
   if (openThread && name !== 'chat') { openThread = null; threadComposer.value = ''; showThreadStop(false); }
@@ -1089,7 +1091,7 @@ function switchView(name) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === name));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'memory') { memoryView.refresh(); }
-  if (name === 'calls') callsView.load();
+  if (name === 'inbox') inboxView.load();
   if (name === 'rewind') rewindView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
   if (name === 'chat') scrollToEnd();
@@ -1100,7 +1102,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); switchView('settings'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); switchView('chat'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); switchView('memory'); }
-  if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('calls'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('inbox'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); switchView('rewind'); }
 });
 window.sunday?.onSwitchView?.((name) => switchView(name));

@@ -12,7 +12,7 @@
     <nav class="tabs" id="tabs" role="tablist">
       <button class="tab active" data-view="chat" role="tab">Chat</button>
       <button class="tab" data-view="memory" role="tab">Memory</button>
-      <button class="tab" data-view="calls" role="tab">Calls</button>
+      <button class="tab" data-view="inbox" role="tab">Inbox</button>
       <button class="tab" data-view="rewind" role="tab">Rewind</button>
       <button class="tab" data-view="settings" role="tab">Settings</button>
     </nav>
@@ -201,45 +201,60 @@
     </div>
   </section>
 
-  <!-- ─── REWIND ───────────────────────────────────────────────────── -->
-  <!-- ─── CALLS — phone calls Sunday placed (pulled from VAPI) ─────── -->
-  <section class="view view-calls" id="view-calls">
+  <!-- ─── INBOX — unified activity feed: voice (VAPI) + text + email ── -->
+  <!-- Seeded from the Calls tab; Voice keeps the call list/detail, Text and -->
+  <!-- Email add thread feeds. List/detail pattern is shared across channels. -->
+  <section class="view view-inbox" id="view-inbox">
     <!-- list -->
-    <div class="calls-list" id="calls-list">
+    <div class="calls-list" id="inbox-list">
       <div class="calls-bar">
-        <h2>Calls</h2>
-        <button class="iconbtn" id="calls-refresh" title="Refresh">
+        <h2>Inbox</h2>
+        <button class="iconbtn" id="inbox-refresh" title="Refresh">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
         </button>
       </div>
-      <div class="calls-rows" id="calls-rows"></div>
-      <div class="calls-state" id="calls-empty" hidden>
-        <h3 id="calls-empty-title">No calls yet</h3>
-        <p id="calls-empty-sub">When Sunday places a phone call, it shows up here with its transcript and recording.</p>
+      <div class="inbox-filter" id="inbox-filter" role="tablist" aria-label="Channel">
+        <button type="button" class="inbox-pill active" data-channel="all" role="tab">All</button>
+        <button type="button" class="inbox-pill" data-channel="voice" role="tab">Voice</button>
+        <button type="button" class="inbox-pill" data-channel="text" role="tab">Text</button>
+        <button type="button" class="inbox-pill" data-channel="email" role="tab">Email</button>
       </div>
-      <div class="calls-state" id="calls-error" hidden>
-        <h3>Could not load calls</h3>
-        <p id="calls-error-sub">—</p>
+      <div class="calls-rows" id="inbox-rows"></div>
+      <div class="calls-state" id="inbox-empty" hidden>
+        <h3 id="inbox-empty-title">Nothing here yet</h3>
+        <p id="inbox-empty-sub">When Sunday places a call, sends a text, or gets an email, it shows up here with its transcript or thread.</p>
+      </div>
+      <div class="calls-state" id="inbox-error" hidden>
+        <h3>Could not load the inbox</h3>
+        <p id="inbox-error-sub">—</p>
       </div>
     </div>
     <!-- detail -->
-    <div class="call-detail" id="call-detail" hidden>
+    <div class="call-detail" id="inbox-detail" hidden>
       <div class="calls-bar">
-        <button class="btn call-back" id="call-back">← Back to calls</button>
+        <button class="btn call-back" id="inbox-back">← Back to inbox</button>
       </div>
       <div class="call-detail-head">
-        <div class="call-detail-to" id="call-detail-to">—</div>
-        <div class="call-detail-meta" id="call-detail-meta"></div>
+        <div class="call-detail-to" id="inbox-detail-to">—</div>
+        <div class="call-detail-meta" id="inbox-detail-meta"></div>
       </div>
-      <audio class="call-audio" id="call-audio" controls hidden></audio>
-      <p class="call-no-audio" id="call-no-audio" hidden>No recording is available for this call.</p>
-      <div class="call-section" id="call-summary-wrap" hidden>
-        <h3>Summary</h3>
-        <p class="call-summary" id="call-summary"></p>
+      <!-- Voice detail — recording + summary + transcript. -->
+      <div id="inbox-voice-detail">
+        <audio class="call-audio" id="inbox-audio" controls hidden></audio>
+        <p class="call-no-audio" id="inbox-no-audio" hidden>No recording is available for this call.</p>
+        <div class="call-section" id="inbox-summary-wrap" hidden>
+          <h3>Summary</h3>
+          <p class="call-summary" id="inbox-summary"></p>
+        </div>
+        <div class="call-section">
+          <h3>Transcript</h3>
+          <div class="call-transcript" id="inbox-transcript">—</div>
+        </div>
       </div>
-      <div class="call-section">
-        <h3>Transcript</h3>
-        <div class="call-transcript" id="call-transcript">—</div>
+      <!-- Text/email detail — the message thread. -->
+      <div class="call-section" id="inbox-thread-wrap" hidden>
+        <h3>Thread</h3>
+        <div class="inbox-thread" id="inbox-thread">—</div>
       </div>
     </div>
   </section>
@@ -277,7 +292,7 @@
     <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings">
       <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
       <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
-      <button type="button" class="set-navitem" data-page="page-texting">Texting</button>
+      <button type="button" class="set-navitem" data-page="page-channels">Channels</button>
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
       <button type="button" class="set-navitem" data-page="page-skills">Skills</button>
       <button type="button" class="set-navitem" data-page="page-voice">Voice &amp; capture</button>
@@ -465,10 +480,48 @@
           </div>
         </section>
 
-        <!-- ═══ TEXTING ════════════════════════════════════════════════════ -->
-        <section class="set-page" id="page-texting">
-          <h2>Texting</h2>
-          <p class="set-help">Text Sunday from your phone — she answers on her own number, in the same one chat. This is set up on the brain: the always-on Mac she lives on.</p>
+        <!-- ═══ CHANNELS ═══════════════════════════════════════════════════ -->
+        <!-- The three first-party comms channels Sunday answers on, in one
+             place: Phone (VAPI), Texting (Sendblue), Email (AgentMail). Mirrors
+             the Inbox tab's facets — config here, activity there. -->
+        <section class="set-page" id="page-channels">
+          <h2>Channels</h2>
+          <p class="set-help">The three ways Sunday reaches out and gets reached — phone, texting, and email — each on her own line. This is set up on the brain: the always-on Mac she lives on.</p>
+
+          <!-- ── PHONE (outbound calls via VAPI) ── -->
+          <h3 class="sys-sub">Phone</h3>
+
+          <!-- CALLING (outbound phone calls via VAPI) -->
+          <div class="set-panel">
+            <div class="brain-label">Calling (phone)</div>
+            <div class="mcp-bi" id="vapi-card">
+              <p class="set-help set-help-tight">Sunday places outbound calls on your behalf. Say "call X" and she dials, speaks to the stated purpose, and drops the transcript and summary into your chat when the call ends.</p>
+              <label class="set-field">
+                <span class="set-field-l">VAPI API key</span>
+                <input type="password" id="vapi-api-key" class="field mono" placeholder="paste your VAPI private key" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="set-field">
+                <span class="set-field-l">From-number ID</span>
+                <input type="text" id="vapi-from-number" class="field mono" placeholder="the VAPI phone-number id you call from" autocomplete="off" spellcheck="false">
+              </label>
+              <p class="set-help set-help-tight">Both come from your VAPI dashboard. <a href="#" id="vapi-keys-link" class="mcp-bi-link">Open the VAPI dashboard</a></p>
+              <div class="set-actions">
+                <button type="button" class="btn btn-primary" id="vapi-save">Save</button>
+                <span class="set-verify" id="vapi-status" aria-live="polite"></span>
+              </div>
+              <label class="set-field">
+                <span class="set-field-l">Place a test call</span>
+                <input type="tel" id="vapi-test-to" class="field mono" placeholder="+1 555 010 1234" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="set-actions">
+                <button type="button" class="btn" id="vapi-test-call">Place test call</button>
+                <span class="set-verify" id="vapi-test-status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── TEXTING (iMessage via Sendblue over Tailscale) ── -->
+          <h3 class="sys-sub">Texting</h3>
 
           <!-- REACHABILITY (Tailscale) -->
           <div class="set-panel">
@@ -551,6 +604,34 @@
             </div>
             <div class="set-actions"><span class="set-verify" id="sb-test-status" aria-live="polite"></span></div>
           </div>
+
+          <!-- ── EMAIL (Sunday's own inbox via AgentMail) ── -->
+          <h3 class="sys-sub">Email</h3>
+
+          <!-- AGENTMAIL ACCOUNT -->
+          <div class="set-panel">
+            <div class="brain-label">AgentMail account</div>
+            <p class="set-help set-help-tight">Sunday's own email address lives at AgentMail — distinct from the Gmail app-password connector in Tools, which acts on <em>your</em> inbox. Paste the API key once and she sends and receives as herself. <a href="#" id="am-keys-link" class="mcp-bi-link">Open AgentMail dashboard</a></p>
+            <label class="set-field">
+              <span class="set-field-l">API key</span>
+              <input type="password" id="am-key" class="field mono" placeholder="am-…" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="set-actions">
+              <span class="set-verify" id="am-status" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="am-save">Save</button>
+            </div>
+            <dl class="ov-rows" id="am-rows" aria-live="polite">
+              <div class="ov-row"><dt>Her address</dt><dd id="am-address" class="mono">—</dd></div>
+            </dl>
+            <div class="set-field" style="margin-top:14px">
+              <span class="set-field-l">Send a test email</span>
+              <div class="net-url-row">
+                <input type="email" id="am-test-to" class="field mono" placeholder="you@example.com" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn" id="am-test-send">Send test</button>
+              </div>
+            </div>
+            <div class="set-actions"><span class="set-verify" id="am-test-status" aria-live="polite"></span></div>
+          </div>
         </section>
 
         <!-- ═══ TOOLS ══════════════════════════════════════════════════════ -->
@@ -601,35 +682,6 @@
               <div class="set-actions">
                 <button type="button" class="btn btn-primary" id="gmail-save">Save</button>
                 <span class="set-verify" id="gmail-status" aria-live="polite"></span>
-              </div>
-            </div>
-          </div>
-
-          <!-- CALLING (outbound phone calls via VAPI) -->
-          <div class="set-panel">
-            <div class="brain-label">Calling (phone)</div>
-            <div class="mcp-bi" id="vapi-card">
-              <p class="set-help set-help-tight">Sunday places outbound calls on your behalf. Say "call X" and she dials, speaks to the stated purpose, and drops the transcript and summary into your chat when the call ends.</p>
-              <label class="set-field">
-                <span class="set-field-l">VAPI API key</span>
-                <input type="password" id="vapi-api-key" class="field mono" placeholder="paste your VAPI private key" autocomplete="off" spellcheck="false">
-              </label>
-              <label class="set-field">
-                <span class="set-field-l">From-number ID</span>
-                <input type="text" id="vapi-from-number" class="field mono" placeholder="the VAPI phone-number id you call from" autocomplete="off" spellcheck="false">
-              </label>
-              <p class="set-help set-help-tight">Both come from your VAPI dashboard. <a href="#" id="vapi-keys-link" class="mcp-bi-link">Open the VAPI dashboard</a></p>
-              <div class="set-actions">
-                <button type="button" class="btn btn-primary" id="vapi-save">Save</button>
-                <span class="set-verify" id="vapi-status" aria-live="polite"></span>
-              </div>
-              <label class="set-field">
-                <span class="set-field-l">Place a test call</span>
-                <input type="tel" id="vapi-test-to" class="field mono" placeholder="+1 555 010 1234" autocomplete="off" spellcheck="false">
-              </label>
-              <div class="set-actions">
-                <button type="button" class="btn" id="vapi-test-call">Place test call</button>
-                <span class="set-verify" id="vapi-test-status" aria-live="polite"></span>
               </div>
             </div>
           </div>

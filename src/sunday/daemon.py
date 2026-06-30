@@ -294,6 +294,12 @@ class Daemon:
         # summary, and posts it here; atoms born during the window get linked.
         from sunday.conversations import ConversationStore
         self.conversations = ConversationStore()
+        # Activity store — the unified Inbox's local source of truth (spec §4b).
+        # Inbound events (calls, texts, emails, webhooks) normalize into one
+        # table here, so /v1/inbox reads SQLite instead of three provider APIs.
+        # Voice still live-fetches VAPI for now; store-backed channels read here.
+        from sunday.activity import ActivityStore
+        self.activity = ActivityStore()
         # Interjections — Sunday's proactive notes + (later) nudges. Shared
         # substrate; the consumer is the notch flare. Engagement converts to
         # a real chat message; dismissal extends cooldown.
@@ -2052,6 +2058,111 @@ class Daemon:
             return web.json_response({"error": result["error"]}, status=400)
         return web.json_response(result)
 
+    # ── unified Inbox (spec §4b) ─────────────────────────────────────────
+    # The Inbox merges two sources into ONE item shape so the renderer reads a
+    # single feed. Voice still live-fetches VAPI (no store push for calls yet);
+    # text/email/webhook read the local activity store. As push lands, voice
+    # joins the store too and this merge collapses to a pure store read.
+    #
+    # Item shape (the contract the UI agent matches):
+    #   {id, channel, direction, peer, ts, preview, status, thread_id, provider_id}
+
+    @staticmethod
+    def _voice_row_to_item(call: dict[str, Any]) -> dict[str, Any]:
+        """Map a VAPI list_calls() row into the unified Inbox item shape.
+        Voice is always outbound (Sunday placed the call) and the peer is the
+        number she dialed; the call id doubles as id and provider_id."""
+        cid = call.get("id")
+        dur = call.get("durationSeconds")
+        reason = call.get("endedReason")
+        preview = (f"{dur:.0f}s — {reason}" if isinstance(dur, (int, float)) and reason
+                   else (reason or (f"{dur:.0f}s" if isinstance(dur, (int, float)) else "")))
+        return {
+            "id": cid,
+            "channel": "voice",
+            "direction": "out",
+            "peer": call.get("to"),
+            "ts": call.get("createdAt"),
+            "preview": preview or None,
+            "status": call.get("status"),
+            "thread_id": None,
+            "provider_id": cid,
+        }
+
+    async def _http_inbox_list(self, request: web.Request) -> web.Response:
+        """GET /v1/inbox?channel=all|voice|text|email|webhook&limit=50 — the
+        merged activity feed, newest first. Voice comes live from VAPI; the
+        store-backed channels come from the local activity store. Returns
+        {"items":[...]} of the unified item shape."""
+        channel = (request.query.get("channel") or "all").strip().lower()
+        try:
+            limit = int(request.query.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        limit = max(1, min(limit, 200))
+
+        items: list[dict[str, Any]] = []
+
+        # Voice: live-fetch VAPI for 'voice' or 'all' (no store rows yet).
+        if channel in ("all", "voice"):
+            try:
+                from sunday.channels.vapi import list_calls
+                vres = await list_calls(limit=limit)
+                if isinstance(vres, dict) and not vres.get("error"):
+                    items.extend(self._voice_row_to_item(c) for c in (vres.get("calls") or []))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("inbox voice fetch failed", error=str(exc))
+
+        # Store-backed channels: read the local activity store.
+        store_channel = None if channel == "all" else channel
+        if channel != "voice":
+            try:
+                rows = await self.activity.list(channel=store_channel, limit=limit)
+                items.extend(rows)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("inbox store read failed", error=str(exc))
+
+        # Merge newest-first across both sources; ts is iso8601 so a string
+        # sort orders correctly. None ts sinks to the bottom.
+        items.sort(key=lambda r: r.get("ts") or "", reverse=True)
+        return web.json_response({"items": items[:limit]})
+
+    async def _http_inbox_get(self, request: web.Request) -> web.Response:
+        """GET /v1/inbox/{id} — one item's detail. Voice delegates to VAPI's
+        get_call (transcript/recording fetched fresh); everything else returns
+        the stored row plus its raw_json. Tries the store first, then falls
+        through to VAPI for ids the store doesn't know (a live voice row)."""
+        item_id = request.match_info.get("id", "").strip()
+        if not item_id:
+            return web.json_response({"error": "missing id"}, status=400)
+
+        # Store-backed row (text/email/webhook) — includes raw_json.
+        try:
+            row = await self.activity.get(item_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("inbox detail store read failed", error=str(exc))
+            row = None
+        if row is not None:
+            if row.get("channel") == "voice":
+                # A voice row that somehow landed in the store: still prefer the
+                # live VAPI detail for transcript/recording.
+                return await self._inbox_voice_detail(item_id)
+            return web.json_response(row)
+
+        # Unknown to the store → treat as a live voice call id.
+        return await self._inbox_voice_detail(item_id)
+
+    async def _inbox_voice_detail(self, call_id: str) -> web.Response:
+        """Voice detail via VAPI get_call — transcript, summary, recording."""
+        from sunday.channels.vapi import get_call
+        try:
+            result = await get_call(call_id)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": f"{type(exc).__name__}: {exc}"}, status=502)
+        if isinstance(result, dict) and result.get("error"):
+            return web.json_response({"error": result["error"]}, status=404)
+        return web.json_response(result)
+
     async def _start_codex_callback(self) -> None:
         """Temporary aiohttp server on 127.0.0.1:1455 (no auth middleware) that
         catches the OAuth redirect. Torn down once we have the code."""
@@ -3088,6 +3199,34 @@ class Daemon:
         ok = bool(result) and not (isinstance(result, dict) and result.get("error"))
         return web.json_response({"ok": ok, "result": result})
 
+    async def _http_agentmail_status(self, request: web.Request) -> web.Response:
+        """Whether Sunday's own email is wired up, for the Email card in Settings.
+        Shape mirrors Sendblue/VAPI: {configured, connected, address, error?}."""
+        from sunday.channels.agentmail import account_status
+        return web.json_response(await account_status())
+
+    async def _http_agentmail_test(self, request: web.Request) -> web.Response:
+        """Send a test email so the whole email round-trip can be proven from the
+        desktop: Sunday emails you, you reply, it lands in the one chat."""
+        from sunday.channels.agentmail import _agentmail_headers, _send_agentmail
+        if _agentmail_headers() is None:
+            return web.json_response({"ok": False, "error": "AgentMail key not set yet"}, status=400)
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": "invalid JSON"}, status=400)
+        to = (body.get("to") or "").strip()
+        if not to:
+            return web.json_response({"ok": False, "error": "enter an email address"}, status=400)
+        subject = "Test from Sunday"
+        text = "Test from Sunday — email is wired up. Reply to this and it lands in your chat."
+        try:
+            result = await _send_agentmail(to, subject, text)
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, status=502)
+        ok = bool(result) and not (isinstance(result, dict) and result.get("error"))
+        return web.json_response({"ok": ok, "error": result.get("error") if isinstance(result, dict) else None, "result": result})
+
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
@@ -3132,6 +3271,8 @@ class Daemon:
         app.router.add_post("/v1/net/configure", self._http_net_configure)
         app.router.add_post("/v1/channels/sendblue/register-webhook", self._http_sendblue_register_webhook)
         app.router.add_post("/v1/channels/sendblue/test", self._http_sendblue_test)
+        app.router.add_get("/v1/channels/agentmail/status", self._http_agentmail_status)
+        app.router.add_post("/v1/channels/agentmail/test", self._http_agentmail_test)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)
@@ -3140,6 +3281,10 @@ class Daemon:
         app.router.add_post("/v1/vapi/test", self._http_vapi_test)
         app.router.add_get("/v1/vapi/calls", self._http_vapi_calls)
         app.router.add_get("/v1/vapi/calls/{id}", self._http_vapi_call_get)
+        # Unified Inbox: merged activity feed (spec §4b). Voice rows stay live
+        # from VAPI; text/email/webhook rows come from the local activity store.
+        app.router.add_get("/v1/inbox", self._http_inbox_list)
+        app.router.add_get("/v1/inbox/{id}", self._http_inbox_get)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)
         app.router.add_post("/v1/ollama/start", self._http_ollama_start)

@@ -1,0 +1,5 @@
+# Sunday Relay — runtime deps. Kept tiny on purpose: the relay is a dumb pipe,
+# so it needs an async HTTP/WebSocket server and structured logging, nothing
+# more. aiohttp matches Sunday's stack (the daemon already uses it).
+aiohttp>=3.9,<4
+structlog>=24.1
