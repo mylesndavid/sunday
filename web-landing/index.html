@@ -1,252 +1,158 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sunday — Your personal AI, with its own number, inbox, and voice</title>
-  <meta
-    name="description"
-    content="Sunday is a personal AI that knows you. It has its own phone number, email address, and voice — texts, emails, and places calls on your behalf. Runs on your Mac, as yours."
-  />
-  <meta name="theme-color" content="#0b0710" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sunday — a personal AI that's yours</title>
+  <meta name="description" content="Sunday is a personal AI with its own phone number, its own email, its own voice. It runs on your own machine, not a company's cloud." />
 
-  <!-- Open Graph / social -->
-  <meta property="og:title" content="Sunday — Your personal AI" />
-  <meta
-    property="og:description"
-    content="A personal AI with its own number, inbox, and voice. It texts, emails, and calls on your behalf — running on your Mac, as yours."
-  />
+  <meta property="og:title" content="Sunday — a personal AI that's yours" />
+  <meta property="og:description" content="Her own number. Her own voice. One inbox. Running on your machine, not our cloud." />
   <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#13100c" />
 
-  <!-- Single font link (Inter) -->
+  <!-- Type: Fraunces (characterful optical serif) for display, JetBrains Mono for labels/UI -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
-    rel="stylesheet"
-  />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Background ambience -->
-  <div class="bg-aurora" aria-hidden="true"></div>
-  <div class="bg-grid" aria-hidden="true"></div>
+  <!-- The sun: a single warm disc that travels and arcs as you scroll. -->
+  <div class="sky" aria-hidden="true">
+    <div class="sun" id="sun"></div>
+  </div>
 
-  <!-- ===================== NAV ===================== -->
-  <header class="nav" id="top">
-    <div class="container nav-inner">
-      <a class="brand" href="#top" aria-label="Sunday home">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">Sunday</span>
-      </a>
+  <a class="skip" href="#dawn">Skip to content</a>
 
-      <nav class="nav-links" aria-label="Primary">
-        <a href="#what">What it is</a>
-        <a href="#how">How it works</a>
-        <a href="#local">Yours, locally</a>
-      </nav>
-
-      <div class="nav-cta">
-        <!-- Secondary CTA: Sign in.
-             NOTE: placeholder WorkOS AuthKit staging URL — swap for the
-             production dashboard / prod WorkOS URL when it ships. -->
-        <a class="btn btn-ghost" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
-        <!-- Primary CTA: Download for Mac -->
-        <a class="btn btn-primary" href="https://github.com/mylesndavid/sunday/releases/latest">
-          Download for Mac
-        </a>
-      </div>
-    </div>
+  <header class="topbar">
+    <span class="wordmark">Sunday</span>
+    <nav aria-label="Primary">
+      <!-- Becomes the real dashboard URL once it ships. -->
+      <a href="https://smooth-light-56-staging.authkit.app">Sign in</a>
+    </nav>
   </header>
 
   <main>
-    <!-- ===================== HERO ===================== -->
-    <section class="hero">
-      <div class="container hero-inner">
-        <p class="eyebrow reveal">A personal AI that actually knows you</p>
-        <h1 class="hero-title reveal">
-          Your personal AI —<br />
-          with its own <span class="grad-text">number, inbox, and voice.</span>
-        </h1>
-        <p class="hero-sub reveal">
-          Not a chatbot in a browser tab. Sunday has its own presence: it texts you
-          on iMessage, sends and receives email as itself, and places real phone calls
-          on your behalf — then drops the transcript in your chat. It runs on your Mac,
-          as yours.
+    <!-- ───────────────── HERO · pre-dawn ───────────────── -->
+    <section class="hero" id="dawn" data-phase="dawn">
+      <div class="wrap">
+        <p class="eyebrow reveal">A personal AI · est. quietly</p>
+        <h1 class="display reveal">Sunday</h1>
+        <p class="lede reveal">
+          The one day that's yours. Now it's also the name of the thing
+          that handles the rest of them.
         </p>
-        <div class="hero-actions reveal">
-          <a class="btn btn-primary btn-lg" href="https://github.com/mylesndavid/sunday/releases/latest">
-            Download for Mac
-          </a>
-          <!-- Placeholder WorkOS AuthKit staging URL (see nav comment) -->
-          <a class="btn btn-ghost btn-lg" href="https://smooth-light-56-staging.authkit.app">
-            Sign in <span class="arrow" aria-hidden="true">→</span>
-          </a>
-        </div>
-        <p class="hero-foot reveal">
-          Free to start — no API keys required. Bring your own keys later if you want.
+      </div>
+      <a class="scrollcue reveal" href="#number" aria-label="Scroll to begin the day">
+        <span>scroll to begin the day</span>
+        <span class="scrollcue__line" aria-hidden="true"></span>
+      </a>
+    </section>
+
+    <!-- ───────────────── BEAT 1 · she has her own number ───────────────── -->
+    <section class="beat" id="number" data-phase="morning">
+      <div class="wrap">
+        <p class="eyebrow reveal">06:40 · she wakes before you do</p>
+        <h2 class="line reveal">She has her own phone&nbsp;number.</h2>
+        <p class="prose reveal">
+          Not a chat window you open. A number you save in your contacts and
+          text like a friend. You write the way you'd write anyone.
         </p>
 
-        <!-- Faux chat preview -->
-        <div class="hero-card reveal" aria-label="Example conversation with Sunday">
-          <div class="hero-card-glow" aria-hidden="true"></div>
-          <div class="chat">
-            <div class="chat-head">
-              <span class="dot dot-orange" aria-hidden="true"></span>
-              <span class="dot dot-amber" aria-hidden="true"></span>
-              <span class="dot dot-night" aria-hidden="true"></span>
-              <span class="chat-title">Sunday · +1 (415) ••• ••••</span>
-            </div>
-            <div class="bubble bubble-in">Can you call the clinic and book me the first free slot Thursday?</div>
-            <div class="bubble bubble-out">On it. Calling now — I'll text you the time once it's booked.</div>
-            <div class="bubble bubble-out bubble-meta">
-              ✓ Booked Thursday 9:40am. Transcript in your Inbox.
-            </div>
-          </div>
+        <!-- Sparse, type-driven hint of a text exchange — not a glossy mockup. -->
+        <div class="thread reveal" role="img" aria-label="A text exchange. You: move my dentist to Thursday and can you call and ask them. Sunday: on it, they open at nine, I'll ring then and tell you how it goes.">
+          <p class="msg msg--out">move my dentist to thursday<br />&amp; can you call &amp; ask them?</p>
+          <p class="msg msg--in">on it. they open at nine —<br />I'll ring then and tell you how it goes.</p>
+          <p class="msg msg--meta">delivered · 06:41</p>
         </div>
       </div>
     </section>
 
-    <!-- ===================== WHAT IT IS ===================== -->
-    <section class="section" id="what">
-      <div class="container">
-        <div class="section-head reveal">
-          <h2 class="section-title">It has a presence, not just a prompt</h2>
-          <p class="section-lede">
-            Six things a tab in your browser will never do.
-          </p>
-        </div>
-
-        <div class="cards">
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">#</div>
-            <h3>Its own phone number</h3>
-            <p>Text Sunday on iMessage and it texts back like a person — context, follow-ups, and all.</p>
-          </article>
-
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">@</div>
-            <h3>Its own email address</h3>
-            <p>Sunday sends and receives email as itself. CC it on a thread and it just handles things.</p>
-          </article>
-
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">☏</div>
-            <h3>Its own voice</h3>
-            <p>It places real phone calls on your behalf and drops the full transcript straight into your chat.</p>
-          </article>
-
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">⌘</div>
-            <h3>A unified Inbox</h3>
-            <p>Every call, text, and email Sunday handles — captured and searchable in one place.</p>
-          </article>
-
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">⌂</div>
-            <h3>Runs on your Mac, as yours</h3>
-            <p>A personal daemon, not multi-tenant SaaS. Your data stays local; only a thin relay is hosted.</p>
-          </article>
-
-          <article class="card reveal">
-            <div class="card-icon" aria-hidden="true">✦</div>
-            <h3>Free to start</h3>
-            <p>Sign in and you're talking to a real model with zero API keys. Bring your own keys whenever.</p>
-          </article>
-        </div>
+    <!-- ───────────────── BEAT 2 · she makes the call ───────────────── -->
+    <section class="beat" id="call" data-phase="midday">
+      <div class="wrap">
+        <p class="eyebrow reveal">09:02 · sun's up · you're in a meeting</p>
+        <h2 class="line reveal">So she makes the&nbsp;call.</h2>
+        <p class="prose reveal">
+          A real voice on a real line. She waits through the hold music, talks
+          to the person who answers, moves the appointment, and never once
+          asks you to confirm you are not a robot.
+        </p>
+        <p class="prose prose--quiet reveal">
+          You feel the phone buzz once. It's already done.
+        </p>
       </div>
     </section>
 
-    <!-- ===================== HOW IT WORKS ===================== -->
-    <section class="section section-alt" id="how">
-      <div class="container">
-        <div class="section-head reveal">
-          <h2 class="section-title">How it works</h2>
-          <p class="section-lede">Three steps. No DNS, no tunnels, no servers to stand up.</p>
-        </div>
+    <!-- ───────────────── BEAT 3 · one inbox ───────────────── -->
+    <section class="beat" id="inbox" data-phase="afternoon">
+      <div class="wrap">
+        <p class="eyebrow reveal">17:30 · the light goes long</p>
+        <h2 class="line reveal">It all comes home to one&nbsp;inbox.</h2>
+        <p class="prose reveal">
+          Every text, every call, every email she sent on your behalf — kept in
+          one quiet place. Nothing to dig for. The unread marks are the only
+          colour she allows herself.
+        </p>
 
-        <ol class="steps">
-          <li class="step reveal">
-            <span class="step-num">01</span>
-            <h3>Sign in</h3>
-            <p>Download for Mac and sign in. You're set up in under a minute — no keys, no config files.</p>
-          </li>
-          <li class="step reveal">
-            <span class="step-num">02</span>
-            <h3>Talk to a real model</h3>
-            <p>Start on the free tier with a capable model out of the box. Plug in your own keys anytime.</p>
-          </li>
-          <li class="step reveal">
-            <span class="step-num">03</span>
-            <h3>It handles your comms</h3>
-            <p>Texts, email, and webhooks reach your agent through a thin relay — anywhere, instantly.</p>
-          </li>
-        </ol>
+        <!-- A restrained list, not cards. The dot = unread / a thing handled. -->
+        <ul class="ledger reveal" aria-label="A few things Sunday handled today">
+          <li><span class="dot" aria-hidden="true"></span><span class="ledger__what">Dentist — moved to Thursday</span><span class="ledger__when">call · 9:07</span></li>
+          <li><span class="dot" aria-hidden="true"></span><span class="ledger__what">Replied to the landlord about the lease</span><span class="ledger__when">email · 11:20</span></li>
+          <li><span class="ledger__what">Forwarded the receipt you asked for</span><span class="ledger__when">text · 14:48</span></li>
+          <li><span class="ledger__what">Booked the 7pm table for two</span><span class="ledger__when">call · 16:15</span></li>
+        </ul>
       </div>
     </section>
 
-    <!-- ===================== YOURS, LOCALLY ===================== -->
-    <section class="section" id="local">
-      <div class="container split">
-        <div class="split-copy reveal">
-          <h2 class="section-title">Yours, and it does real work</h2>
-          <p class="section-lede">
-            Sunday isn't a service holding your data hostage. It's a personal daemon on
-            your machine that can actually act on the world.
-          </p>
-          <ul class="checklist">
-            <li>Drives your browser logged in as you</li>
-            <li>Runs commands and connects to your tools</li>
-            <li>Reaches you anywhere via texts, email, and webhooks</li>
-            <li>Local-first — only a thin relay is hosted, never your data</li>
-          </ul>
-          <div class="split-actions">
-            <a class="btn btn-primary" href="https://github.com/mylesndavid/sunday/releases/latest">
-              Download for Mac
-            </a>
-          </div>
-        </div>
-
-        <div class="split-visual reveal" aria-hidden="true">
-          <div class="orb"></div>
-          <div class="ring ring-1"></div>
-          <div class="ring ring-2"></div>
-          <div class="ring ring-3"></div>
-        </div>
+    <!-- ───────────────── BEAT 4 · the conviction · she lives on your machine ───────────────── -->
+    <section class="beat beat--conviction" id="yours" data-phase="dusk">
+      <div class="wrap">
+        <p class="eyebrow reveal">20:50 · last light</p>
+        <h2 class="line reveal">And she lives on your&nbsp;machine.</h2>
+        <p class="prose reveal">
+          Not our cloud. Not a server farm three states away holding your
+          messages and quietly learning from them. Sunday runs on the computer
+          on your desk — the one you already trust with everything else.
+        </p>
+        <p class="prose reveal">
+          What she knows about you stays where you can reach out and touch it.
+          That's the whole conviction. A personal AI should be exactly that:
+          <em>personal</em>, and <em>yours</em>.
+        </p>
       </div>
     </section>
 
-    <!-- ===================== CLOSING CTA ===================== -->
-    <section class="cta-band">
-      <div class="container cta-inner reveal">
-        <h2 class="cta-title">Meet the AI that has your number.</h2>
-        <p class="cta-sub">Download Sunday for Mac and give it its own number, inbox, and voice today.</p>
-        <div class="cta-actions">
-          <a class="btn btn-primary btn-lg" href="https://github.com/mylesndavid/sunday/releases/latest">
-            Download for Mac
-          </a>
-          <!-- Placeholder WorkOS AuthKit staging URL (see nav comment) -->
-          <a class="btn btn-ghost btn-lg" href="https://smooth-light-56-staging.authkit.app">
-            Sign in
-          </a>
+    <!-- ───────────────── CLOSE · sun sets · night ───────────────── -->
+    <section class="close" id="close" data-phase="night">
+      <div class="wrap">
+        <p class="eyebrow reveal">the day folds shut</p>
+        <h2 class="closing reveal">Some things should feel like a&nbsp;Sunday.<br />Even the work.</h2>
+
+        <div class="cta reveal">
+          <a class="btn" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
+          <!-- Staging AuthKit; becomes the real dashboard URL once it ships. -->
+          <a class="signin" href="https://smooth-light-56-staging.authkit.app">or sign in</a>
         </div>
+
+        <p class="maker reveal">
+          Made by one person, on a Sunday, on a Mac like yours.
+        </p>
       </div>
     </section>
   </main>
 
-  <!-- ===================== FOOTER ===================== -->
   <footer class="footer">
-    <div class="container footer-inner">
-      <div class="footer-brand">
-        <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">Sunday</span>
-      </div>
-      <p class="footer-tag">Your personal AI — with its own number, inbox, and voice.</p>
-      <p class="footer-copy">© <span id="year">2026</span> Sunday. Runs on your Mac, as yours.</p>
-    </div>
+    <span>Sunday</span>
+    <span>local-first · yours</span>
   </footer>
 
-  <script src="app.js"></script>
+  <!-- Motion: Lenis (smooth scroll) + GSAP/ScrollTrigger (orchestration), CDN. -->
+  <script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
