@@ -2166,7 +2166,19 @@ class Daemon:
         # Merge newest-first across both sources; ts is iso8601 so a string
         # sort orders correctly. None ts sinks to the bottom.
         items.sort(key=lambda r: r.get("ts") or "", reverse=True)
-        return web.json_response({"items": items[:limit]})
+        # Collapse threaded conversations (email) to a single newest row per
+        # thread — the list shows one entry per conversation, not per message.
+        # Rows without a thread_id (voice, text today) pass through untouched.
+        grouped: list[dict[str, Any]] = []
+        seen_threads: set[Any] = set()
+        for it in items:
+            tid = it.get("thread_id")
+            if tid:
+                if tid in seen_threads:
+                    continue
+                seen_threads.add(tid)
+            grouped.append(it)
+        return web.json_response({"items": grouped[:limit]})
 
     async def _http_inbox_mark_read(self, request: web.Request) -> web.Response:
         """POST /v1/inbox/{id}/read — mark an item read once the user opens it."""
@@ -2196,36 +2208,21 @@ class Daemon:
                 # A voice row that somehow landed in the store: still prefer the
                 # live VAPI detail for transcript/recording.
                 return await self._inbox_voice_detail(item_id)
-            # Spread raw_json's fields up to the top level so the UI's
+            if row.get("channel") == "email":
+                # Email opens as the whole CONVERSATION: every stored message in
+                # this thread, oldest first, each body fetched live from AgentMail.
+                return web.json_response(await self._inbox_email_thread(row, item_id))
+            # Generic (text/webhook): spread raw_json up so the UI's
             # renderThreadDetail sees body/subject — without overwriting the
             # canonical id/channel the row carries.
             raw = row.get("raw_json")
             if isinstance(raw, dict):
                 merged = {**raw, **row}
-                # The thread renderer reads `body`; email stores its body under
-                # `text`, so alias it when no explicit body is present.
                 if not merged.get("body") and raw.get("text"):
                     merged["body"] = raw.get("text")
-                # Email rows only carry a truncated preview from the sync — fetch
-                # the FULL message from AgentMail on open so the detail shows the
-                # real email, not a snippet. Best-effort; falls back to preview.
-                if row.get("channel") == "email":
-                    try:
-                        from sunday.channels.agentmail import _fetch_message, discover_inbox_id
-                        inbox_id = await discover_inbox_id()
-                        pid = row.get("provider_id") or item_id
-                        full = await _fetch_message(inbox_id, pid) if inbox_id else None
-                        if full:
-                            if full.get("text"):
-                                merged["body"] = full["text"]
-                            if full.get("subject"):
-                                merged["subject"] = full["subject"]
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("inbox email body fetch failed", error=str(exc))
-                # The renderer's bubble alignment compares direction against the
-                # long form ('outbound'/'inbound'); the store keeps the short
-                # 'out'/'in'. Map it so a sent message renders as an outbound
-                # bubble ("Sunday") rather than an inbound one.
+                # The renderer aligns bubbles on the long form; the store keeps
+                # the short 'out'/'in'. Map it so a sent message renders as an
+                # outbound bubble ("Sunday") rather than an inbound one.
                 _dir = (merged.get("direction") or "").lower()
                 if _dir == "out":
                     merged["direction"] = "outbound"
@@ -2233,6 +2230,58 @@ class Daemon:
                     merged["direction"] = "inbound"
                 return web.json_response(merged)
             return web.json_response(row)
+
+    async def _inbox_email_thread(self, row: dict[str, Any], item_id: str) -> dict[str, Any]:
+        """Assemble an email row into its full conversation: every stored message
+        sharing this thread_id, oldest first, each body fetched live from
+        AgentMail (the sync only keeps a truncated preview). Falls back to the
+        single message when there's no thread_id."""
+        thread_id = row.get("thread_id")
+        rows = [row]
+        if thread_id:
+            try:
+                all_email = await self.activity.list(channel="email", limit=200)
+                same = [r for r in all_email if r.get("thread_id") == thread_id]
+                if same:
+                    rows = same
+            except Exception as exc:  # noqa: BLE001
+                log.warning("inbox email thread read failed", error=str(exc))
+        rows.sort(key=lambda r: r.get("ts") or "")
+
+        from sunday.channels.agentmail import _fetch_message, discover_inbox_id
+        try:
+            inbox_id = await discover_inbox_id()
+        except Exception:  # noqa: BLE001
+            inbox_id = None
+
+        subject = None
+        messages: list[dict[str, Any]] = []
+        for r in rows:
+            body = r.get("preview") or ""
+            pid = r.get("provider_id") or r.get("id")
+            if inbox_id and pid:
+                try:
+                    full = await _fetch_message(inbox_id, pid)
+                    if full:
+                        if full.get("text"):
+                            body = full["text"]
+                        if not subject and full.get("subject"):
+                            subject = full["subject"]
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("inbox email body fetch failed", error=str(exc), id=pid)
+            messages.append({
+                "direction": "outbound" if (r.get("direction") == "out") else "inbound",
+                "body": body,
+                "ts": r.get("ts"),
+                "peer": r.get("peer"),
+            })
+        return {
+            "id": item_id,
+            "channel": "email",
+            "peer": row.get("peer"),
+            "subject": subject or row.get("preview"),
+            "messages": messages,
+        }
 
         # Unknown to the store → treat as a live voice call id.
         return await self._inbox_voice_detail(item_id)
