@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sunday — Your personal AI, with its own number, inbox, and voice</title>
+  <meta
+    name="description"
+    content="Sunday is a personal AI that knows you. It has its own phone number, email address, and voice — texts, emails, and places calls on your behalf. Runs on your Mac, as yours."
+  />
+  <meta name="theme-color" content="#0b0710" />
+
+  <!-- Open Graph / social -->
+  <meta property="og:title" content="Sunday — Your personal AI" />
+  <meta
+    property="og:description"
+    content="A personal AI with its own number, inbox, and voice. It texts, emails, and calls on your behalf — running on your Mac, as yours."
+  />
+  <meta property="og:type" content="website" />
+
+  <!-- Single font link (Inter) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Background ambience -->
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- ===================== NAV ===================== -->
+  <header class="nav" id="top">
+    <div class="container nav-inner">
+      <a class="brand" href="#top" aria-label="Sunday home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Sunday</span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#what">What it is</a>
+        <a href="#how">How it works</a>
+        <a href="#local">Yours, locally</a>
+      </nav>
+
+      <div class="nav-cta">
+        <!-- Secondary CTA: Sign in.
+             NOTE: placeholder WorkOS AuthKit staging URL — swap for the
+             production dashboard / prod WorkOS URL when it ships. -->
+        <a class="btn btn-ghost" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
+        <!-- Primary CTA: Download for Mac -->
+        <a class="btn btn-primary" href="https://github.com/mylesndavid/sunday/releases/latest">
+          Download for Mac
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===================== HERO ===================== -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <p class="eyebrow reveal">A personal AI that actually knows you</p>
+        <h1 class="hero-title reveal">
+          Your personal AI —<br />
+          with its own <span class="grad-text">number, inbox, and voice.</span>
+        </h1>
+        <p class="hero-sub reveal">
+          Not a chatbot in a browser tab. Sunday has its own presence: it texts you
+          on iMessage, sends and receives email as itself, and places real phone calls
+          on your behalf — then drops the transcript in your chat. It runs on your Mac,
+          as yours.
+        </p>
+        <div class="hero-actions reveal">
+          <a class="btn btn-primary btn-lg" href="https://github.com/mylesndavid/sunday/releases/latest">
+            Download for Mac
+          </a>
+          <!-- Placeholder WorkOS AuthKit staging URL (see nav comment) -->
+          <a class="btn btn-ghost btn-lg" href="https://smooth-light-56-staging.authkit.app">
+            Sign in <span class="arrow" aria-hidden="true">→</span>
+          </a>
+        </div>
+        <p class="hero-foot reveal">
+          Free to start — no API keys required. Bring your own keys later if you want.
+        </p>
+
+        <!-- Faux chat preview -->
+        <div class="hero-card reveal" aria-label="Example conversation with Sunday">
+          <div class="hero-card-glow" aria-hidden="true"></div>
+          <div class="chat">
+            <div class="chat-head">
+              <span class="dot dot-orange" aria-hidden="true"></span>
+              <span class="dot dot-amber" aria-hidden="true"></span>
+              <span class="dot dot-night" aria-hidden="true"></span>
+              <span class="chat-title">Sunday · +1 (415) ••• ••••</span>
+            </div>
+            <div class="bubble bubble-in">Can you call the clinic and book me the first free slot Thursday?</div>
+            <div class="bubble bubble-out">On it. Calling now — I'll text you the time once it's booked.</div>
+            <div class="bubble bubble-out bubble-meta">
+              ✓ Booked Thursday 9:40am. Transcript in your Inbox.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== WHAT IT IS ===================== -->
+    <section class="section" id="what">
+      <div class="container">
+        <div class="section-head reveal">
+          <h2 class="section-title">It has a presence, not just a prompt</h2>
+          <p class="section-lede">
+            Six things a tab in your browser will never do.
+          </p>
+        </div>
+
+        <div class="cards">
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">#</div>
+            <h3>Its own phone number</h3>
+            <p>Text Sunday on iMessage and it texts back like a person — context, follow-ups, and all.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">@</div>
+            <h3>Its own email address</h3>
+            <p>Sunday sends and receives email as itself. CC it on a thread and it just handles things.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">☏</div>
+            <h3>Its own voice</h3>
+            <p>It places real phone calls on your behalf and drops the full transcript straight into your chat.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">⌘</div>
+            <h3>A unified Inbox</h3>
+            <p>Every call, text, and email Sunday handles — captured and searchable in one place.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">⌂</div>
+            <h3>Runs on your Mac, as yours</h3>
+            <p>A personal daemon, not multi-tenant SaaS. Your data stays local; only a thin relay is hosted.</p>
+          </article>
+
+          <article class="card reveal">
+            <div class="card-icon" aria-hidden="true">✦</div>
+            <h3>Free to start</h3>
+            <p>Sign in and you're talking to a real model with zero API keys. Bring your own keys whenever.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== HOW IT WORKS ===================== -->
+    <section class="section section-alt" id="how">
+      <div class="container">
+        <div class="section-head reveal">
+          <h2 class="section-title">How it works</h2>
+          <p class="section-lede">Three steps. No DNS, no tunnels, no servers to stand up.</p>
+        </div>
+
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step-num">01</span>
+            <h3>Sign in</h3>
+            <p>Download for Mac and sign in. You're set up in under a minute — no keys, no config files.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-num">02</span>
+            <h3>Talk to a real model</h3>
+            <p>Start on the free tier with a capable model out of the box. Plug in your own keys anytime.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-num">03</span>
+            <h3>It handles your comms</h3>
+            <p>Texts, email, and webhooks reach your agent through a thin relay — anywhere, instantly.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ===================== YOURS, LOCALLY ===================== -->
+    <section class="section" id="local">
+      <div class="container split">
+        <div class="split-copy reveal">
+          <h2 class="section-title">Yours, and it does real work</h2>
+          <p class="section-lede">
+            Sunday isn't a service holding your data hostage. It's a personal daemon on
+            your machine that can actually act on the world.
+          </p>
+          <ul class="checklist">
+            <li>Drives your browser logged in as you</li>
+            <li>Runs commands and connects to your tools</li>
+            <li>Reaches you anywhere via texts, email, and webhooks</li>
+            <li>Local-first — only a thin relay is hosted, never your data</li>
+          </ul>
+          <div class="split-actions">
+            <a class="btn btn-primary" href="https://github.com/mylesndavid/sunday/releases/latest">
+              Download for Mac
+            </a>
+          </div>
+        </div>
+
+        <div class="split-visual reveal" aria-hidden="true">
+          <div class="orb"></div>
+          <div class="ring ring-1"></div>
+          <div class="ring ring-2"></div>
+          <div class="ring ring-3"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== CLOSING CTA ===================== -->
+    <section class="cta-band">
+      <div class="container cta-inner reveal">
+        <h2 class="cta-title">Meet the AI that has your number.</h2>
+        <p class="cta-sub">Download Sunday for Mac and give it its own number, inbox, and voice today.</p>
+        <div class="cta-actions">
+          <a class="btn btn-primary btn-lg" href="https://github.com/mylesndavid/sunday/releases/latest">
+            Download for Mac
+          </a>
+          <!-- Placeholder WorkOS AuthKit staging URL (see nav comment) -->
+          <a class="btn btn-ghost btn-lg" href="https://smooth-light-56-staging.authkit.app">
+            Sign in
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Sunday</span>
+      </div>
+      <p class="footer-tag">Your personal AI — with its own number, inbox, and voice.</p>
+      <p class="footer-copy">© <span id="year">2026</span> Sunday. Runs on your Mac, as yours.</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
