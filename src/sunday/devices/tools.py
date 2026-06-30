@@ -615,7 +615,7 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
     ))
     registry.register(Tool(
         name="device_open_url",
-        description="Open a URL on a connected device (launches the default browser or registered handler).",
+        description="Open a URL on a connected device (launches the default browser or registered handler). For showing the user a specific page or kicking off an on-screen flow — NOT for research. To look something up, use web_search instead of opening pages to read.",
         parameters=_OPEN_URL_PARAMS,
         run=_t_device_open_url,
     ))
@@ -768,7 +768,9 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         name="device_cdp_launch",
         description=(
             "Launch a Chromium-based browser (Chrome / Edge / Arc / an Electron app) in an "
-            "isolated shadow profile on a connected device, optionally navigating to a URL."
+            "isolated shadow profile on a connected device, optionally navigating to a URL. "
+            "For background INTERACTION with a site (logging in, filling forms, automating a "
+            "flow) — not for research. To look something up, use web_search, not a browser."
         ),
         parameters=_CDP_LAUNCH_PARAMS,
         run=_t_cdp_launch,
@@ -802,7 +804,8 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "(electron_launch). Returns title, url, visible text, and "
             "interactive elements each with a numeric `ref` for "
             "browser_click/browser_type. Launch one first with "
-            "device_cdp_launch if none is open."
+            "device_cdp_launch if none is open. For background INTERACTION with a "
+            "site, not research — to look something up, use web_search instead."
         ),
         parameters={"type": "object", "properties": {**_DEVICE_ID_PARAM, "profile_id": {"type": "string"}}},
         run=_t_browser_read,

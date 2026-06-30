@@ -46,6 +46,11 @@ CORE_TOOLS = frozenset({
     "cockpit_read_page", "cockpit_click", "cockpit_fill", "cockpit_press_key",
     "cockpit_scroll", "cockpit_navigate", "cockpit_tabs", "cockpit_screenshot",
     "cockpit_highlight", "cockpit_instruct_user",
+    # web_search (Perplexity Sonar via OpenRouter) is the always-on research
+    # surface: a single cited-answer call. It stays core so the model reaches
+    # for it instead of driving a browser page-by-page to read things — the
+    # prompt steers research here and reserves the browser for interaction.
+    "web_search",
     "delegate", "delegate_parallel",
     # Hiring a local coding agent (Claude Code / Codex) for long-running repo
     # work is delegation too — core, not tail.
@@ -235,6 +240,7 @@ def default_registry(config: SundayConfig) -> ToolRegistry:
         "sunday.memory_tools",
         "sunday.history_tools",
         "sunday.introspect",
+        "sunday.web_search",
         "sunday.skills",
         "sunday.subagents.native",
         "sunday.subagents.hermes",
