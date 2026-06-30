@@ -163,26 +163,18 @@ async function boot() {
 
   /* ---- animate ---------------------------------------------------------- */
   const clock = new THREE.Clock();
-  const arr = geo.attributes.position.array;
 
   function loop() {
     const t = clock.getElapsedTime();
     mat.uniforms.uTime.value = t;
 
-    // gentle parallax: the whole field leans toward the cursor
-    mx += (tx - mx) * 0.035;
-    my += (ty - my) * 0.035;
-    world.rotation.y = t * 0.008 + mx * 0.32;
-    world.rotation.x = -my * 0.20;
-
-    // float through the stars: drift each star toward the camera, recycle to back
-    for (let i = 2; i < arr.length; i += 3) {
-      arr[i] += 0.028;                 // slow approach
-      if (arr[i] > -2.0) {
-        arr[i] = -3 - DEPTH;           // wrap to the far plane (fog hides the reset)
-      }
-    }
-    geo.attributes.position.needsUpdate = true;
+    // Calm and intentional: stars twinkle (in the shader), the field leans
+    // gently toward the cursor, and drifts on an almost-imperceptible current.
+    // No flying-toward-you motion — that read like a screensaver.
+    mx += (tx - mx) * 0.04;
+    my += (ty - my) * 0.04;
+    world.rotation.y = t * 0.0035 + mx * 0.16;
+    world.rotation.x = -my * 0.10;
 
     renderer.render(scene, camera);
     requestAnimationFrame(loop);
