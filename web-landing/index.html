@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Sunday — a personal AI that's actually yours</title>
-  <meta name="description" content="Sunday is a personal AI with its own number and its own voice. You text it like a person. It runs on your machine — not our cloud." />
+  <title>Sunday</title>
+  <meta name="description" content="Sunday — a personal AI that runs on your machine." />
   <meta name="theme-color" content="#05060b" />
 
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Sunday — a personal AI that's actually yours" />
-  <meta property="og:description" content="Its own number. Its own voice. One inbox. It runs on your machine — not our cloud." />
+  <meta property="og:title" content="Sunday" />
+  <meta property="og:description" content="A personal AI that runs on your machine." />
 
   <!-- Fonts: Space Grotesk (display) + Inter (body/UI). One link, no serif. -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -43,57 +43,15 @@
     </nav>
   </header>
 
-  <!-- The scroll content. Each beat is a tall panel; its copy fades in as the
-       camera reaches that beat. Real text, semantic, legible without the canvas. -->
-  <main id="top">
-    <section class="beat beat--hero" aria-labelledby="hero-line">
-      <div class="beat-inner">
-        <p class="eyebrow">A personal AI</p>
-        <h1 id="hero-line" class="display">A personal AI<br />that's actually yours.</h1>
-        <p class="lede">Not an assistant you rent by the seat. One that lives with you.</p>
-      </div>
-      <p class="scroll-cue" aria-hidden="true">Scroll</p>
-    </section>
+  <!-- One quiet line floats in within the scene near the end of the journey.
+       It is real DOM text (faded in by app.js), not part of the canvas. -->
+  <p class="scene-line" id="scene-line" aria-hidden="false">Yours. On your machine.</p>
 
-    <section class="beat" aria-labelledby="beat-number">
-      <div class="beat-inner">
-        <h2 id="beat-number" class="display display--md">It has its own number.<br />You text it like a person.</h2>
-        <p class="lede">No app to open. No prompt box. Just a thread, the way you talk to anyone.</p>
-      </div>
-    </section>
-
-    <section class="beat" aria-labelledby="beat-voice">
-      <div class="beat-inner">
-        <h2 id="beat-voice" class="display display--md">Its own voice, too.<br />It can pick up the phone.</h2>
-        <p class="lede">When something needs a real call, it makes one — in a voice that's its own.</p>
-      </div>
-    </section>
-
-    <section class="beat" aria-labelledby="beat-inbox">
-      <div class="beat-inner">
-        <h2 id="beat-inbox" class="display display--md">Everything lands<br />in one inbox.</h2>
-        <p class="lede">Messages, mail, calls — gathered into a single place that's quiet by default.</p>
-      </div>
-    </section>
-
-    <section class="beat" aria-labelledby="beat-local">
-      <div class="beat-inner">
-        <h2 id="beat-local" class="display display--md">It runs on your machine —<br />not our cloud.</h2>
-        <p class="lede">Yours stays yours. The whole thing lives on the computer in front of you.</p>
-      </div>
-    </section>
-
-    <section class="beat beat--close" aria-labelledby="close-line">
-      <div class="beat-inner beat-inner--center">
-        <h2 id="close-line" class="display display--xl">Sunday.</h2>
-        <p class="lede lede--center">Yours. On your machine. In its own voice.</p>
-        <div class="cta-row">
-          <a class="cta" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
-          <!-- Staging AuthKit URL — swap for the production dashboard URL later. -->
-          <a class="cta cta--quiet" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
-        </div>
-      </div>
-    </section>
+  <!-- The 3D fills the viewport and IS the experience. The scroll track below is
+       empty, invisible space — it exists only to give the camera room to travel
+       through the system. No marketing copy, no scroll cue. -->
+  <main id="top" aria-hidden="true">
+    <div class="scroll-track"></div>
   </main>
 
   <!-- Three.js + Lenis from CDN. No build step. Import map keeps the module clean. -->

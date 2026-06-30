@@ -159,165 +159,61 @@ html.no-webgl #fallback-sky {
 
 /* --------------------------------------------------------------- content */
 
+/* The 3D is the experience. <main> is just an invisible scroll track that gives
+   the camera room to travel through the system — no copy lives here. */
 main {
   position: relative;
   z-index: 2;
 }
 
-.beat {
-  position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  padding: 14vh clamp(20px, 6vw, 80px);
+.scroll-track {
+  /* Several viewports of empty scroll height = the length of the journey. */
+  height: 500vh;
 }
 
-.beat--hero { align-items: center; }
-.beat--close { align-items: center; }
+/* ---------------------------------------------------- the one quiet line */
 
-.beat-inner {
-  width: var(--max);
-  margin: 0 auto;
-  max-width: 100%;
-  /* Each beat's copy is animated in by app.js via a class toggle. With JS off
-     or reduced motion, it's fully visible (see overrides at the bottom). */
-}
-
-.beat-inner--center { text-align: center; }
-
-/* Eyebrow / cue — faint mono-ish uppercase using Inter tight tracking. */
-.eyebrow {
-  font-size: 12.5px;
-  font-weight: 500;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin: 0 0 22px;
-}
-
-.display {
+/* A single short line that floats within the scene near the end of the journey.
+   Fixed + centered low, faded in by app.js (.is-in) as the camera arrives. */
+.scene-line {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: clamp(13vh, 16vh, 20vh);
+  z-index: 3;
+  margin: 0;
+  text-align: center;
   font-family: var(--display);
-  font-weight: 600;
-  line-height: 1.04;
-  letter-spacing: -0.02em;
+  font-weight: 400;
+  font-size: clamp(18px, 2.4vw, 30px);
+  letter-spacing: 0.005em;
   color: var(--ink);
-  margin: 0;
-  text-wrap: balance;
-  /* Lift text off the bright void a touch for contrast over stars. */
-  text-shadow: 0 2px 30px rgba(5, 6, 11, 0.55);
-}
-
-.display { font-size: clamp(38px, 7.2vw, 92px); }     /* hero */
-.display--md { font-size: clamp(30px, 5vw, 58px); }
-.display--xl { font-size: clamp(56px, 12vw, 150px); letter-spacing: -0.04em; }
-
-.lede {
-  font-size: clamp(16px, 1.7vw, 21px);
-  line-height: 1.55;
-  color: var(--ink-dim);
-  margin: 26px 0 0;
-  max-width: 46ch;
-  text-shadow: 0 1px 20px rgba(5, 6, 11, 0.5);
-}
-.lede--center { margin-left: auto; margin-right: auto; }
-
-/* Scroll cue at the bottom of the hero. */
-.scroll-cue {
-  position: absolute;
-  bottom: clamp(22px, 5vh, 44px);
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 12px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin: 0;
-  animation: cue-pulse 2.8s ease-in-out infinite;
-}
-@keyframes cue-pulse {
-  0%, 100% { opacity: 0.35; transform: translate(-50%, 0); }
-  50%      { opacity: 0.85; transform: translate(-50%, 5px); }
-}
-
-/* CTAs at the close. */
-.cta-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(14px, 2vw, 24px);
-  margin-top: 40px;
-  flex-wrap: wrap;
-}
-
-.cta {
-  font-family: var(--body);
-  font-weight: 500;
-  font-size: 15px;
-  letter-spacing: 0.01em;
-  color: var(--space);
-  background: var(--sun);
-  padding: 14px 26px;
-  border-radius: 999px;
-  transition: transform 0.2s ease, background 0.25s ease, box-shadow 0.25s ease;
-  box-shadow: 0 0 0 rgba(241, 178, 74, 0);
-}
-.cta:hover {
-  background: var(--sun-soft);
-  transform: translateY(-1px);
-  box-shadow: 0 8px 30px rgba(241, 178, 74, 0.28);
-}
-
-.cta--quiet {
-  color: var(--ink-dim);
-  background: transparent;
-  padding: 14px 8px;
-  box-shadow: none;
-}
-.cta--quiet:hover {
-  color: var(--sun);
-  background: transparent;
-  transform: none;
-  box-shadow: none;
-}
-
-/* ---------------------------------------------------- motion entrances */
-
-/* Default (JS-driven) hidden state. app.js adds .is-in when a beat is reached. */
-html.js .beat-inner > * {
+  text-shadow: 0 2px 40px rgba(5, 6, 11, 0.7);
+  pointer-events: none;
   opacity: 0;
-  transform: translateY(22px);
-  transition: opacity 0.9s cubic-bezier(.16,1,.3,1), transform 0.9s cubic-bezier(.16,1,.3,1);
+  transform: translateY(14px);
+  transition: opacity 1.4s cubic-bezier(.16,1,.3,1), transform 1.4s cubic-bezier(.16,1,.3,1);
 }
-html.js .beat-inner.is-in > * {
-  opacity: 1;
+.scene-line.is-in {
+  opacity: 0.92;
   transform: none;
 }
-/* Stagger the children a little. */
-html.js .beat-inner.is-in > *:nth-child(2) { transition-delay: 0.08s; }
-html.js .beat-inner.is-in > *:nth-child(3) { transition-delay: 0.16s; }
-html.js .beat-inner.is-in > *:nth-child(4) { transition-delay: 0.24s; }
 
 /* ---------------------------------------------------- responsive / mobile */
 
 @media (max-width: 640px) {
-  :root { --max: 90vw; }
-  .beat { padding: 16vh 22px; }
-  .lede { font-size: 16px; }
   .topnav .nav-link { font-size: 13px; }
-  /* On the smallest screens, drop the download link from the bar to avoid crowding;
-     it still lives in the close CTA. */
-  .topnav .nav-link:not(.nav-link--quiet) { display: none; }
+  .topnav { gap: 16px; }
+  /* The topbar is now the only home for the links, so keep both — just tighten. */
 }
 
 /* ---------------------------------------------------- reduced motion / no-JS */
 
-/* If the user prefers reduced motion, OR JS never ran, everything is visible and
-   still. The scene falls back to a static starfield (handled in app.js). */
+/* Reduced motion: the scene renders one still, beautiful frame (handled in
+   app.js) and the quiet line is simply shown. */
 @media (prefers-reduced-motion: reduce) {
-  html.js .beat-inner > * { opacity: 1 !important; transform: none !important; transition: none !important; }
-  .scroll-cue { animation: none; }
+  .scene-line { transition: none; }
 }
 
-/* No-JS safety: <html> only gets .js when the module runs. Without it, show all. */
-html:not(.js) .beat-inner > * { opacity: 1; transform: none; }
+/* No-JS safety: <html> only gets .js when the module runs. Show the line. */
+html:not(.js) .scene-line { opacity: 0.92; transform: none; }
