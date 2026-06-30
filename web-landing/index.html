@@ -3,72 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Sunday</title>
-  <meta name="description" content="Sunday — a personal AI that runs on your machine." />
-  <meta name="theme-color" content="#05060b" />
-
-  <meta property="og:type" content="website" />
-  <meta property="og:title" content="Sunday" />
-  <meta property="og:description" content="A personal AI that runs on your machine." />
-
-  <!-- Fonts: Space Grotesk (display) + Inter (body/UI). One link, no serif. -->
+  <title>Sunday — a personal AI that's actually yours</title>
+  <meta name="description" content="Sunday is a personal AI that's actually yours. Everyone has a right to intelligence. It should just work." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+  <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.169.0/build/three.module.js" } }
+  </script>
 </head>
 <body>
-  <!-- Fixed full-screen WebGL canvas. The cosmos lives here; text floats over it.
-       aria-hidden because it's purely decorative — all real copy is in the DOM. -->
-  <canvas id="cosmos" aria-hidden="true"></canvas>
+  <canvas id="stars" aria-hidden="true"></canvas>
 
-  <!-- CSS deep-space fallback, shown only if WebGL is unavailable (app.js toggles a
-       class on <html>). Tasteful radial dark + a sprinkle of CSS stars + a low
-       sun on the horizon with warmth bleeding upward, matching the live finale. -->
-  <div id="fallback-sky" aria-hidden="true">
-    <span class="star"></span><span class="star"></span><span class="star"></span>
-    <span class="star"></span><span class="star"></span><span class="star"></span>
-    <span class="star"></span><span class="star"></span><span class="star"></span>
-    <span class="star"></span><span class="star"></span><span class="star"></span>
-    <span class="fallback-glow"></span>
-    <span class="fallback-sun"></span>
-  </div>
-
-  <!-- Minimal fixed top bar: wordmark + two links. -->
   <header class="topbar">
-    <a class="wordmark" href="#top">Sunday</a>
-    <nav class="topnav" aria-label="Primary">
-      <a class="nav-link" href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
-      <!-- Staging AuthKit URL — becomes the real dashboard URL later. -->
-      <a class="nav-link nav-link--quiet" href="https://smooth-light-56-staging.authkit.app">Sign in</a>
+    <a class="wordmark" href="/">Sunday</a>
+    <nav class="links" aria-label="Primary">
+      <a href="https://github.com/mylesndavid/sunday/releases/latest">Download for Mac</a>
+      <!-- Sign in: becomes the real dashboard / prod WorkOS URL later. -->
+      <a href="https://smooth-light-56-staging.authkit.app">Sign in</a>
     </nav>
   </header>
 
-  <!-- The hero overlay: the climax of the journey. The HUGE wordmark + mission
-       are real, focusable DOM text composed over the canvas (where the sun lands
-       low on the horizon). app.js fades them in (.is-in) as the camera arrives. -->
-  <section class="hero" aria-label="Sunday">
+  <main class="hero">
     <h1 class="hero-title">Sunday</h1>
-    <p class="hero-mission">Everyone has a right to intelligence. It should just work.</p>
-  </section>
-
-  <!-- The 3D fills the viewport and IS the experience. The scroll track below is
-       empty, invisible space — it exists only to give the camera room to travel
-       through the system toward the finale. No marketing copy, no scroll cue. -->
-  <main id="top" aria-hidden="true">
-    <div class="scroll-track"></div>
+    <p class="hero-mission">Everyone has a right to intelligence.<br />It should just work.</p>
   </main>
 
-  <!-- Three.js + Lenis from CDN. No build step. Import map keeps the module clean. -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-      "lenis": "https://cdn.jsdelivr.net/npm/lenis@1.1.18/dist/lenis.mjs"
-    }
-  }
-  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
