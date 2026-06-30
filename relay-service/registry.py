@@ -95,6 +95,14 @@ class AgentRegistry:
 
     # ─── socket auth (spec §3.2, credential #1) ──────────────────────────────
 
+    def has_agent(self, agent_id: str) -> bool:
+        """Is this agent_id already enrolled? Lets the socket handler tell a
+        brand-new daemon (enroll it — trust-on-first-use) apart from a known
+        one presenting the wrong token (reject). The agent_id is an unguessable
+        256-bit value, so first-write-wins enrollment is safe: nobody can claim
+        an id they can't guess, and the bound token gates every later connect."""
+        return agent_id in self._agents
+
     def verify_token(self, agent_id: str, token: str) -> bool:
         """Authenticate a daemon's `hello`. Constant-time compare so the relay
         doesn't leak token bytes via timing. Unknown agent -> False."""

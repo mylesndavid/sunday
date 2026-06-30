@@ -133,7 +133,7 @@ class RelayConfig:
     docs/relay-and-inbox-spec.md §2/§9.
     """
     enabled: bool = False                       # opt-in; off = today's behavior
-    url: str = "wss://relay.sunday.xyz"         # BYO: point at your own
+    url: str = "wss://sunday-relay.fly.dev"     # Sunday-hosted (LIVE); BYO: point at your own
     agent_id: str = ""                          # minted on first enable, persisted
     # token lives in credentials.env (RELAY_TOKEN), not here
 
@@ -193,8 +193,26 @@ def load_config() -> SundayConfig:
         cfg.imessage_native = True
     if os.environ.get("SUNDAY_IMESSAGE_INDICATORS", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.imessage_indicators = True
+    # Relay: overlay the persisted toggle/url/agent_id from ~/.sunday/relay.json
+    # (the dedicated store, since there's no general config-to-disk path yet).
+    # This lands BEFORE the env overrides so SUNDAY_RELAY_* still wins. Imported
+    # inside the function to avoid an import cycle (relay.state → paths only,
+    # but config is imported very early). Tolerant of a missing/corrupt file.
+    try:
+        from sunday.relay import state as _relay_state
+        _rs = _relay_state.load()
+        cfg.relay.enabled = bool(_rs.get("enabled", cfg.relay.enabled))
+        _file_url = _rs.get("url")
+        if isinstance(_file_url, str) and _file_url.strip():
+            cfg.relay.url = _file_url.strip()
+        _file_agent = _rs.get("agent_id")
+        if isinstance(_file_agent, str) and _file_agent:
+            cfg.relay.agent_id = _file_agent
+    except Exception:  # noqa: BLE001 — never let a bad relay.json block startup
+        pass
     # Relay: BYO via env so a container / headless box can opt in without a
-    # YAML overlay. RELAY_TOKEN is a credential, not config — it never lives here.
+    # YAML overlay. Env wins over the file overlay above. RELAY_TOKEN is a
+    # credential, not config — it never lives here.
     if os.environ.get("SUNDAY_RELAY_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.relay.enabled = True
     relay_url = os.environ.get("SUNDAY_RELAY_URL")

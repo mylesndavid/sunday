@@ -3227,6 +3227,81 @@ class Daemon:
         ok = bool(result) and not (isinstance(result, dict) and result.get("error"))
         return web.json_response({"ok": ok, "error": result.get("error") if isinstance(result, dict) else None, "result": result})
 
+    # ─── relay (inbound event transport, spec §2/§9) ───────────────────────
+    # The hosted relay at wss://sunday-relay.fly.dev auto-enrolls a daemon on
+    # its first hello (trust-on-first-use): no registration call, just a stable
+    # persisted agent_id + RELAY_TOKEN. The enable toggle is a LIVE flag — the
+    # connect loop (relay/client.py) gates dialing on config.relay.enabled and
+    # re-checks every few seconds, so flipping it here takes effect without a
+    # daemon restart.
+
+    _RELAY_DEFAULT_URL = "wss://sunday-relay.fly.dev"
+
+    def _relay_status_payload(self) -> dict:
+        """The shared {/v1/relay/status} shape — also returned by enable so the
+        UI gets the fresh state in one round-trip. `connected` reflects the live
+        socket (set in relay/client.py post-hello), defaulting False."""
+        from sunday.relay.client import public_url
+        relay = self.config.relay
+        enabled = bool(relay.enabled)
+        url = relay.url or self._RELAY_DEFAULT_URL
+        if not enabled:
+            mode = "off"
+        elif url == self._RELAY_DEFAULT_URL:
+            mode = "sunday"
+        else:
+            mode = "byo"
+        # https form of the relay base (ws/wss host) for direct display.
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc or urlparse(url).path
+        base_url = f"https://{host}" if host else ""
+        return {
+            "enabled": enabled,
+            "mode": mode,
+            "connected": bool(getattr(self, "_relay_connected", False)),
+            "url": url,
+            "agent_id": relay.agent_id or "",
+            "base_url": base_url,
+            "channels": {
+                "texting": public_url(self.config, "sendblue"),
+                "email": public_url(self.config, "agentmail"),
+                "webhook": public_url(self.config, "hook/"),
+            },
+        }
+
+    async def _http_relay_status(self, request: web.Request) -> web.Response:
+        """Relay toggle + connection state for the Inbox/Settings relay card."""
+        return web.json_response(self._relay_status_payload())
+
+    async def _http_relay_enable(self, request: web.Request) -> web.Response:
+        """Flip the relay toggle (and optionally point it at a BYO url).
+
+        Persists via relay.state so it survives restarts, applies to the live
+        config so the connect loop picks it up immediately, and mints+persists a
+        durable agent_id on first enable (the public URLs embed it, so it has to
+        be stable). Returns the same shape as /v1/relay/status."""
+        from sunday.relay import state as relay_state
+        from sunday.relay.client import _ensure_agent_id
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            return web.json_response({"error": "invalid JSON"}, status=400)
+        if "enabled" not in body or not isinstance(body.get("enabled"), bool):
+            return web.json_response({"error": "body must include boolean 'enabled'"}, status=400)
+        enabled = bool(body["enabled"])
+        url = body.get("url")
+        persist: dict = {"enabled": enabled}
+        if isinstance(url, str) and url.strip():
+            persist["url"] = url.strip()
+            self.config.relay.url = url.strip()
+        relay_state.save(persist)
+        self.config.relay.enabled = enabled
+        # Mint + persist a stable agent_id now if we don't have one yet, so the
+        # public URLs are populated in the response and the first hello is valid.
+        if not self.config.relay.agent_id:
+            _ensure_agent_id(self.config)
+        return web.json_response(self._relay_status_payload())
+
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
         app.router.add_post("/v1/say", self._http_say)
@@ -3273,6 +3348,8 @@ class Daemon:
         app.router.add_post("/v1/channels/sendblue/test", self._http_sendblue_test)
         app.router.add_get("/v1/channels/agentmail/status", self._http_agentmail_status)
         app.router.add_post("/v1/channels/agentmail/test", self._http_agentmail_test)
+        app.router.add_get("/v1/relay/status", self._http_relay_status)
+        app.router.add_post("/v1/relay/enable", self._http_relay_enable)
         app.router.add_post("/v1/codex/login", self._http_codex_login)
         app.router.add_get("/v1/codex/status", self._http_codex_status)
         app.router.add_get("/v1/gmail/status", self._http_gmail_status)

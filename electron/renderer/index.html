@@ -488,6 +488,51 @@
           <h2>Channels</h2>
           <p class="set-help">The three ways Sunday reaches out and gets reached — phone, texting, and email — each on her own line. This is set up on the brain: the always-on Mac she lives on.</p>
 
+          <!-- ── RELAY (transport for texts/emails/webhooks — no DNS/tunnels) ── -->
+          <h3 class="sys-sub">Relay</h3>
+
+          <div class="set-panel" id="relay-panel">
+            <div class="brain-label">Relay</div>
+            <p class="set-help set-help-tight">The relay lets texts, emails, and webhooks reach Sunday without DNS, tunnels, or a VPS. Sunday hosts one for you, or you can point at your own.</p>
+            <div class="seg" id="relay-mode" role="group" aria-label="Relay mode">
+              <button type="button" class="seg-btn" data-mode="off" aria-pressed="false">Off</button>
+              <button type="button" class="seg-btn" data-mode="sunday" aria-pressed="false">Sunday's relay</button>
+              <button type="button" class="seg-btn" data-mode="byo" aria-pressed="false">My own relay</button>
+            </div>
+            <label class="set-field" id="relay-url-row" hidden>
+              <span class="set-field-l">Relay URL</span>
+              <input type="text" id="relay-url" class="field mono" placeholder="wss://my-relay.example.com" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="set-actions">
+              <span class="set-verify" id="relay-status" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="relay-save">Apply</button>
+            </div>
+            <div id="relay-urls" hidden>
+              <p class="set-help set-help-tight">Your webhook URLs — paste each into the matching provider so events reach Sunday.</p>
+              <div class="set-field">
+                <span class="set-field-l">Texting</span>
+                <div class="net-url-row">
+                  <input type="text" id="relay-url-texting" class="field mono" readonly aria-label="Relay texting webhook URL">
+                  <button type="button" class="btn" id="relay-url-texting-copy">Copy</button>
+                </div>
+              </div>
+              <div class="set-field">
+                <span class="set-field-l">Email</span>
+                <div class="net-url-row">
+                  <input type="text" id="relay-url-email" class="field mono" readonly aria-label="Relay email webhook URL">
+                  <button type="button" class="btn" id="relay-url-email-copy">Copy</button>
+                </div>
+              </div>
+              <div class="set-field">
+                <span class="set-field-l">Webhooks</span>
+                <div class="net-url-row">
+                  <input type="text" id="relay-url-webhook" class="field mono" readonly aria-label="Relay webhook URL">
+                  <button type="button" class="btn" id="relay-url-webhook-copy">Copy</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- ── PHONE (outbound calls via VAPI) ── -->
           <h3 class="sys-sub">Phone</h3>
 

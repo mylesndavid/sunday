@@ -73,21 +73,33 @@ security story:
    fine gate. Compromising a public URL never grants the socket, and vice-versa.
 
 **The daemon mints both credentials** — a 256-bit `agent_id` and a 256-bit
-`token` — on first relay-enable, and persists them to `~/.sunday/credentials.env`.
-The relay never mints secrets (that keeps secret generation on the user's
-machine). The daemon then registers `(agent_id, token)` with the relay one of two
-ways:
+`token` — on first relay-enable, and persists them (`agent_id` in
+`~/.sunday/relay.json`, `token` in `~/.sunday/credentials.env`). The relay never
+mints secrets — that keeps secret generation on the user's machine.
 
-- **Self-register (recommended):** `POST /admin/register` with
-  `Authorization: Bearer <ADMIN_TOKEN>` and body
-  `{"agent_id": "...", "token": "...", "slugs": {...}}`. Idempotent — safe to
-  call on every boot.
-- **Hand-edit:** the operator edits `agents.json` directly (see
-  `agents.example.json`). Useful for BYO single-box deploys.
+**Enrollment is trust-on-first-use (the default — nothing to configure).** The
+daemon just *connects*. On the first `hello` for an `agent_id` the relay has
+never seen, the relay enrolls it (binds that `agent_id` → `token`) and accepts.
+Every later connect must present the same bound `token`. This is what makes both
+Sunday's hosted relay **and** a BYO relay work by *pointing a URL and toggling
+on* — no admin token on the daemon, no registration call, no `agents.json` edit.
 
-If `RELAY_ADMIN_TOKEN` is unset, the `/admin/register` route returns 404 and
-hand-editing is the only registration path — a deliberate per-deploy posture
-choice.
+It's safe because `agent_id` is an unguessable 256-bit value: you can't claim an
+id you can't guess, and the bound token gates every subsequent connect. The only
+residual abuse vector — enrollment *spam* from one source — is rate-limited
+(`RELAY_ENROLL_MAX_PER_IP` new enrollments per `RELAY_ENROLL_WINDOW`, and a
+global `RELAY_ENROLL_MAX_AGENTS` cap). Reconnects of known agents are never
+limited. When Sunday grows an account system, enrollment can be tied to identity;
+until then, TOFU + rate-limit is the pragmatic, standard posture.
+
+**Optional explicit registration** (for management, pre-provisioning, or
+per-slug auth) still exists:
+
+- `POST /admin/register` with `Authorization: Bearer <ADMIN_TOKEN>` and body
+  `{"agent_id": "...", "token": "...", "slugs": {...}}`. Idempotent. Returns 404
+  when `RELAY_ADMIN_TOKEN` is unset.
+- Hand-edit `agents.json` (see `agents.example.json`) — e.g. to attach per-slug
+  tokens/HMAC to an already-TOFU-enrolled agent.
 
 Per-slug authorization in `agents.json`:
 
@@ -147,6 +159,9 @@ curl -s -X POST "localhost:8787/u/abc123/agentmail" \
 | `RELAY_MISSED_PONGS` | `2` | dropped after this many missed pongs |
 | `RELAY_RATE_BURST` | `60` | per-agent token-bucket burst |
 | `RELAY_RATE_REFILL` | `10` | per-agent refill (tokens/sec) |
+| `RELAY_ENROLL_MAX_PER_IP` | `20` | max NEW (TOFU) enrollments per IP per window |
+| `RELAY_ENROLL_WINDOW` | `3600` | enrollment rate-limit window (s) |
+| `RELAY_ENROLL_MAX_AGENTS` | `10000` | global cap on enrolled agents |
 | `RELAY_BUFFER_FRAMES` | `32` | reconnect ring depth (per agent) |
 | `RELAY_BUFFER_TTL` | `30` | reconnect ring TTL (s) before poller backstop |
 | `RELAY_MAX_BODY` | `2097152` | max inbound body bytes -> 413 |
@@ -175,13 +190,37 @@ hosted relay is the default; running your own is a URL change, not a fork:
 
 | Mode | How |
 | --- | --- |
-| Relay (Sunday-hosted) | daemon `relay.enabled = true`, default `url` — zero setup |
-| Relay (BYO) | deploy this, `relay.url = wss://my-relay…`, register the daemon |
-| Funnel | `relay.enabled = false`, `sunday net configure` (Tailscale) |
-| Direct | `relay.enabled = false`, reverse-proxy `/webhooks/*` (VPS + Caddy) |
+| Relay (Sunday-hosted) | in Settings → Channels → Relay, pick **Sunday's relay** — zero setup |
+| Relay (BYO) | deploy this, then pick **My own relay** and paste `wss://my-relay…` |
+| Funnel | turn the relay off, `sunday net configure` (Tailscale) |
+| Direct | turn the relay off, reverse-proxy `/webhooks/*` (VPS + Caddy) |
 
 Because the relay is dumb and stateless, BYO is "deploy a small socket-broker,
-set a URL" — that's the property that keeps the agent itself local.
+set a URL" — and TOFU means there's no registration step: your daemon enrolls
+itself the moment it connects.
+
+### Deploy your own on Fly (one walkthrough)
+
+`fly.toml` here is already production-shaped — note `auto_stop_machines = false`
+and `min_machines_running = 1`: the relay holds long-lived WebSockets, so it must
+**never** be suspended, or every daemon's socket drops.
+
+```bash
+cd relay-service
+fly launch --copy-config --no-deploy --name my-sunday-relay   # reuse fly.toml
+fly volumes create relay_data --size 1 --region <your-region> -a my-sunday-relay
+fly deploy -a my-sunday-relay
+# (optional) only if you want explicit registration / per-slug auth:
+fly secrets set RELAY_ADMIN_TOKEN=$(openssl rand -hex 32) -a my-sunday-relay
+```
+
+Then in Sunday: **Settings → Channels → Relay → My own relay**, paste
+`wss://my-sunday-relay.fly.dev`, and toggle on. Your daemon connects, TOFU-enrolls
+itself, and the per-channel public URLs appear for you to paste into providers.
+
+The same pattern works on Railway/Render or any container host — the only hard
+requirements are: holds a persistent WebSocket (no idle suspend) and has a volume
+at `/data` so the registry survives restarts.
 
 ## Reconnect buffer (why a 2s blip doesn't lose an event)
 

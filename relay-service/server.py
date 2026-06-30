@@ -85,6 +85,19 @@ MISSED_PONGS_BEFORE_DROP = int(os.environ.get("RELAY_MISSED_PONGS", "2"))
 RATE_BURST = float(os.environ.get("RELAY_RATE_BURST", "60"))
 RATE_REFILL_PER_SEC = float(os.environ.get("RELAY_RATE_REFILL", "10"))
 
+# Trust-on-first-use enrollment (spec §3, multi-tenant + BYO). An UNKNOWN
+# agent_id is enrolled on its first `hello` — no admin token needed. That single
+# decision is what makes BOTH Sunday's hosted relay and a self-hosted BYO relay
+# work by just pointing a URL and connecting; nobody hand-registers a daemon.
+# It's safe because the agent_id is an unguessable 256-bit value (you can't
+# claim what you can't guess) and the bound token gates every later connect.
+# The only residual abuse vector is enrollment SPAM from one source, so we cap
+# NEW enrollments per IP per window (known agents reconnecting are never limited)
+# and bound total registry growth.
+ENROLL_MAX_PER_IP  = int(os.environ.get("RELAY_ENROLL_MAX_PER_IP", "20"))
+ENROLL_WINDOW_SECS = float(os.environ.get("RELAY_ENROLL_WINDOW", "3600"))
+ENROLL_MAX_AGENTS  = int(os.environ.get("RELAY_ENROLL_MAX_AGENTS", "10000"))
+
 # Reconnect buffer (spec §2, §8). Ring of recent *unacked* webhook frames per
 # agent, replayed once on reconnect so a brief daemon blip doesn't drop an
 # event. Bounded by count AND age — anything older than the TTL falls through to
@@ -176,6 +189,24 @@ class Relay:
         self.registry = registry
         # The single piece of mutable routing state in the whole service.
         self.conns: dict[str, AgentConn] = {}
+        # Per-IP timestamps of recent NEW enrollments (TOFU spam guard). Only
+        # touched on first-ever hello for an unknown agent_id; reconnects skip it.
+        self._enroll_hits: dict[str, deque] = {}
+
+    def _enroll_allowed(self, ip: str) -> bool:
+        """Gate trust-on-first-use enrollment of a brand-new agent_id. Caps NEW
+        enrollments per source IP per window, and total registry size. Returns
+        False to refuse (the socket is then closed 4029)."""
+        if len(self.registry._agents) >= ENROLL_MAX_AGENTS:
+            return False
+        now = time.monotonic()
+        hits = self._enroll_hits.setdefault(ip or "?", deque())
+        while hits and now - hits[0] > ENROLL_WINDOW_SECS:
+            hits.popleft()
+        if len(hits) >= ENROLL_MAX_PER_IP:
+            return False
+        hits.append(now)
+        return True
 
     # ─── daemon socket: GET /ws ──────────────────────────────────────────────
 
@@ -212,13 +243,25 @@ class Relay:
         if hello.get("type") != "hello" or not agent_id or not token:
             await ws.close(code=4001, message=b"malformed hello")
             return ws
-        # Auth (spec §3.2): the socket is authenticated by the relay TOKEN — it
-        # proves "I am agent X's daemon." This is a separate credential from the
-        # public URL's agent_id. We verify the token in constant time.
-        if not self.registry.verify_token(agent_id, token):
-            log.warning("ws auth rejected", agent_id=_redact(agent_id))
-            await ws.close(code=4003, message=b"auth failed")
-            return ws
+        # Auth + trust-on-first-use enrollment (spec §3.2). The socket token
+        # proves "I am agent X's daemon" — a separate credential from the public
+        # URL's agent_id. A KNOWN agent_id must present its bound token (constant
+        # time). An UNKNOWN agent_id is enrolled on the spot — no admin token —
+        # so a daemon (Sunday's relay OR a BYO relay) comes online by just
+        # connecting. The agent_id is unguessable, so enrollment can't hijack
+        # anyone; we only rate-limit enrollment spam per source IP.
+        if self.registry.has_agent(agent_id):
+            if not self.registry.verify_token(agent_id, token):
+                log.warning("ws auth rejected", agent_id=_redact(agent_id))
+                await ws.close(code=4003, message=b"auth failed")
+                return ws
+        else:
+            if not self._enroll_allowed(request.remote or ""):
+                log.warning("ws enroll rate-limited", ip=request.remote)
+                await ws.close(code=4029, message=b"enroll rate limited")
+                return ws
+            self.registry.register(agent_id, token)
+            log.info("ws enrolled (tofu)", agent_id=_redact(agent_id))
 
         # ── replace any prior socket for this agent (reconnect) ─────────────
         # A daemon that reconnects before the old socket's close was processed

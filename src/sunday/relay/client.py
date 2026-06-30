@@ -73,17 +73,28 @@ LOOPBACK_TIMEOUT_SECONDS = 120
 # never serialized into config.yaml.
 
 def _ensure_agent_id(config: SundayConfig) -> str:
-    """Return the agent_id, minting + persisting one on first enable.
+    """Return the agent_id, minting + DURABLY persisting one on first enable.
 
-    An explicit config/env value (SUNDAY_RELAY_AGENT_ID) wins. Otherwise we mint
-    a urlsafe token and stash it back on the config object so the rest of this
-    process — and public_url() — sees it immediately. (YAML persistence of the
-    minted id rides the daemon's existing config-write path; we don't reach into
-    config.yaml from here.)"""
+    Stability matters: the public URLs embed agent_id, so it must survive
+    restarts (the hosted relay trust-on-first-use binds the id to the agent on
+    first hello). An explicit config/env value (SUNDAY_RELAY_AGENT_ID) wins.
+    Otherwise we read it back from the relay.json store; failing that we mint a
+    urlsafe token and write it to the store AND onto the config object so the
+    rest of this process — and public_url() — sees it immediately."""
+    from sunday.relay import state as relay_state
     if config.relay.agent_id:
+        # Already on config (env override or this-process mint); make sure it's
+        # durable too so it survives the next restart.
+        if relay_state.get_agent_id() != config.relay.agent_id:
+            relay_state.set_agent_id(config.relay.agent_id)
         return config.relay.agent_id
+    stored = relay_state.get_agent_id()
+    if stored:
+        config.relay.agent_id = stored
+        return stored
     agent_id = secrets.token_urlsafe(18)
     config.relay.agent_id = agent_id
+    relay_state.set_agent_id(agent_id)
     log.info("relay agent_id minted", agent_id=agent_id)
     return agent_id
 
@@ -231,6 +242,9 @@ async def _run_socket(daemon: Any, config: SundayConfig, agent_id: str, token: s
                 "token": token,
                 "version": 1,
             })
+            # Connected + helloed — the hosted relay auto-enrolls us on this
+            # first hello (trust-on-first-use). Flag it for the status endpoint.
+            daemon._relay_connected = True
             log.info("relay connected", url=ws_url, agent_id=agent_id)
             pinger = asyncio.create_task(_pinger(ws))
 
@@ -258,24 +272,49 @@ async def _run_socket(daemon: Any, config: SundayConfig, agent_id: str, token: s
     finally:
         if pinger is not None:
             pinger.cancel()
+        daemon._relay_connected = False
         await session.close()
 
 
-async def _connect_loop(daemon: Any) -> None:
-    """The background task. Reconnects forever with exponential backoff + full
-    jitter. Mints/loads identity once, up front, so the first hello is valid."""
-    config: SundayConfig = daemon.config
-    if not config.relay.enabled:
-        log.info("relay disabled — connect loop not started")
-        return
+# How often the loop re-checks the LIVE enabled flag while the relay is toggled
+# off, so flipping it ON in the UI takes effect without a daemon restart.
+DISABLED_RECHECK_SECONDS = 3.0
 
-    agent_id = _ensure_agent_id(config)
-    token = _ensure_relay_token()
-    pub = public_url(config, "<slug>")
-    log.info("relay client starting", url=config.relay.url, public_url=pub)
+
+async def _connect_loop(daemon: Any) -> None:
+    """The background task — ALWAYS registered, so the toggle is a live flag
+    rather than a restart. Gates DIALING on daemon.config.relay.enabled: when
+    disabled it sleeps and re-checks (no socket); when enabled it runs the
+    connect/serve cycle, reconnecting forever with exponential backoff + full
+    jitter. Identity (agent_id/token) is minted/loaded lazily on first enable so
+    the first hello is valid and the id is durable."""
+    # Defensive init so the status endpoint can read it before we ever connect.
+    if not hasattr(daemon, "_relay_connected"):
+        daemon._relay_connected = False
 
     backoff = BACKOFF_BASE_SECONDS
+    started_logged = False
     while True:
+        config: SundayConfig = daemon.config
+        if not config.relay.enabled:
+            # Toggled off (or never enabled): do NOT dial. Re-check the live
+            # flag shortly so an enable in the UI is picked up without restart.
+            daemon._relay_connected = False
+            started_logged = False
+            try:
+                await asyncio.sleep(DISABLED_RECHECK_SECONDS)
+            except asyncio.CancelledError:
+                log.info("relay connect loop cancelled")
+                return
+            continue
+
+        agent_id = _ensure_agent_id(config)
+        token = _ensure_relay_token()
+        if not started_logged:
+            pub = public_url(config, "<slug>")
+            log.info("relay client starting", url=config.relay.url, public_url=pub)
+            started_logged = True
+
         try:
             await _run_socket(daemon, config, agent_id, token)
             backoff = BACKOFF_BASE_SECONDS  # a clean disconnect resets backoff
@@ -284,6 +323,8 @@ async def _connect_loop(daemon: Any) -> None:
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("relay connection failed", error=str(exc))
+        finally:
+            daemon._relay_connected = False
         # Full jitter: sleep uniformly in [0, backoff], then grow the ceiling.
         delay = random.uniform(0, backoff)
         await asyncio.sleep(delay)
@@ -293,15 +334,15 @@ async def _connect_loop(daemon: Any) -> None:
 # ─── registration (channel-style) ──────────────────────────────────────────
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
-    """Channel-style entry point. Registers the relay connect loop as a daemon
-    background task — but ONLY when the relay is enabled, so a default install
-    (relay.enabled = False) does exactly today's thing: no socket, no relay.
+    """Channel-style entry point. ALWAYS registers the relay connect loop as a
+    daemon background task. The loop itself gates dialing on the LIVE
+    config.relay.enabled flag, so the enable/disable toggle takes effect at
+    runtime without a daemon restart — a disabled relay just sleeps and re-checks
+    instead of dialing. A default install (relay.enabled = False) therefore still
+    does exactly today's thing on the wire: no socket, no relay.
 
     No tools and no webhook handlers register here: the relay is a transport,
     not a channel. It delivers OTHER channels' webhooks via loopback."""
-    if not config.relay.enabled:
-        log.info("relay not enabled — skipping registration")
-        return
     from sunday.daemon import register_background_task
     register_background_task(_connect_loop)
-    log.info("relay client registered", url=config.relay.url)
+    log.info("relay client registered", url=config.relay.url, enabled=config.relay.enabled)

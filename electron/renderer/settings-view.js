@@ -78,6 +78,7 @@ export async function loadAll() {
   loadMcp();
   loadGmailStatus();
   loadCockpitStatus();
+  loadRelayStatus();
   loadVapiStatus();
   loadAgentmailStatus();
   loadNet();
@@ -1484,6 +1485,85 @@ async function copyWebhook() {
   } catch { /* clipboard blocked — the field is selectable as a fallback */ }
 }
 
+// Relay — the transport that lets texts/emails/webhooks reach Sunday without
+// DNS/tunnels. Off / Sunday's hosted relay / the owner's own (BYO). Status
+// reflects the daemon's view; when connected we surface the paste-able public
+// webhook URLs. If the daemon predates the relay endpoints (404), the whole
+// panel hides gracefully.
+function setRelayMode(mode) {
+  document.querySelectorAll('#relay-mode .seg-btn').forEach((b) => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const row = $('#relay-url-row');
+  if (row) row.hidden = mode !== 'byo';
+}
+
+function relayMode() {
+  return document.querySelector('#relay-mode .seg-btn.active')?.dataset.mode || 'off';
+}
+
+async function loadRelayStatus() {
+  const panel = $('#relay-panel'); if (!panel) return;
+  let res, d;
+  try { res = await fetch(`${DAEMON_HTTP}/v1/relay/status`); }
+  catch { return; }   // daemon unreachable — leave panel as-is, other loaders report
+  if (res.status === 404) { panel.hidden = true; return; }   // daemon predates relay
+  panel.hidden = false;
+  try { d = await res.json(); } catch { return; }
+  setRelayMode(d.mode || 'off');
+  const urlField = $('#relay-url');
+  if (urlField && d.url) urlField.value = d.url;
+  const line = $('#relay-status');
+  if (line) {
+    if (d.connected) { line.dataset.state = 'ok'; line.textContent = `connected · ${(d.agent_id || '').slice(0, 8)}`; }
+    else if (d.enabled) { line.dataset.state = 'wait'; line.textContent = 'connecting…'; }
+    else { line.dataset.state = ''; line.textContent = 'off'; }
+  }
+  const urls = $('#relay-urls');
+  if (d.connected && d.channels) {
+    const ch = d.channels;
+    if ($('#relay-url-texting')) $('#relay-url-texting').value = ch.texting || '';
+    if ($('#relay-url-email')) $('#relay-url-email').value = ch.email || '';
+    if ($('#relay-url-webhook')) $('#relay-url-webhook').value = ch.webhook || '';
+    if (urls) urls.hidden = false;
+  } else if (urls) {
+    urls.hidden = true;
+  }
+}
+
+async function saveRelay() {
+  const mode = relayMode();
+  const line = $('#relay-status');
+  const body = { enabled: mode !== 'off' };
+  if (mode === 'byo') {
+    const url = $('#relay-url')?.value.trim() || '';
+    if (!url) { if (line) { line.dataset.state = 'wait'; line.textContent = 'Enter your relay URL.'; } return; }
+    body.url = url;
+  }
+  if (line) { line.dataset.state = 'wait'; line.textContent = 'applying…'; }
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/relay/enable`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await loadRelayStatus();
+  } catch (err) {
+    if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; }
+  }
+}
+
+async function copyRelayUrl(inputSel, btnSel) {
+  const url = $(inputSel)?.value || '';
+  if (!url) return;
+  const btn = $(btnSel);
+  try {
+    await navigator.clipboard.writeText(url);
+    if (btn) { const t = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = t; }, 1200); }
+  } catch { /* clipboard blocked — the field is selectable as a fallback */ }
+}
+
 async function sendTestText() {
   const to = e164US($('#sb-test-to')?.value || '');
   const line = $('#sb-test-status');
@@ -1626,6 +1706,14 @@ function wire() {
   });
   $('#vapi-test-call')?.addEventListener('click', () => placeTestCall());
   $('#vapi-test-to')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); placeTestCall(); } });
+
+  // Relay (transport for texts/emails/webhooks — no DNS/tunnels)
+  document.querySelectorAll('#relay-mode .seg-btn').forEach((b) => b.addEventListener('click', () => setRelayMode(b.dataset.mode)));
+  $('#relay-save')?.addEventListener('click', () => saveRelay());
+  $('#relay-url')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveRelay(); } });
+  $('#relay-url-texting-copy')?.addEventListener('click', () => copyRelayUrl('#relay-url-texting', '#relay-url-texting-copy'));
+  $('#relay-url-email-copy')?.addEventListener('click', () => copyRelayUrl('#relay-url-email', '#relay-url-email-copy'));
+  $('#relay-url-webhook-copy')?.addEventListener('click', () => copyRelayUrl('#relay-url-webhook', '#relay-url-webhook-copy'));
 
   // Texting (Sendblue over Tailscale)
   $('#net-setup')?.addEventListener('click', () => setupTexting());
