@@ -540,6 +540,56 @@ def _msg_ts(msg: dict[str, Any]) -> float:
         return 0.0
 
 
+def _msg_to_event(m: dict[str, Any], own_address: str | None) -> dict[str, Any] | None:
+    """Map one AgentMail message → an activity-store event. Both directions: a
+    message Sunday SENT (peer = the recipient) and one she RECEIVED (peer = the
+    sender) both belong in the Inbox, so it mirrors the account."""
+    mid = m.get("message_id") or m.get("id")
+    if not mid:
+        return None
+    inbound = _is_inbound(m, own_address)
+    sender = str(m.get("from") or "")
+    to = m.get("to")
+    to = ", ".join(str(t) for t in to) if isinstance(to, list) else str(to or "")
+    subject = str(m.get("subject") or "")
+    snippet = str(m.get("preview") or m.get("snippet") or m.get("text") or "")
+    raw_ts = m.get("timestamp") or m.get("createdAt") or m.get("created_at")
+    return {
+        "id": str(mid),
+        "channel": "email",
+        "direction": "in" if inbound else "out",
+        "peer": (sender if inbound else to) or "?",
+        "ts": str(raw_ts) if raw_ts else None,
+        "preview": (subject or snippet)[:140],
+        "status": "received" if inbound else "sent",
+        "thread_id": m.get("thread_id"),
+        "provider_id": str(mid),
+        "raw_json": {"subject": subject, "preview": snippet, "from": sender, "to": to,
+                     "direction": "in" if inbound else "out"},
+    }
+
+
+async def _sync_messages_to_store(daemon: Any, messages: list[dict[str, Any]], own_address: str | None) -> int:
+    """Mirror AgentMail's message list (SENT + RECEIVED) into the local activity
+    store so the Inbox reflects what's actually in the account — not just what we
+    happened to catch at send/receive time. upsert() refreshes a row in place, so
+    re-syncing the same window every poll is cheap and idempotent."""
+    act = getattr(daemon, "activity", None)
+    if act is None:
+        return 0
+    n = 0
+    for m in messages:
+        ev = _msg_to_event(m, own_address)
+        if ev is None:
+            continue
+        try:
+            await act.upsert(ev)
+            n += 1
+        except Exception:  # noqa: BLE001 — one bad row shouldn't sink the sweep
+            log.exception("agentmail store sync row failed", message_id=ev.get("id"))
+    return n
+
+
 async def start_poller(daemon: Any) -> None:
     """Backup loop for when AgentMail's webhook isn't reaching us (no relay yet,
     or a dropped hosted delivery).
@@ -569,9 +619,14 @@ async def start_poller(daemon: Any) -> None:
         async with httpx.AsyncClient(timeout=15) as client:
             res = await client.get(messages_url, headers=_agentmail_headers(), params={"limit": POLL_LIMIT})
         if res.status_code == 200:
+            seed_msgs = _extract_messages(res.json())
+            # Mirror the full message list (sent + received) into the activity
+            # store up front, so the Inbox shows the account's real history the
+            # moment the daemon starts — not just messages that arrive later.
+            await _sync_messages_to_store(daemon, seed_msgs, own_address)
             seeded = 0
             inbound_left = 0
-            for m in _extract_messages(res.json()):
+            for m in seed_msgs:
                 mid = m.get("message_id") or m.get("id")
                 if not mid:
                     continue
@@ -594,6 +649,14 @@ async def start_poller(daemon: Any) -> None:
                 log.warning("agentmail poll non-200", status=res.status_code)
                 continue
             msgs = _extract_messages(res.json())
+
+            # Mirror every message (both directions) into the activity store so
+            # the Inbox reflects AgentMail itself, then nudge any open Inbox.
+            if await _sync_messages_to_store(daemon, msgs, own_address) and hasattr(daemon, "_broadcast"):
+                try:
+                    await daemon._broadcast({"type": "inbox", "channel": "email"})
+                except Exception:  # noqa: BLE001
+                    pass
 
             for m in reversed(msgs):  # oldest unseen first
                 mid = m.get("message_id") or m.get("id")
