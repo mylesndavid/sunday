@@ -24,12 +24,14 @@
   <canvas id="cosmos" aria-hidden="true"></canvas>
 
   <!-- CSS deep-space fallback, shown only if WebGL is unavailable (app.js toggles a
-       class on <html>). Tasteful radial dark + a sprinkle of CSS stars. -->
+       class on <html>). Tasteful radial dark + a sprinkle of CSS stars + a low
+       sun on the horizon with warmth bleeding upward, matching the live finale. -->
   <div id="fallback-sky" aria-hidden="true">
     <span class="star"></span><span class="star"></span><span class="star"></span>
     <span class="star"></span><span class="star"></span><span class="star"></span>
     <span class="star"></span><span class="star"></span><span class="star"></span>
     <span class="star"></span><span class="star"></span><span class="star"></span>
+    <span class="fallback-glow"></span>
     <span class="fallback-sun"></span>
   </div>
 
@@ -43,13 +45,17 @@
     </nav>
   </header>
 
-  <!-- One quiet line floats in within the scene near the end of the journey.
-       It is real DOM text (faded in by app.js), not part of the canvas. -->
-  <p class="scene-line" id="scene-line" aria-hidden="false">Yours. On your machine.</p>
+  <!-- The hero overlay: the climax of the journey. The HUGE wordmark + mission
+       are real, focusable DOM text composed over the canvas (where the sun lands
+       low on the horizon). app.js fades them in (.is-in) as the camera arrives. -->
+  <section class="hero" aria-label="Sunday">
+    <h1 class="hero-title">Sunday</h1>
+    <p class="hero-mission">Everyone has a right to intelligence. It should just work.</p>
+  </section>
 
   <!-- The 3D fills the viewport and IS the experience. The scroll track below is
        empty, invisible space — it exists only to give the camera room to travel
-       through the system. No marketing copy, no scroll cue. -->
+       through the system toward the finale. No marketing copy, no scroll cue. -->
   <main id="top" aria-hidden="true">
     <div class="scroll-track"></div>
   </main>
