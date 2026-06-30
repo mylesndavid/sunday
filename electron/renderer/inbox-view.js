@@ -31,6 +31,9 @@ let detailSeq = 0;
 let currentItems = [];
 let selectedId = null;
 let searchQuery = '';
+// Whether the active single-channel facet is configured — set on each empty
+// load, drives the "Set up <channel>" CTA vs a plain "nothing here yet".
+let currentFacetSetup = true;
 
 // Extra elements not wired through app.js's refs — queried by id directly.
 let elSearch = null, elDetailEmpty = null, elDetailBody = null;
@@ -66,6 +69,14 @@ async function fetchList() {
     if (seq !== listSeq) return;            // a newer facet superseded this load
     loaded = true;
     currentItems = items;
+    // For an empty single-channel facet, find out whether that channel is even
+    // set up — drives the "Set up X" CTA vs a plain "nothing here yet".
+    if (!items.length && channel !== 'all') {
+      currentFacetSetup = await isFacetSetup(channel);
+      if (seq !== listSeq) return;
+    } else {
+      currentFacetSetup = true;
+    }
     renderRows();
   } catch (err) {
     if (seq !== listSeq) return;
@@ -124,6 +135,73 @@ function renderError(msg) {
   els.errorSub.textContent = msg;
 }
 
+// The list's empty state, rendered INSIDE the rows area (a flex column) so it
+// centers via margin:auto — a sibling element gets shoved to the bottom by the
+// flex:1 rows. For a single-channel facet that isn't configured yet it becomes
+// an actionable "Set up <channel>" button instead of a dead end.
+function paintEmpty() {
+  els.empty.hidden = true;
+  els.error.hidden = true;
+  const inner = document.createElement('div');
+  inner.className = 'inbox-empty-inner';
+  const h = document.createElement('h3');
+  const p = document.createElement('p');
+  if (channel !== 'all' && !currentFacetSetup) {
+    const noun = nounFor(channel);
+    h.textContent = `${cap(noun)} isn't set up yet`;
+    p.textContent = `Connect ${noun} and it'll land here.`;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-primary inbox-empty-cta';
+    b.textContent = `Set up ${noun}`;
+    b.addEventListener('click', () => gotoChannelSetup(channel));
+    inner.append(h, p, b);
+  } else {
+    h.textContent = 'Nothing here yet';
+    p.textContent = 'When Sunday places a call, sends a text, or gets an email, it shows up here.';
+    inner.append(h, p);
+  }
+  els.rows.innerHTML = '';
+  els.rows.appendChild(inner);
+}
+
+// Is the channel behind this facet actually configured? Best-effort — on any
+// error we assume it IS set up (no false "set up X" nag), since an empty inbox
+// for a working channel is perfectly normal.
+async function isFacetSetup(ch) {
+  const url = ch === 'text' ? '/v1/net/status'
+    : ch === 'email' ? '/v1/channels/agentmail/status'
+    : ch === 'voice' ? '/v1/vapi/status' : null;
+  if (!url) return true;
+  try {
+    const d = await (await fetch(`${cfg.daemonHttp}${url}`, { signal: AbortSignal.timeout(8000) })).json();
+    const s = d.sendblue || d;          // /v1/net/status wraps the sendblue block
+    return !!(s.connected || s.configured);
+  } catch { return true; }
+}
+
+// Jump to Settings → Channels and open the relevant channel's form.
+function gotoChannelSetup(ch) {
+  const panelId = { text: 'sb-panel', email: 'am-panel', voice: 'vapi-panel' }[ch];
+  document.querySelector('.tab[data-view="settings"]')?.click();
+  document.querySelector('.set-navitem[data-page="page-channels"]')?.click();
+  if (!panelId) return;
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.classList.remove('is-collapsed');                 // open the form
+  const edit = panel.querySelector('.ch-edit');
+  if (edit) edit.textContent = 'Done';
+  setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+}
+
+function nounFor(ch) {
+  return ch === 'text' ? 'text messaging'
+    : ch === 'email' ? 'email'
+    : ch === 'voice' ? 'calling'
+    : channelLabel(ch).toLowerCase();
+}
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
 // Paint the list from currentItems, honouring the client-side search filter and
 // the selected-row highlight.
 function renderRows() {
@@ -134,7 +212,7 @@ function renderRows() {
         (it.peer || '').toLowerCase().includes(q) || (it.preview || '').toLowerCase().includes(q))
     : currentItems;
 
-  if (!currentItems.length) { els.empty.hidden = false; els.error.hidden = true; return; }
+  if (!currentItems.length) { paintEmpty(); return; }
   els.empty.hidden = true;
   els.error.hidden = true;
   if (!items.length) {

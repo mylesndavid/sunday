@@ -1342,6 +1342,18 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .inbox-state h3 { font-size: 15px; color: var(--text-2); margin: 0 0 8px; font-weight: 600; }
 .inbox-state p { font-size: 12.5px; max-width: 260px; margin: 0 auto; line-height: 1.5; }
 
+/* Empty state rendered inside the flex:1 rows area: margin:auto centers it both
+   ways, so it sits in the middle of the list pane instead of pinned to a top or
+   bottom edge. */
+.inbox-empty-inner {
+  margin: auto; text-align: center; max-width: 250px;
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  padding: 24px; color: var(--text-3);
+}
+.inbox-empty-inner h3 { font-size: 15px; color: var(--text-2); margin: 0; font-weight: 600; }
+.inbox-empty-inner p { font-size: 12.5px; margin: 0; line-height: 1.5; }
+.inbox-empty-inner .inbox-empty-cta { margin-top: 5px; }
+
 /* Right detail pane */
 .inbox-detail { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
 .inbox-detail-body { width: 100%; max-width: 720px; margin: 0 auto; box-sizing: border-box; padding: 28px 28px 48px; min-width: 0; }

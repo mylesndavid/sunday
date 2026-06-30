@@ -38,23 +38,32 @@ export function setDaemon(http) { DAEMON_HTTP = http; }
 // summary; an unconfigured one stays open. Additive: drives the .is-collapsed
 // class on a .ch-panel plus its #<id>-summary row, leaving every existing
 // handler and id untouched.
-function setChannelCollapsed(panelId, summaryId, summaryText, collapsed) {
+function setChannelCollapsed(panelId, summaryId, summaryText, configured) {
   const panel = $(`#${panelId}`);
   const summary = $(`#${summaryId}`);
   if (!panel || !summary) return;
-  panel.classList.toggle('is-collapsed', collapsed);
-  summary.hidden = !collapsed;
-  if (collapsed && summaryText) {
+  // The summary row (with its Edit/Done toggle) stays visible whenever the
+  // channel is configured — that's what gives the expanded form a way BACK.
+  // `.is-collapsed` hides the FORM only, never the summary.
+  summary.hidden = !configured;
+  panel.classList.toggle('is-collapsed', configured);
+  if (configured && summaryText) {
     const txt = summary.querySelector('[id$="-summary-text"]');
     if (txt) txt.textContent = summaryText;
   }
+  const edit = summary.querySelector('.ch-edit');
+  if (edit) edit.textContent = 'Edit';
 }
-// Wire an Edit button to expand its panel's form (without losing the summary's
-// content, which a re-load restores).
+// Edit toggles the form open/closed (Edit ⇄ Done). The summary stays put, so
+// there's always a control to collapse back. This only ever shows/hides the
+// form — it never reads, writes, or clears any saved credential.
 function wireChannelEdit(editId, panelId, summaryId) {
-  $(`#${editId}`)?.addEventListener('click', () => {
-    $(`#${panelId}`)?.classList.remove('is-collapsed');
-    const s = $(`#${summaryId}`); if (s) s.hidden = true;
+  const btn = $(`#${editId}`);
+  btn?.addEventListener('click', () => {
+    const panel = $(`#${panelId}`);
+    if (!panel) return;
+    const nowCollapsed = panel.classList.toggle('is-collapsed');
+    btn.textContent = nowCollapsed ? 'Edit' : 'Done';
   });
 }
 
