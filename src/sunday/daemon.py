@@ -2150,6 +2150,14 @@ class Daemon:
         items.sort(key=lambda r: r.get("ts") or "", reverse=True)
         return web.json_response({"items": items[:limit]})
 
+    async def _http_inbox_mark_read(self, request: web.Request) -> web.Response:
+        """POST /v1/inbox/{id}/read — mark an item read once the user opens it."""
+        item_id = request.match_info.get("id", "").strip()
+        if not item_id:
+            return web.json_response({"error": "missing id"}, status=400)
+        await self.activity.mark_read(item_id, True)
+        return web.json_response({"ok": True})
+
     async def _http_inbox_get(self, request: web.Request) -> web.Response:
         """GET /v1/inbox/{id} — one item's detail. Voice delegates to VAPI's
         get_call (transcript/recording fetched fresh); everything else returns
@@ -3405,6 +3413,7 @@ class Daemon:
         # Unified Inbox: merged activity feed (spec §4b). Voice rows stay live
         # from VAPI; text/email/webhook rows come from the local activity store.
         app.router.add_get("/v1/inbox", self._http_inbox_list)
+        app.router.add_post("/v1/inbox/{id}/read", self._http_inbox_mark_read)
         app.router.add_get("/v1/inbox/{id}", self._http_inbox_get)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)
         app.router.add_get("/v1/local/recommend", self._http_local_recommend)

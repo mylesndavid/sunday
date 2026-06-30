@@ -43,7 +43,7 @@ log = structlog.get_logger("sunday.activity")
 
 # The columns the Inbox list row carries (everything except the heavy raw_json).
 # Kept as one string so the SELECT and the row→dict mapping can't drift apart.
-_LIST_COLS = "id, channel, direction, peer, ts, preview, status, thread_id, provider_id"
+_LIST_COLS = "id, channel, direction, peer, ts, preview, status, thread_id, provider_id, read"
 
 # Channels we accept. Anything else is coerced to "webhook" — the catch-all,
 # matching the relay's "blessed ≠ exclusive" stance (spec §0).
@@ -75,12 +75,20 @@ class ActivityStore:
             thread_id   TEXT,
             provider_id TEXT,
             raw_json    TEXT,              -- full original event
+            read        INTEGER NOT NULL DEFAULT 0,  -- 1 once the USER opens it
             created_at  TEXT NOT NULL      -- when WE stored it
         );
         CREATE INDEX IF NOT EXISTS idx_activity_channel_ts ON activity(channel, ts DESC);
         CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts DESC);
         """)
         self._conn.commit()
+        # Migrate DBs created before the read column existed. ALTER errors with
+        # "duplicate column" once it's there — harmless, so swallow it.
+        try:
+            self._conn.execute("ALTER TABLE activity ADD COLUMN read INTEGER NOT NULL DEFAULT 0")
+            self._conn.commit()
+        except sqlite3.OperationalError:
+            pass
         # Serializes writers on the one shared connection (reads are quick
         # point/range queries that we still hop to a thread, but don't contend).
         self._write_lock = asyncio.Lock()
@@ -183,6 +191,16 @@ class ActivityStore:
         async with self._write_lock:
             await asyncio.to_thread(_upsert)
         return row_id
+
+    async def mark_read(self, id: str, read: bool = True) -> None:
+        """Flip a row's read flag. Read state is the USER's, not the provider's —
+        it's deliberately absent from append()/upsert()'s column lists, so the
+        30s poller re-syncing a row never resets what you've already opened."""
+        def _update() -> None:
+            self._conn.execute("UPDATE activity SET read = ? WHERE id = ?", (1 if read else 0, str(id)))
+            self._conn.commit()
+        async with self._write_lock:
+            await asyncio.to_thread(_update)
 
     # ── read side ─────────────────────────────────────────────────────────
 

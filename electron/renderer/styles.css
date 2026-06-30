@@ -1332,9 +1332,13 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .inbox-row-when { flex: 0 0 auto; font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .inbox-row-bottom { display: flex; align-items: center; gap: 8px; }
 .inbox-row-preview { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-row-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
-.inbox-row-dot.is-ok { background: var(--text-3); opacity: 0.45; }
-.inbox-row-dot.is-bad { background: #c0392b; }
+/* The dot means UNREAD-by-you: blue until you open it, then gone. */
+.inbox-row-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
+.inbox-row-dot.is-unread { background: #2f7bf6; }
+.inbox-row-dot.is-read { display: none; }
+/* Unread rows read a touch stronger, like an email client. */
+.inbox-row.is-unread .inbox-row-peer { font-weight: 700; }
+.inbox-row.is-unread .inbox-row-preview { color: var(--text); }
 
 /* Empty / error states inside the list pane */
 .inbox-state { text-align: center; padding: 48px 20px; color: var(--text-3); }

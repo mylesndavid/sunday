@@ -234,6 +234,7 @@ function renderRows() {
     row.type = 'button';
     row.className = 'inbox-row';
     if (it.id && it.id === selectedId) row.classList.add('is-active');
+    if (!it.read) row.classList.add('is-unread');
     row.dataset.id = it.id || '';
 
     const badge = document.createElement('span');
@@ -261,15 +262,23 @@ function renderRows() {
     preview.textContent = it.preview || '—';
     if (it.preview) preview.title = it.preview;
     const dot = document.createElement('span');
-    dot.className = `inbox-row-dot ${it.statusBad === true ? 'is-bad' : 'is-ok'}`;
-    dot.title = prettify(it.status) || '';
+    dot.className = `inbox-row-dot ${it.read ? 'is-read' : 'is-unread'}`;
+    dot.title = it.read ? '' : 'Unread';
     bottom.append(preview, dot);
 
     main.append(top, bottom);
     row.append(badge, main);
-    row.addEventListener('click', () => { selectedId = it.id; renderRows(); openDetail(it.id, it.channel); });
+    row.addEventListener('click', () => { selectedId = it.id; markRead(it); renderRows(); openDetail(it.id, it.channel); });
     els.rows.appendChild(row);
   }
+}
+
+// Opening an item marks it read — optimistically (the blue dot clears now) and
+// persisted via the daemon so it stays read across the 30s refresh and restarts.
+function markRead(it) {
+  if (!it || it.read || !it.id) return;
+  it.read = true;
+  fetch(`${cfg.daemonHttp}/v1/inbox/${encodeURIComponent(it.id)}/read`, { method: 'POST' }).catch(() => {});
 }
 
 async function openDetail(id, rowChannel) {
