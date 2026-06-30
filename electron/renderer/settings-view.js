@@ -33,6 +33,31 @@ export function init(daemonHttp) {
 }
 export function setDaemon(http) { DAEMON_HTTP = http; }
 
+// ── channel panel collapse ───────────────────────────────────────────────────
+// A configured channel folds its form behind a compact "✓ Connected · <detail>"
+// summary; an unconfigured one stays open. Additive: drives the .is-collapsed
+// class on a .ch-panel plus its #<id>-summary row, leaving every existing
+// handler and id untouched.
+function setChannelCollapsed(panelId, summaryId, summaryText, collapsed) {
+  const panel = $(`#${panelId}`);
+  const summary = $(`#${summaryId}`);
+  if (!panel || !summary) return;
+  panel.classList.toggle('is-collapsed', collapsed);
+  summary.hidden = !collapsed;
+  if (collapsed && summaryText) {
+    const txt = summary.querySelector('[id$="-summary-text"]');
+    if (txt) txt.textContent = summaryText;
+  }
+}
+// Wire an Edit button to expand its panel's form (without losing the summary's
+// content, which a re-load restores).
+function wireChannelEdit(editId, panelId, summaryId) {
+  $(`#${editId}`)?.addEventListener('click', () => {
+    $(`#${panelId}`)?.classList.remove('is-collapsed');
+    const s = $(`#${summaryId}`); if (s) s.hidden = true;
+  });
+}
+
 // Catastrophic-only error toast. Row-level status carries the routine cases.
 function flashError(msg) {
   const el = $('#set-error');
@@ -492,6 +517,10 @@ async function loadVapiStatus() {
   catch { line.dataset.state = ''; line.textContent = ''; return; }
   const num = $('#vapi-from-number');
   if (num && !num.value && d.from_number_id) num.value = d.from_number_id;
+  // Collapse to a summary only when fully configured; any partial/unset state
+  // keeps the form open so the user can finish.
+  const vapiSummary = d.from_number_id ? `Connected · ${d.from_number_id}` : 'Connected';
+  setChannelCollapsed('vapi-panel', 'vapi-summary', vapiSummary, !!d.configured);
   if (d.configured) { line.dataset.state = 'ok'; line.textContent = `configured — on-call model ${d.model || 'gpt-4o'}`; return; }
   if (d.has_api_key && !d.has_from_number) { line.dataset.state = 'wait'; line.textContent = 'key saved — add the from-number id to finish'; return; }
   if (!d.has_api_key && d.has_from_number) { line.dataset.state = 'wait'; line.textContent = 'from-number saved — add the API key to finish'; return; }
@@ -546,6 +575,9 @@ async function loadAgentmailStatus() {
   catch { line.dataset.state = ''; line.textContent = ''; return; }
   const addr = $('#am-address');
   if (addr) addr.textContent = d.address || '—';
+  // Collapse to a summary only once the inbox is reachable; a key-saved-but-
+  // unverified or errored state keeps the form open.
+  setChannelCollapsed('am-panel', 'am-summary', `Connected · ${d.address || 'inbox ready'}`, !!d.connected);
   if (d.connected) { line.dataset.state = 'ok'; line.textContent = `connected — ${d.address || 'inbox ready'}`; return; }
   if (d.configured && d.error) { line.dataset.state = 'fail'; line.textContent = d.error; return; }
   if (d.configured) { line.dataset.state = 'wait'; line.textContent = 'key saved — checking the inbox…'; return; }
@@ -1360,6 +1392,11 @@ async function loadNet() {
   if (sb.webhook_url && $('#net-webhook-url')) $('#net-webhook-url').value = sb.webhook_url;
   if (panel) panel.hidden = true;
 
+  // Collapse the Sendblue form to a summary once the account is connected; a
+  // keys-saved-but-unverified state keeps the form open.
+  setChannelCollapsed('sb-panel', 'sb-summary',
+    sb.number ? `Connected · ${formatUSNumber(sb.number)}` : 'Connected', !!sb.connected);
+
   const sbLine = $('#sb-status');
   if (sbLine) {
     if (sb.connected) {
@@ -1701,6 +1738,10 @@ function wire() {
   // id; Place test call dials the entered number; open the VAPI dashboard.
   $('#vapi-keys-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://dashboard.vapi.ai'); });
   $('#vapi-save')?.addEventListener('click', () => saveVapiCreds());
+  // Edit affordances — expand a collapsed channel panel back to its form.
+  wireChannelEdit('vapi-edit', 'vapi-panel', 'vapi-summary');
+  wireChannelEdit('sb-edit', 'sb-panel', 'sb-summary');
+  wireChannelEdit('am-edit', 'am-panel', 'am-summary');
   ['#vapi-api-key', '#vapi-from-number'].forEach((sel) => {
     $(sel)?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveVapiCreds(); } });
   });

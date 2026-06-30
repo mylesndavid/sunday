@@ -1,13 +1,19 @@
-// Inbox — Sunday's unified activity feed: the calls she placed (VAPI), the
-// texts she traded (Sendblue), and the email she handled (AgentMail), all in
-// one list/detail surface. Generalized from the old Calls tab — the list →
-// click → detail-with-transcript shape that already worked for voice is
-// exactly what text and email threads want too.
+// Inbox — Sunday's unified activity feed as an email-client master–detail view:
+// a persistent list on the left (the calls she placed via VAPI, the texts she
+// traded via Sendblue, the email she handled via AgentMail) and the selected
+// item's thread/transcript on the right. Filter pills + search up top. One
+// frame — the right pane swaps, the list never goes away.
 //
 // The daemon holds every provider key and serves a merged, normalized feed at
-// `GET /v1/inbox?channel=<all|voice|text|email>`; the renderer only ever
-// talks to the local daemon. Until that endpoint lands, the Voice facet falls
-// back to the original `GET /v1/vapi/calls` so the tab keeps working today.
+// `GET /v1/inbox?channel=<all|voice|text|email>`; the renderer only ever talks
+// to the local daemon. Until that endpoint lands, the Voice facet falls back to
+// the original `GET /v1/vapi/calls` so the tab keeps working today.
+//
+// Non-blocking is the rule: the pills, the list shell, and the empty right pane
+// render instantly. The list fetch is async with a per-fetch timeout; while it
+// runs only the LIST shows a spinner — pills, search, and the right pane stay
+// live. Switching facets is instant even mid-flight (a sequence guard drops the
+// stale result), so a slow Voice fetch can never freeze the tab.
 
 let cfg = null, els = null;
 let loaded = false;
@@ -15,25 +21,54 @@ let channel = 'all';
 // True once /v1/inbox has 404'd — we stop probing it and serve the VAPI
 // fallback directly so every load doesn't pay for a doomed request.
 let inboxMissing = false;
+// Monotonic guard: each list load bumps this; a returning fetch only paints if
+// it's still the latest, so switching facets mid-flight ignores stale results.
+let listSeq = 0;
+// Detail guard — same idea for the right pane, so a slow detail can't clobber a
+// newer selection.
+let detailSeq = 0;
+// The items currently shown in the list (for client-side search + selection).
+let currentItems = [];
+let selectedId = null;
+let searchQuery = '';
 
-export function init(config, refs) { cfg = config; els = refs; wire(); }
+// Extra elements not wired through app.js's refs — queried by id directly.
+let elSearch = null, elDetailEmpty = null, elDetailBody = null;
+
+export function init(config, refs) {
+  cfg = config; els = refs;
+  elSearch = document.getElementById('inbox-search');
+  elDetailEmpty = document.getElementById('inbox-detail-empty');
+  elDetailBody = document.getElementById('inbox-detail-body');
+  wire();
+}
 export function setDaemon(http) { cfg.daemonHttp = http; }
 export function isLoaded() { return loaded; }
 
-export async function load() {
-  showList();
+// load() paints the shell instantly and kicks the list fetch off async. It
+// never awaits the network before returning control, so the tab is interactive
+// the moment it's shown.
+export function load() {
+  showEmptyDetail();
+  selectedId = null;
+  fetchList();
+}
+
+// Fetch the active facet's list. Spinner lives inside the list pane only; the
+// pills, search, and right pane stay interactive throughout.
+async function fetchList() {
+  const seq = ++listSeq;
   els.empty.hidden = true;
   els.error.hidden = true;
-  els.rows.innerHTML = '<div class="calls-loading">Loading…</div>';
-  // One response carries the whole list — id, channel, direction, peer, ts,
-  // preview, status. We render straight from it; the per-item detail endpoint
-  // only fires when a row is opened. A timeout turns a slow or hung request
-  // into an honest error state instead of an endless spinner.
+  els.rows.innerHTML = '<div class="inbox-loading"><span class="inbox-spinner"></span>Loading…</div>';
   try {
     const items = await fetchItems();
+    if (seq !== listSeq) return;            // a newer facet superseded this load
     loaded = true;
-    renderRows(items);
+    currentItems = items;
+    renderRows();
   } catch (err) {
+    if (seq !== listSeq) return;
     console.warn('inbox load failed', err);
     renderError(err.name === 'TimeoutError'
       ? 'Loading the inbox timed out. Try again in a moment.'
@@ -89,56 +124,71 @@ function renderError(msg) {
   els.errorSub.textContent = msg;
 }
 
-function renderRows(items) {
+// Paint the list from currentItems, honouring the client-side search filter and
+// the selected-row highlight.
+function renderRows() {
   els.rows.innerHTML = '';
-  if (!items.length) { els.empty.hidden = false; return; }
+  const q = searchQuery;
+  const items = q
+    ? currentItems.filter((it) =>
+        (it.peer || '').toLowerCase().includes(q) || (it.preview || '').toLowerCase().includes(q))
+    : currentItems;
+
+  if (!currentItems.length) { els.empty.hidden = false; els.error.hidden = true; return; }
   els.empty.hidden = true;
   els.error.hidden = true;
+  if (!items.length) {
+    els.rows.innerHTML = `<div class="inbox-loading">No matches for “${esc(q)}”.</div>`;
+    return;
+  }
+
   for (const it of items) {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'call-row';
+    row.className = 'inbox-row';
+    if (it.id && it.id === selectedId) row.classList.add('is-active');
     row.dataset.id = it.id || '';
 
     const badge = document.createElement('span');
-    badge.className = 'call-channel';
-    badge.textContent = channelLabel(it.channel);
+    badge.className = `inbox-glyph inbox-glyph-${(it.channel || '').toLowerCase()}`;
+    badge.textContent = channelGlyph(it.channel);
+    badge.title = channelLabel(it.channel);
 
-    const when = document.createElement('span');
-    when.className = 'call-when mono';
-    when.textContent = fmtTime(it.ts);
+    const main = document.createElement('span');
+    main.className = 'inbox-row-main';
 
+    const top = document.createElement('span');
+    top.className = 'inbox-row-top';
     const peer = document.createElement('span');
-    peer.className = 'call-to';
+    peer.className = 'inbox-row-peer';
     peer.textContent = it.peer || '?';
+    const when = document.createElement('span');
+    when.className = 'inbox-row-when mono';
+    when.textContent = fmtTime(it.ts);
+    top.append(peer, when);
 
+    const bottom = document.createElement('span');
+    bottom.className = 'inbox-row-bottom';
     const preview = document.createElement('span');
-    preview.className = 'call-purpose';
-    // CSS ellipsis truncates a long preview; the title surfaces the full text.
+    preview.className = 'inbox-row-preview';
     preview.textContent = it.preview || '—';
     if (it.preview) preview.title = it.preview;
+    const dot = document.createElement('span');
+    dot.className = `inbox-row-dot ${it.statusBad === true ? 'is-bad' : 'is-ok'}`;
+    dot.title = prettify(it.status) || '';
+    bottom.append(preview, dot);
 
-    const dur = document.createElement('span');
-    dur.className = 'call-dur mono';
-    // Voice rows show duration; text/email leave the slot blank.
-    dur.textContent = it.channel === 'voice' ? fmtDuration(it.durationSeconds) : '';
-
-    const status = document.createElement('span');
-    const bad = it.statusBad === true;
-    status.className = `call-status ${bad ? 'call-status-bad' : 'call-status-ok'}`;
-    status.textContent = prettify(it.status) || '—';
-    // The raw ended reason is the useful field for voice; keep it within reach.
-    if (it.endedReason) status.title = it.endedReason;
-
-    row.append(badge, when, peer, preview, dur, status);
-    row.addEventListener('click', () => openDetail(it.id, it.channel));
+    main.append(top, bottom);
+    row.append(badge, main);
+    row.addEventListener('click', () => { selectedId = it.id; renderRows(); openDetail(it.id, it.channel); });
     els.rows.appendChild(row);
   }
 }
 
 async function openDetail(id, rowChannel) {
   if (!id) return;
-  showDetail();
+  const seq = ++detailSeq;
+  showDetailBody();
   els.detailTo.textContent = 'Loading…';
   els.detailMeta.textContent = '';
   // Reset both detail shapes so a stale one never leaks across opens.
@@ -146,6 +196,7 @@ async function openDetail(id, rowChannel) {
   resetThreadDetail();
   try {
     const item = await fetchDetail(id, rowChannel);
+    if (seq !== detailSeq) return;          // a newer selection superseded this
     if (item && item.error) {
       els.detailTo.textContent = 'Could not load item';
       showVoiceDetail();
@@ -154,6 +205,7 @@ async function openDetail(id, rowChannel) {
     }
     renderDetail(item);
   } catch (err) {
+    if (seq !== detailSeq) return;
     console.warn('inbox detail failed', err);
     els.detailTo.textContent = 'Could not load item';
     showVoiceDetail();
@@ -275,24 +327,40 @@ function resetVoiceDetail() {
 }
 function resetThreadDetail() { els.thread.innerHTML = '—'; }
 
-function showList() { els.list.hidden = false; els.detail.hidden = true; }
-function showDetail() {
-  els.list.hidden = true; els.detail.hidden = false;
+// Right pane: empty placeholder vs. the loaded detail body.
+function showEmptyDetail() {
+  if (elDetailEmpty) elDetailEmpty.hidden = false;
+  if (elDetailBody) elDetailBody.hidden = true;
+  els.audio.pause?.();
+}
+function showDetailBody() {
+  if (elDetailEmpty) elDetailEmpty.hidden = true;
+  if (elDetailBody) elDetailBody.hidden = false;
   // Stop any audio from a previously open item.
   els.audio.pause?.();
 }
 
 function wire() {
-  els.refresh.addEventListener('click', () => load());
-  els.back.addEventListener('click', () => { els.audio.pause?.(); showList(); });
-  // Channel pills — switch the active facet and reload the list.
+  els.refresh?.addEventListener('click', () => fetchList());
+  // Back is vestigial in the split layout (the list is always present), but
+  // app.js may still pass it — wire it to clear the selection if so.
+  els.back?.addEventListener('click', () => { els.audio.pause?.(); selectedId = null; renderRows(); showEmptyDetail(); });
+  // Channel pills — switch the active facet and reload the list. Instant even
+  // if a prior fetch is still in flight (the sequence guard drops stale results).
   for (const pill of els.filter.querySelectorAll('.inbox-pill')) {
     pill.addEventListener('click', () => {
       channel = pill.dataset.channel || 'all';
       for (const p of els.filter.querySelectorAll('.inbox-pill')) p.classList.toggle('active', p === pill);
-      load();
+      selectedId = null;
+      showEmptyDetail();
+      fetchList();
     });
   }
+  // Client-side search — filters the visible list by peer/preview, no fetch.
+  elSearch?.addEventListener('input', () => {
+    searchQuery = (elSearch.value || '').trim().toLowerCase();
+    renderRows();
+  });
 }
 
 // ─── formatting ────────────────────────────────────────────────────────
@@ -305,6 +373,20 @@ function channelLabel(ch) {
     case 'webhook': return 'Hook';
     default: return ch ? prettify(ch) : '—';
   }
+}
+
+function channelGlyph(ch) {
+  switch ((ch || '').toLowerCase()) {
+    case 'voice': return '☎';
+    case 'text': return '💬';
+    case 'email': return '✉';
+    case 'webhook': return '⚓';
+    default: return '•';
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 function isBad(endedReason, status) {

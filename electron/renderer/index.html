@@ -204,57 +204,74 @@
   <!-- ─── INBOX — unified activity feed: voice (VAPI) + text + email ── -->
   <!-- Seeded from the Calls tab; Voice keeps the call list/detail, Text and -->
   <!-- Email add thread feeds. List/detail pattern is shared across channels. -->
+  <!-- Master–detail email client: a persistent list on the left, the selected
+       conversation's thread/transcript on the right. Filter pills + search up
+       top. One frame — the right pane swaps, the list never goes away. -->
   <section class="view view-inbox" id="view-inbox">
-    <!-- list -->
-    <div class="calls-list" id="inbox-list">
-      <div class="calls-bar">
-        <h2>Inbox</h2>
-        <button class="iconbtn" id="inbox-refresh" title="Refresh">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
-        </button>
+    <!-- ── Left: list pane ── -->
+    <div class="inbox-list" id="inbox-list">
+      <div class="inbox-listbar">
+        <div class="inbox-filter" id="inbox-filter" role="tablist" aria-label="Channel">
+          <button type="button" class="inbox-pill active" data-channel="all" role="tab">All</button>
+          <button type="button" class="inbox-pill" data-channel="voice" role="tab">Voice</button>
+          <button type="button" class="inbox-pill" data-channel="text" role="tab">Text</button>
+          <button type="button" class="inbox-pill" data-channel="email" role="tab">Email</button>
+          <button class="iconbtn inbox-refresh" id="inbox-refresh" title="Refresh">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          </button>
+        </div>
+        <div class="inbox-search">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input type="search" id="inbox-search" class="inbox-search-input" placeholder="Search conversations" autocomplete="off" spellcheck="false" aria-label="Search conversations">
+        </div>
       </div>
-      <div class="inbox-filter" id="inbox-filter" role="tablist" aria-label="Channel">
-        <button type="button" class="inbox-pill active" data-channel="all" role="tab">All</button>
-        <button type="button" class="inbox-pill" data-channel="voice" role="tab">Voice</button>
-        <button type="button" class="inbox-pill" data-channel="text" role="tab">Text</button>
-        <button type="button" class="inbox-pill" data-channel="email" role="tab">Email</button>
-      </div>
-      <div class="calls-rows" id="inbox-rows"></div>
-      <div class="calls-state" id="inbox-empty" hidden>
+      <div class="inbox-rows" id="inbox-rows"></div>
+      <div class="inbox-state" id="inbox-empty" hidden>
         <h3 id="inbox-empty-title">Nothing here yet</h3>
-        <p id="inbox-empty-sub">When Sunday places a call, sends a text, or gets an email, it shows up here with its transcript or thread.</p>
+        <p id="inbox-empty-sub">When Sunday places a call, sends a text, or gets an email, it shows up here.</p>
       </div>
-      <div class="calls-state" id="inbox-error" hidden>
+      <div class="inbox-state" id="inbox-error" hidden>
         <h3>Could not load the inbox</h3>
         <p id="inbox-error-sub">—</p>
       </div>
     </div>
-    <!-- detail -->
-    <div class="call-detail" id="inbox-detail" hidden>
-      <div class="calls-bar">
-        <button class="btn call-back" id="inbox-back">← Back to inbox</button>
-      </div>
-      <div class="call-detail-head">
-        <div class="call-detail-to" id="inbox-detail-to">—</div>
-        <div class="call-detail-meta" id="inbox-detail-meta"></div>
-      </div>
-      <!-- Voice detail — recording + summary + transcript. -->
-      <div id="inbox-voice-detail">
-        <audio class="call-audio" id="inbox-audio" controls hidden></audio>
-        <p class="call-no-audio" id="inbox-no-audio" hidden>No recording is available for this call.</p>
-        <div class="call-section" id="inbox-summary-wrap" hidden>
-          <h3>Summary</h3>
-          <p class="call-summary" id="inbox-summary"></p>
+
+    <!-- ── Right: detail pane ── -->
+    <div class="inbox-detail" id="inbox-detail">
+      <!-- Empty state — shown until a conversation is selected. -->
+      <div class="inbox-detail-empty" id="inbox-detail-empty">
+        <div class="inbox-detail-empty-ico">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4z"/><path d="M4 7l8 6 8-6"/></svg>
         </div>
-        <div class="call-section">
-          <h3>Transcript</h3>
-          <div class="call-transcript" id="inbox-transcript">—</div>
-        </div>
+        <h3>Select a conversation</h3>
+        <p>Pick something on the left to read its transcript or thread.</p>
       </div>
-      <!-- Text/email detail — the message thread. -->
-      <div class="call-section" id="inbox-thread-wrap" hidden>
-        <h3>Thread</h3>
-        <div class="inbox-thread" id="inbox-thread">—</div>
+
+      <!-- Detail body — revealed once a row is opened. -->
+      <div class="inbox-detail-body" id="inbox-detail-body" hidden>
+        <button class="btn inbox-back" id="inbox-back" hidden>← Back</button>
+        <div class="call-detail-head">
+          <div class="call-detail-to" id="inbox-detail-to">—</div>
+          <div class="call-detail-meta" id="inbox-detail-meta"></div>
+        </div>
+        <!-- Voice detail — recording + summary + transcript. -->
+        <div id="inbox-voice-detail">
+          <audio class="call-audio" id="inbox-audio" controls hidden></audio>
+          <p class="call-no-audio" id="inbox-no-audio" hidden>No recording is available for this call.</p>
+          <div class="call-section" id="inbox-summary-wrap" hidden>
+            <h3>Summary</h3>
+            <p class="call-summary" id="inbox-summary"></p>
+          </div>
+          <div class="call-section">
+            <h3>Transcript</h3>
+            <div class="call-transcript" id="inbox-transcript">—</div>
+          </div>
+        </div>
+        <!-- Text/email detail — the message thread. -->
+        <div class="call-section" id="inbox-thread-wrap" hidden>
+          <h3>Thread</h3>
+          <div class="inbox-thread" id="inbox-thread">—</div>
+        </div>
       </div>
     </div>
   </section>
@@ -537,8 +554,12 @@
           <h3 class="sys-sub">Phone</h3>
 
           <!-- CALLING (outbound phone calls via VAPI) -->
-          <div class="set-panel">
+          <div class="set-panel ch-panel" id="vapi-panel">
             <div class="brain-label">Calling (phone)</div>
+            <div class="ch-summary" id="vapi-summary" hidden>
+              <span class="ch-summary-line"><span class="ch-summary-tick">✓</span><span id="vapi-summary-text">Connected</span></span>
+              <button type="button" class="btn ch-edit" id="vapi-edit">Edit</button>
+            </div>
             <div class="mcp-bi" id="vapi-card">
               <p class="set-help set-help-tight">Sunday places outbound calls on your behalf. Say "call X" and she dials, speaks to the stated purpose, and drops the transcript and summary into your chat when the call ends.</p>
               <label class="set-field">
@@ -624,8 +645,13 @@
           </div>
 
           <!-- SENDBLUE ACCOUNT -->
-          <div class="set-panel">
+          <div class="set-panel ch-panel" id="sb-panel">
             <div class="brain-label">Sendblue account</div>
+            <div class="ch-summary" id="sb-summary" hidden>
+              <span class="ch-summary-line"><span class="ch-summary-tick">✓</span><span id="sb-summary-text">Connected</span></span>
+              <button type="button" class="btn ch-edit" id="sb-edit">Edit</button>
+            </div>
+            <div class="ch-form" id="sb-form">
             <p class="set-help set-help-tight">Sunday's iMessage-capable number lives at Sendblue. Copy the two API keys once from your dashboard — Sunday wires up the inbound webhook itself, so there's nothing to paste back. <a href="#" id="sb-keys-link" class="mcp-bi-link">Open Sendblue dashboard</a></p>
             <label class="set-field">
               <span class="set-field-l">API key ID</span>
@@ -648,14 +674,20 @@
               </div>
             </div>
             <div class="set-actions"><span class="set-verify" id="sb-test-status" aria-live="polite"></span></div>
+            </div><!-- /.ch-form -->
           </div>
 
           <!-- ── EMAIL (Sunday's own inbox via AgentMail) ── -->
           <h3 class="sys-sub">Email</h3>
 
           <!-- AGENTMAIL ACCOUNT -->
-          <div class="set-panel">
+          <div class="set-panel ch-panel" id="am-panel">
             <div class="brain-label">AgentMail account</div>
+            <div class="ch-summary" id="am-summary" hidden>
+              <span class="ch-summary-line"><span class="ch-summary-tick">✓</span><span id="am-summary-text">Connected</span></span>
+              <button type="button" class="btn ch-edit" id="am-edit">Edit</button>
+            </div>
+            <div class="ch-form" id="am-form">
             <p class="set-help set-help-tight">Sunday's own email address lives at AgentMail — distinct from the Gmail app-password connector in Tools, which acts on <em>your</em> inbox. Paste the API key once and she sends and receives as herself. <a href="#" id="am-keys-link" class="mcp-bi-link">Open AgentMail dashboard</a></p>
             <label class="set-field">
               <span class="set-field-l">API key</span>
@@ -676,6 +708,7 @@
               </div>
             </div>
             <div class="set-actions"><span class="set-verify" id="am-test-status" aria-live="polite"></span></div>
+            </div><!-- /.ch-form -->
           </div>
         </section>
 

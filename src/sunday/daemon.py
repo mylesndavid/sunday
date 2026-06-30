@@ -2103,22 +2103,42 @@ class Daemon:
 
         items: list[dict[str, Any]] = []
 
-        # Voice: live-fetch VAPI for 'voice' or 'all' (no store rows yet).
+        # Voice now reads the local activity store too, kept warm by vapi's
+        # background poller (_vapi_poller) — so opening the Inbox is instant
+        # instead of paying a ~45s live VAPI GET. Fallback: if the store has
+        # zero voice rows (e.g. first boot before the warm-sync finishes), do
+        # one live list_calls() so the facet isn't empty.
         if channel in ("all", "voice"):
+            voice_rows: list[dict[str, Any]] = []
             try:
-                from sunday.channels.vapi import list_calls
-                vres = await list_calls(limit=limit)
-                if isinstance(vres, dict) and not vres.get("error"):
-                    items.extend(self._voice_row_to_item(c) for c in (vres.get("calls") or []))
+                voice_rows = await self.activity.list(channel="voice", limit=limit)
             except Exception as exc:  # noqa: BLE001
-                log.warning("inbox voice fetch failed", error=str(exc))
+                log.warning("inbox voice store read failed", error=str(exc))
+            if not voice_rows:
+                try:
+                    from sunday.channels.vapi import list_calls
+                    vres = await list_calls(limit=limit)
+                    if isinstance(vres, dict) and not vres.get("error"):
+                        voice_rows = [self._voice_row_to_item(c) for c in (vres.get("calls") or [])]
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("inbox voice live fallback failed", error=str(exc))
+            items.extend(voice_rows)
 
-        # Store-backed channels: read the local activity store.
+        # Other store-backed channels: read the local activity store.
         store_channel = None if channel == "all" else channel
-        if channel != "voice":
+        if channel not in ("voice", "all"):
             try:
                 rows = await self.activity.list(channel=store_channel, limit=limit)
                 items.extend(rows)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("inbox store read failed", error=str(exc))
+        elif channel == "all":
+            # 'all' already pulled voice from the store above; pull the rest
+            # (text/email/webhook) without re-reading voice. The store has no
+            # per-channel-exclude, so read all and drop voice (it's already in).
+            try:
+                rows = await self.activity.list(channel=None, limit=limit)
+                items.extend(r for r in rows if r.get("channel") != "voice")
             except Exception as exc:  # noqa: BLE001
                 log.warning("inbox store read failed", error=str(exc))
 

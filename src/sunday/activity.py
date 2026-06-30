@@ -136,6 +136,54 @@ class ActivityStore:
             await asyncio.to_thread(_insert)
         return row_id
 
+    async def upsert(self, event: dict[str, Any]) -> str:
+        """Like append(), but the provider is AUTHORITATIVE: if `id` already
+        exists, refresh the mutable fields. Used by the VAPI sync — a call first
+        synced mid-flight must flip to 'completed' on a later poll, which
+        append()'s INSERT OR IGNORE would never do. `created_at` (our
+        first-seen time) is preserved. Channels where first-seen wins (push+poll
+        dedup) keep using append()."""
+        provider_id = event.get("provider_id")
+        row_id = str(event.get("id") or provider_id or uuid.uuid4().hex)
+        channel = str(event.get("channel") or "webhook")
+        if channel not in _CHANNELS:
+            channel = "webhook"
+        ts = str(event.get("ts") or datetime.now(timezone.utc).isoformat())
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            raw_json = event.get("raw_json")
+            if raw_json is None:
+                raw_json = json.dumps(event, default=str)
+            elif not isinstance(raw_json, str):
+                raw_json = json.dumps(raw_json, default=str)
+        except (TypeError, ValueError):
+            raw_json = "{}"
+        preview = event.get("preview")
+        if preview:
+            preview = str(preview)[:280]
+
+        def _upsert() -> None:
+            self._conn.execute(
+                "INSERT INTO activity("
+                "id, channel, direction, peer, ts, preview, status, thread_id, "
+                "provider_id, raw_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "channel=excluded.channel, direction=excluded.direction, "
+                "peer=excluded.peer, ts=excluded.ts, preview=excluded.preview, "
+                "status=excluded.status, thread_id=excluded.thread_id, "
+                "provider_id=excluded.provider_id, raw_json=excluded.raw_json",
+                (
+                    row_id, channel, event.get("direction"), event.get("peer"),
+                    ts, preview, event.get("status"), event.get("thread_id"),
+                    provider_id, raw_json, now,
+                ),
+            )
+            self._conn.commit()
+
+        async with self._write_lock:
+            await asyncio.to_thread(_upsert)
+        return row_id
+
     # ── read side ─────────────────────────────────────────────────────────
 
     async def list(self, channel: str | None = None, limit: int = 50) -> list[dict[str, Any]]:

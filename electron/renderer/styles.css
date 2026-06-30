@@ -1251,15 +1251,27 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .conv-transcript pre { margin: 8px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; font: 12px/1.5 var(--font-mono); color: var(--text-2); white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; overflow-x: hidden; }
 
 /* ── INBOX — unified activity feed (voice/text/email), seeded from Calls ─ */
-.view-inbox { flex-direction: column; overflow-y: auto; }
-.calls-list, .call-detail { width: 100%; max-width: 760px; margin: 0 auto; box-sizing: border-box; padding: 0 24px 40px; min-width: 0; }
-.call-detail[hidden] { display: none; }
-.calls-bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 18px 0 14px; background: var(--bg); }
-.calls-bar h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; color: var(--text); }
-.call-back { padding: 6px 14px; font-size: 13px; }
+/* ── Inbox: email-client master–detail ──────────────────────────────────────
+   A persistent list on the left, the selected conversation on the right. One
+   frame, two independently-scrolling panes. */
+.view-inbox { flex-direction: row; overflow: hidden; min-height: 0; }
 
-/* Channel filter — All · Voice · Text · Email pills under the bar. */
-.inbox-filter { display: flex; gap: 6px; padding: 0 0 14px; flex-wrap: wrap; }
+/* Left list pane */
+.inbox-list {
+  flex: 0 0 320px; width: 320px; min-width: 0;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--line); background: var(--bg);
+  overflow: hidden;
+}
+.inbox-listbar {
+  position: sticky; top: 0; z-index: 1;
+  padding: 16px 16px 12px; background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+/* Channel filter — All · Voice · Text · Email pills + refresh. */
+.inbox-filter { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .inbox-pill {
   font: 600 12px/1 var(--font-sans); letter-spacing: -0.005em;
   padding: 7px 13px; border: 1px solid var(--line); border-radius: var(--r-pill);
@@ -1268,37 +1280,84 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 }
 .inbox-pill:hover { background: var(--surface-2); border-color: var(--text-3); }
 .inbox-pill.active { background: var(--text); border-color: var(--text); color: var(--bg); }
+.inbox-refresh { margin-left: auto; color: var(--text-3); }
 
-/* Per-row channel badge — a small monospace tag (VOICE/TEXT/EMAIL/HOOK). */
-.call-channel {
-  font: 600 9.5px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase;
-  padding: 4px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text-3); white-space: nowrap;
+/* Search row */
+.inbox-search {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 11px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface); color: var(--text-3);
 }
+.inbox-search:focus-within { border-color: var(--text-3); }
+.inbox-search-input {
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+  padding: 8px 0; font: 400 13px/1 var(--font-sans); color: var(--text);
+}
+.inbox-search-input::placeholder { color: var(--text-3); }
+.inbox-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
 
-.calls-rows { display: flex; flex-direction: column; gap: 6px; }
-.calls-loading { padding: 24px 4px; font-size: 13px; color: var(--text-3); }
-.call-row {
-  display: grid;
-  grid-template-columns: auto 116px 1fr minmax(0, 1.2fr) 52px auto;
-  align-items: center; gap: 14px;
+/* Scrollable rows */
+.inbox-rows { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+.inbox-loading { padding: 22px 12px; font-size: 13px; color: var(--text-3); display: flex; align-items: center; gap: 9px; }
+.inbox-spinner {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--text-3);
+  animation: inbox-spin 0.7s linear infinite; flex: 0 0 auto;
+}
+@keyframes inbox-spin { to { transform: rotate(360deg); } }
+
+.inbox-row {
+  display: flex; align-items: flex-start; gap: 11px;
   width: 100%; text-align: left; cursor: pointer;
-  padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px;
-  background: var(--surface); color: var(--text);
-  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  padding: 11px 12px; border: 1px solid transparent; border-radius: 10px;
+  background: transparent; color: var(--text);
+  transition: background var(--t-fast) var(--ease);
 }
-.call-row:hover { background: var(--surface-2); border-color: var(--text-3); }
-.call-when { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
-.call-to { font: 600 13.5px/1.3 var(--font-sans); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.call-purpose { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.call-dur { font-size: 11.5px; color: var(--text-3); text-align: right; white-space: nowrap; }
-.call-status { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 9px; border-radius: var(--r-pill); white-space: nowrap; }
-.call-status-ok { background: var(--surface-2); color: var(--text-2); }
-.call-status-bad { background: rgba(200, 60, 50, 0.12); color: #c0392b; }
+.inbox-row:hover { background: var(--surface-2); }
+.inbox-row.is-active { background: var(--accent-tint); border-color: var(--accent-line); }
 
-.calls-state { text-align: center; padding: 64px 20px; color: var(--text-3); }
-.calls-state[hidden] { display: none; }
-.calls-state h3 { font-size: 16px; color: var(--text-2); margin: 0 0 8px; font-weight: 600; }
-.calls-state p { font-size: 13px; max-width: 380px; margin: 0 auto; line-height: 1.5; }
+/* Per-row channel glyph badge */
+.inbox-glyph {
+  flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; background: var(--surface-2); color: var(--text-2);
+}
+.inbox-glyph-voice { background: rgba(90, 140, 220, 0.14); color: #4a72c0; }
+.inbox-glyph-text  { background: rgba(70, 180, 110, 0.15); color: #2f9e58; }
+.inbox-glyph-email { background: rgba(220, 150, 70, 0.16); color: var(--accent-press); }
+
+.inbox-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.inbox-row-top { display: flex; align-items: baseline; gap: 8px; }
+.inbox-row-peer { flex: 1; min-width: 0; font: 600 13px/1.3 var(--font-sans); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-row-when { flex: 0 0 auto; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.inbox-row-bottom { display: flex; align-items: center; gap: 8px; }
+.inbox-row-preview { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-row-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+.inbox-row-dot.is-ok { background: var(--text-3); opacity: 0.45; }
+.inbox-row-dot.is-bad { background: #c0392b; }
+
+/* Empty / error states inside the list pane */
+.inbox-state { text-align: center; padding: 48px 20px; color: var(--text-3); }
+.inbox-state[hidden] { display: none; }
+.inbox-state h3 { font-size: 15px; color: var(--text-2); margin: 0 0 8px; font-weight: 600; }
+.inbox-state p { font-size: 12.5px; max-width: 260px; margin: 0 auto; line-height: 1.5; }
+
+/* Right detail pane */
+.inbox-detail { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
+.inbox-detail-body { width: 100%; max-width: 720px; margin: 0 auto; box-sizing: border-box; padding: 28px 28px 48px; min-width: 0; }
+.inbox-detail-body[hidden] { display: none; }
+.inbox-back { padding: 6px 14px; font-size: 13px; margin-bottom: 16px; }
+
+/* Empty right pane — shown until a conversation is picked */
+.inbox-detail-empty { margin: auto; text-align: center; padding: 40px; color: var(--text-3); }
+.inbox-detail-empty[hidden] { display: none; }
+.inbox-detail-empty-ico {
+  width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2); color: var(--text-3);
+}
+.inbox-detail-empty h3 { font-size: 16px; color: var(--text-2); margin: 0 0 7px; font-weight: 600; }
+.inbox-detail-empty p { font-size: 13px; max-width: 320px; margin: 0 auto; line-height: 1.5; }
 
 .call-detail-head { margin: 4px 0 18px; }
 .call-detail-to { font: 650 19px/1.3 var(--font-sans); color: var(--text); }
@@ -1319,3 +1378,25 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .inbox-msg-in { align-self: flex-start; background: var(--surface-2); color: var(--text); border-bottom-left-radius: 4px; }
 .inbox-msg-out { align-self: flex-end; background: var(--text); color: var(--bg); border-bottom-right-radius: 4px; }
 .inbox-msg-meta { display: block; margin-top: 5px; font: 10.5px/1 var(--font-mono); opacity: 0.6; }
+
+/* ── Channel panels: collapse to a compact summary once configured ───────────
+   When a channel is connected the form folds away behind a one-line "Connected"
+   summary with an Edit button; not-configured panels stay open by default. */
+.ch-summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; margin-top: 4px;
+  border: 1px solid var(--accent-line); border-radius: var(--r-md);
+  background: var(--accent-tint);
+}
+.ch-summary[hidden] { display: none; }
+.ch-summary-line { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; font: 500 13.5px/1.4 var(--font-sans); color: var(--text); }
+.ch-summary-tick {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-press); color: #fff; font-size: 12px; font-weight: 700;
+}
+.ch-edit { flex: 0 0 auto; padding: 5px 14px; font-size: 12.5px; }
+
+/* Collapsed: the summary shows, everything else in the panel hides. */
+.ch-panel.is-collapsed .ch-form,
+.ch-panel.is-collapsed > .mcp-bi { display: none; }

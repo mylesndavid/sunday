@@ -18,6 +18,7 @@ Credentials (via `sunday credential set` or env):
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import httpx
@@ -199,6 +200,110 @@ async def list_calls(limit: int = 50) -> dict[str, Any]:
     rows = [_trim_call_row(c) for c in calls if isinstance(c, dict)]
     rows.sort(key=lambda r: r.get("createdAt") or "", reverse=True)
     return {"calls": rows[:limit]}
+
+
+# ─── warming the activity store (so the Inbox's Voice facet is instant) ───
+#
+# The Voice facet used to call list_calls() LIVE on every Inbox open — a single
+# VAPI GET that takes ~45s and blocked the whole Inbox while Email/Text (which
+# read the local SQLite activity store) were instant. To fix that we keep the
+# store warm with voice rows in the background, and the Inbox reads the store
+# like every other channel. This mirrors sendblue's seed-then-tick poller.
+
+# How often we re-sync the call list into the store after the initial warm.
+VAPI_SYNC_INTERVAL_SECONDS = 180
+
+
+def _call_row_to_event(row: dict[str, Any]) -> dict[str, Any]:
+    """Map one trimmed VAPI call row into a normalized activity event.
+
+    The field logic here MUST stay consistent with daemon._voice_row_to_item
+    so a store-backed row renders in the Inbox identically to a live one:
+    voice is always outbound (Sunday placed the call), the peer is the number
+    she dialed, the call id doubles as id + provider_id, and the preview is a
+    short "Ns — endedReason" (or whichever half we have). raw_json carries the
+    full trimmed row so the list/detail views get the original fields back."""
+    cid = row.get("id")
+    dur = row.get("durationSeconds")
+    reason = row.get("endedReason")
+    if isinstance(dur, (int, float)) and reason:
+        preview = f"{dur:.0f}s — {reason}"
+    elif reason:
+        preview = reason
+    elif isinstance(dur, (int, float)):
+        preview = f"{dur:.0f}s"
+    else:
+        preview = None
+    return {
+        "id": cid,
+        "channel": "voice",
+        "direction": "out",
+        "peer": row.get("to"),
+        "ts": row.get("createdAt"),
+        "preview": preview,
+        "status": row.get("status"),
+        "thread_id": None,
+        "provider_id": cid,
+        "raw_json": json.dumps(row, default=str),
+    }
+
+
+async def _sync_calls_to_store(daemon: Any) -> None:
+    """Pull the recent call list from VAPI and write each row into the local
+    activity store. Idempotent — the store dedups on `id`, so re-running this
+    every few minutes just refreshes status/duration on rows it already has and
+    appends any new calls. No-op when VAPI_API_KEY is missing (nothing to sync).
+
+    Best-effort: a row that can't be stored is logged and skipped rather than
+    aborting the whole sweep."""
+    if not get_credential("VAPI_API_KEY"):
+        log.debug("vapi store sync skipped — VAPI_API_KEY missing")
+        return
+    result = await list_calls(limit=50)
+    if isinstance(result, dict) and result.get("error"):
+        log.warning("vapi store sync list_calls error", error=result.get("error"))
+        return
+    calls = (result or {}).get("calls") or []
+    stored = 0
+    for row in calls:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        try:
+            await daemon.activity.upsert(_call_row_to_event(row))
+            stored += 1
+        except Exception:  # noqa: BLE001 — one bad row shouldn't sink the sweep
+            log.exception("vapi store sync row failed", call_id=row.get("id"))
+    log.info("vapi store sync done", fetched=len(calls), stored=stored)
+
+
+async def _vapi_poller(daemon: Any) -> None:
+    """Background task: keep the activity store warm with voice rows so the
+    Inbox's Voice facet reads the local store instead of live-fetching VAPI.
+
+    Mirrors sendblue's poller: sync once on start (so the FIRST Inbox open is
+    instant — the store already holds the recent calls), then loop every
+    VAPI_SYNC_INTERVAL_SECONDS and re-sync. Tolerates exceptions per-iteration
+    so one network hiccup never kills the loop."""
+    if not get_credential("VAPI_API_KEY"):
+        log.info("vapi poller disabled — VAPI_API_KEY missing")
+        return
+
+    # Warm the store before the first Inbox open.
+    try:
+        await _sync_calls_to_store(daemon)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("vapi poller warm sync failed", error=str(exc))
+
+    # Tick.
+    while True:
+        try:
+            await asyncio.sleep(VAPI_SYNC_INTERVAL_SECONDS)
+            await _sync_calls_to_store(daemon)
+        except asyncio.CancelledError:
+            log.info("vapi poller cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("vapi poller iteration failed", error=str(exc))
 
 
 async def get_call(call_id: str) -> dict[str, Any]:
@@ -476,8 +581,11 @@ async def _t_call_phone(args: dict[str, Any], ctx: ToolContext) -> Any:
 
 
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
-    from sunday.daemon import register_webhook
+    from sunday.daemon import register_webhook, register_background_task
     register_webhook("/webhooks/vapi", _webhook_handler)
+    # Keep the activity store warm with voice rows so the Inbox's Voice facet
+    # reads the local store (instant) instead of live-fetching VAPI (~45s).
+    register_background_task(_vapi_poller)
 
     registry.register(Tool(
         name="call_phone",
