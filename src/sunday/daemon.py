@@ -2248,7 +2248,7 @@ class Daemon:
                 log.warning("inbox email thread read failed", error=str(exc))
         rows.sort(key=lambda r: r.get("ts") or "")
 
-        from sunday.channels.agentmail import _fetch_message, discover_inbox_id
+        from sunday.channels.agentmail import _fetch_message, discover_inbox_id, clean_email_body
         try:
             inbox_id = await discover_inbox_id()
         except Exception:  # noqa: BLE001
@@ -2271,7 +2271,7 @@ class Daemon:
                     log.warning("inbox email body fetch failed", error=str(exc), id=pid)
             messages.append({
                 "direction": "outbound" if (r.get("direction") == "out") else "inbound",
-                "body": body,
+                "body": clean_email_body(body),
                 "ts": r.get("ts"),
                 "peer": r.get("peer"),
             })

@@ -45,6 +45,7 @@ Credentials:
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -484,6 +485,58 @@ async def _webhook_handler(request: web.Request, daemon: Any) -> web.Response:
         text, "webhook", message_id, thread_id,
     )
     return web.json_response({"ok": True})
+
+
+# ── body cleanup for display ───────────────────────────────────────────────
+# An email body carries the whole reply chain (the previous messages re-quoted)
+# plus signatures and legal boilerplate. In a threaded Inbox view every prior
+# message is already its own bubble, so that quoted history is pure noise. We
+# trim, for DISPLAY only, everything from the first reply-attribution / quote /
+# signature / legal marker onward — leaving just this message's own new text.
+
+# Ordered so the earliest marker in the body wins the cut.
+_QUOTE_END = re.compile(r"wrote:\s*$", re.IGNORECASE)          # "On <date> … wrote:"
+_ORIG_MSG  = re.compile(r"^-{2,}\s*original message", re.IGNORECASE)
+_AGENTMAIL_FOOTER = re.compile(r"^\s*sent via agentmail", re.IGNORECASE)
+_LEGAL = re.compile(
+    r"confidentiality (statement|notice)"
+    r"|for the sole use of the intended recipient"
+    r"|unauthorized (use|review|disclosure)"
+    r"|cancellation/rescheduling policy",
+    re.IGNORECASE,
+)
+_ATTRIB_LINE = re.compile(r"^\s*On\b.{0,220}$")               # trailing "On <date>…" line
+
+
+def clean_email_body(text: str | None) -> str:
+    """Strip quoted reply history, the AgentMail footer, and legal boilerplate
+    from an email body so the Inbox shows only the message itself. Conservative:
+    if trimming would leave nothing, the original is returned unchanged."""
+    if not text:
+        return ""
+    lines = text.replace("\r\n", "\n").split("\n")
+    cut = len(lines)
+    for i, raw in enumerate(lines):
+        s = raw.strip()
+        if (
+            s.startswith(">")
+            or _QUOTE_END.search(s)
+            or _ORIG_MSG.match(s)
+            or _AGENTMAIL_FOOTER.match(s)
+            or _LEGAL.search(s)
+        ):
+            cut = i
+            break
+    kept = lines[:cut]
+    # Drop a dangling "On <date> … " attribution line that preceded "wrote:".
+    while kept and _ATTRIB_LINE.match(kept[-1]) and len(kept[-1].strip()) < 220:
+        kept.pop()
+    body = "\n".join(kept).strip()
+    # Cut a standard "-- " signature delimiter block if present.
+    body = re.split(r"\n-- ?\n", body)[0].strip()
+    # Collapse runs of blank lines.
+    body = re.sub(r"\n{3,}", "\n\n", body)
+    return body or text.strip()
 
 
 async def _fetch_message(inbox_id: str, message_id: str) -> dict[str, Any] | None:
