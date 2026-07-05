@@ -3283,6 +3283,309 @@ class Daemon:
             return web.json_response(await self._rewind_call("rewind_start", params))
         return web.json_response(await self._rewind_call("rewind_stop", {}))
 
+    # ─── timeline (semantic activity layer + Wrapped) ─────────────────────
+    # The satellite owns capture, frames, segmentation, and storage. The daemon
+    # owns the model: it reads DERIVED TEXT (never screenshots) from the
+    # satellite, writes titles/summaries and Wrapped narratives, and pushes them
+    # back. Reads proxy straight through; the two model passes live below.
+
+    def _timeline_device(self) -> str | None:
+        for d in self.devices.list_devices():
+            if "timeline" in (d.get("capabilities") or []):
+                return d["device_id"]
+        return None
+
+    async def _timeline_call(self, method: str, params: dict, timeout: float = 25) -> dict:
+        did = self._timeline_device()
+        if not did:
+            return {"error": "no Mac with a timeline connected"}
+        try:
+            return await self.devices.command(did, method, params, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    @staticmethod
+    def _timeline_parse_json(raw: str) -> dict | list | None:
+        s = (raw or "").strip()
+        if s.startswith("```"):
+            s = s[s.find("\n") + 1: s.rfind("```")].strip()
+        for op, cl in (("{", "}"), ("[", "]")):
+            a, b = s.find(op), s.rfind(cl)
+            if a >= 0 and b > a:
+                try:
+                    return json.loads(s[a:b + 1])
+                except json.JSONDecodeError:
+                    continue
+        return None
+
+    async def _http_timeline_events(self, request: web.Request) -> web.Response:
+        # Segment fresh frames into events before reading — cheap + incremental.
+        await self._timeline_call("timeline_segment", {})
+        params: dict = {}
+        for key in ("from_ts", "to_ts"):
+            v = request.query.get(key)
+            if v:
+                try: params[key] = float(v)
+                except ValueError: pass
+        for key in ("type", "project", "q"):
+            v = request.query.get(key)
+            if v:
+                params[key] = v
+        try:
+            params["limit"] = int(request.query.get("limit", "500"))
+        except ValueError:
+            params["limit"] = 500
+        return web.json_response(await self._timeline_call("timeline_events", params))
+
+    async def _http_timeline_day(self, request: web.Request) -> web.Response:
+        await self._timeline_call("timeline_segment", {})
+        date = request.query.get("date", "")
+        return web.json_response(await self._timeline_call("timeline_day", {"date": date}))
+
+    async def _http_timeline_search(self, request: web.Request) -> web.Response:
+        params = {"q": request.query.get("q", "")}
+        for key in ("from_ts", "to_ts"):
+            v = request.query.get(key)
+            if v:
+                try: params[key] = float(v)
+                except ValueError: pass
+        return web.json_response(await self._timeline_call("timeline_search", params))
+
+    async def _http_timeline_event_frames(self, request: web.Request) -> web.Response:
+        try:
+            eid = int(request.query.get("event_id", "0"))
+        except ValueError:
+            eid = 0
+        return web.json_response(
+            await self._timeline_call("timeline_event_frames", {"event_id": eid})
+        )
+
+    async def _http_timeline_state(self, request: web.Request) -> web.Response:
+        return web.json_response(await self._timeline_call("timeline_state", {}))
+
+    async def _http_timeline_toggle(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        if bool(body.get("on")):
+            interval = body.get("interval_seconds")
+            params = {"interval_seconds": interval} if interval else {}
+            return web.json_response(await self._timeline_call("timeline_start", params))
+        return web.json_response(await self._timeline_call("timeline_stop", {}))
+
+    async def _http_timeline_segment(self, request: web.Request) -> web.Response:
+        return web.json_response(await self._timeline_call("timeline_segment", {}))
+
+    async def _timeline_summarize_pass(self, limit: int = 16) -> int:
+        """Turn heuristic-titled events into real ones. Pulls the derived-text
+        bundle for each un-summarized event, asks the utility model for a tight
+        title + one-line summary + type/projects/people, writes it back. Returns
+        how many it summarized. Screenshots are never involved."""
+        pending = await self._timeline_call("timeline_unsummarized", {"limit": limit})
+        evs = (pending or {}).get("events") or []
+        if not evs:
+            return 0
+        from sunday.runtime import build_utility_runtime
+        rt = build_utility_runtime(self.config)
+        system = (
+            "You reconstruct what a knowledge worker was doing during one screen "
+            "session, from a timestamped trail of on-screen text (apps, window "
+            "titles, OCR snippets). Reply with ONLY a JSON object: "
+            "{\"title\": short specific title (<=8 words, no app name unless "
+            "meaningful), \"summary\": 1-2 plain sentences on what they did and why "
+            "it mattered, \"type\": one of coding|messaging|email|meeting|design|"
+            "writing|browsing|media|admin|other, \"projects\": [repo/product/doc "
+            "names you can identify], \"people\": [names of people involved], "
+            "\"scenes\": [a minute-by-minute play-by-play as objects "
+            "{\"time\": \"9:37–9:40 AM\", \"text\": \"searched X, watched Y\"} — one "
+            "per distinct thing they did, in order, concrete and specific like a "
+            "narrator]}. Ground everything strictly in the evidence — never invent "
+            "titles, view counts, names, or actions. No prose outside the JSON."
+        )
+        done = 0
+        for ev in evs:
+            apps = ", ".join(ev.get("apps") or []) or ev.get("dominant_app") or "unknown"
+            trail = "\n".join(
+                f"  {f.get('clock')} · {f.get('app')}"
+                + (f" · {f.get('window')}" if f.get('window') else "")
+                + (f" · {f.get('ocr')}" if f.get('ocr') else "")
+                for f in (ev.get("frames") or [])
+            )
+            user = (
+                f"Apps: {apps}\nDuration: {ev.get('duration_min')} min\n"
+                f"Timestamped trail:\n{trail or '(no captured frames)'}\n\n"
+                f"Extra on-screen text:\n{(ev.get('evidence') or '')[:1600]}\n\nJSON:"
+            )
+            try:
+                res = await rt.complete(
+                    system_prompt=system,
+                    messages=[{"role": "user", "content": user}],
+                    tools_schema=None, purpose="timeline_summary",
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("timeline summary model call failed", error=str(exc))
+                continue
+            parsed = self._timeline_parse_json(res.content or "")
+            if not isinstance(parsed, dict):
+                continue
+            await self._timeline_call("timeline_apply_summary", {
+                "id": ev["id"],
+                "title": (parsed.get("title") or "").strip() or None,
+                "summary": (parsed.get("summary") or "").strip() or None,
+                "type": parsed.get("type"),
+                "projects": parsed.get("projects") if isinstance(parsed.get("projects"), list) else None,
+                "people": parsed.get("people") if isinstance(parsed.get("people"), list) else None,
+            })
+            done += 1
+        return done
+
+    async def _timeline_ensure_summaries(self, rounds: int = 4, per_round: int = 6) -> dict:
+        """Fill in event titles + play-by-play scenes. Prefers the satellite's
+        LOCAL vision CLI (codex/claude — screenshots stay on the Mac); falls back
+        to the daemon's text model over OCR when no CLI is logged in. Loops a few
+        bounded rounds under a long WS timeout so a backlog drains."""
+        total = 0
+        via = "cli"
+        for _ in range(max(1, rounds)):
+            res = await self._timeline_call(
+                "timeline_summarize", {"limit": per_round, "time_budget_s": 110}, timeout=140,
+            )
+            if res.get("error"):
+                via = "error"
+                break
+            if res.get("available") is False:
+                # No local CLI on the Mac — summarize from OCR text on the daemon.
+                via = "text"
+                total += await self._timeline_summarize_pass(limit=12)
+                break
+            total += int(res.get("summarized") or 0)
+            if int(res.get("remaining") or 0) <= 0 or int(res.get("summarized") or 0) == 0:
+                break
+        return {"summarized": total, "via": via}
+
+    async def _http_timeline_summarize(self, request: web.Request) -> web.Response:
+        await self._timeline_call("timeline_segment", {})
+        return web.json_response(await self._timeline_ensure_summaries())
+
+    @staticmethod
+    def _timeline_period_bounds(period: str) -> tuple[float, float]:
+        """Local-time bounds for the current week / month / year. Week starts
+        Monday; month on the 1st; year on Jan 1. End is now."""
+        from datetime import datetime
+        now = datetime.now()
+        if period == "month":
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif period == "year":
+            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:  # week
+            midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            start = midnight.fromtimestamp(midnight.timestamp() - midnight.weekday() * 86400)
+        return start.timestamp(), now.timestamp()
+
+    async def _http_timeline_wrapped(self, request: web.Request) -> web.Response:
+        """Generate (or regenerate) a Wrapped for a period. Segments, does a
+        bounded summarize pass so the digest reads well, aggregates on the Mac,
+        then writes the narrative from that structured data — not screenshots."""
+        period = request.query.get("period", "week")
+        if period not in ("week", "month", "year"):
+            period = "week"
+        start, end = self._timeline_period_bounds(period)
+        await self._timeline_call("timeline_segment", {})
+        # Best-effort: give the narrator real titles to work with. Bounded to
+        # one round so Wrapped stays responsive — background polling on the
+        # timeline view drains the rest of the backlog over time.
+        try:
+            await self._timeline_ensure_summaries(rounds=1, per_round=8)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("timeline wrapped summarize pass failed", error=str(exc))
+        stats = await self._timeline_call(
+            "timeline_period_stats", {"period_start": start, "period_end": end}
+        )
+        if stats.get("error"):
+            return web.json_response(stats, status=502)
+        if stats.get("empty"):
+            return web.json_response({
+                "period_type": period, "period_start": start, "period_end": end,
+                "empty": True,
+            })
+
+        digest = stats.get("events_digest") or []
+        digest_txt = "\n".join(
+            f"- [{d.get('day')}] {d.get('title')} ({d.get('type')}, {d.get('min')}m)"
+            for d in digest[:120]
+        )
+        top_apps = ", ".join(f"{a['app']} {a['minutes']}m" for a in stats.get("top_apps", []))
+        by_type = ", ".join(f"{t['type']} {t['minutes']}m" for t in stats.get("by_type", []))
+        from sunday.runtime import build_utility_runtime
+        rt = build_utility_runtime(self.config)
+        system = (
+            "You write a personal 'Wrapped' reflection over someone's own computer "
+            "activity for a period. You are observant and direct, not a hype machine — "
+            "no vanity metrics, no emoji. Find the real threads: what they actually "
+            "worked on, where attention went, what shipped, what they kept avoiding, "
+            "and one non-obvious pattern. Reply with ONLY JSON: {\"title\": a short "
+            "evocative title for the period, \"summary\": 2-4 sentences capturing the "
+            "shape of the period in second person ('You spent...'), \"highlights\": "
+            "[3-6 concrete bullet strings], \"observations\": [1-3 pattern strings — the "
+            "kind of thing they wouldn't notice themselves]}. Ground everything in the "
+            "data; never invent projects or people."
+        )
+        user = (
+            f"Period: {period}\nActive time: {stats.get('active_minutes')} min across "
+            f"{stats.get('event_count')} sessions\nTime by type: {by_type}\n"
+            f"Top apps: {top_apps}\nBusiest day: {stats.get('busiest_day')}\n"
+            f"Sessions:\n{digest_txt}\n\nJSON:"
+        )
+        title = f"Your {period}"
+        summary = None
+        highlights: list = []
+        observations: list = []
+        try:
+            res = await rt.complete(
+                system_prompt=system,
+                messages=[{"role": "user", "content": user}],
+                tools_schema=None, purpose="timeline_wrapped",
+            )
+            parsed = self._timeline_parse_json(res.content or "")
+            if isinstance(parsed, dict):
+                title = (parsed.get("title") or title).strip()
+                summary = (parsed.get("summary") or "").strip() or None
+                highlights = parsed.get("highlights") if isinstance(parsed.get("highlights"), list) else []
+                observations = parsed.get("observations") if isinstance(parsed.get("observations"), list) else []
+        except Exception as exc:  # noqa: BLE001
+            log.warning("timeline wrapped model call failed", error=str(exc))
+
+        await self._timeline_call("timeline_apply_wrapped", {
+            "period_type": period, "period_start": start, "period_end": end,
+            "title": title, "summary": summary,
+            "highlights": highlights, "observations": observations,
+            "projects": [p["project"] for p in stats.get("top_projects", [])],
+            "people": [p["person"] for p in stats.get("top_people", [])],
+            "apps": stats.get("top_apps", []),
+            "stats": {
+                "active_minutes": stats.get("active_minutes"),
+                "event_count": stats.get("event_count"),
+                "by_type": stats.get("by_type"),
+                "day_breakdown": stats.get("day_breakdown"),
+                "busiest_day": stats.get("busiest_day"),
+                "longest_sessions": stats.get("longest_sessions"),
+            },
+        })
+        return web.json_response({
+            "period_type": period, "period_start": start, "period_end": end,
+            "empty": False, "title": title, "summary": summary,
+            "highlights": highlights, "observations": observations,
+            "projects": stats.get("top_projects", []),
+            "people": stats.get("top_people", []),
+            "apps": stats.get("top_apps", []),
+            "stats": {
+                "active_minutes": stats.get("active_minutes"),
+                "event_count": stats.get("event_count"),
+                "by_type": stats.get("by_type"),
+                "day_breakdown": stats.get("day_breakdown"),
+                "busiest_day": stats.get("busiest_day"),
+                "longest_sessions": stats.get("longest_sessions"),
+            },
+        })
+
     async def _http_admin_health(self, request: web.Request) -> web.Response:
         """Rich health snapshot for admin UIs — daemon stats, satellites,
         memory growth, skills, recent tool activity. AUTH-GATED (it includes
@@ -3698,6 +4001,15 @@ class Daemon:
         app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
         app.router.add_get("/v1/rewind/state", self._http_rewind_state)
         app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)
+        app.router.add_get("/v1/timeline/events", self._http_timeline_events)
+        app.router.add_get("/v1/timeline/day", self._http_timeline_day)
+        app.router.add_get("/v1/timeline/search", self._http_timeline_search)
+        app.router.add_get("/v1/timeline/event-frames", self._http_timeline_event_frames)
+        app.router.add_get("/v1/timeline/state", self._http_timeline_state)
+        app.router.add_post("/v1/timeline/toggle", self._http_timeline_toggle)
+        app.router.add_post("/v1/timeline/segment", self._http_timeline_segment)
+        app.router.add_post("/v1/timeline/summarize", self._http_timeline_summarize)
+        app.router.add_get("/v1/timeline/wrapped", self._http_timeline_wrapped)
         app.router.add_get("/v1/checkin/state", self._http_checkin_state)
         app.router.add_post("/v1/checkin/set", self._http_checkin_set)
         app.router.add_get("/v1/ws", self._ws_handler)

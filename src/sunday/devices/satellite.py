@@ -38,6 +38,7 @@ from sunday.devices import cdp
 from sunday.devices import control_macos
 from sunday.devices import imessage_macos
 from sunday.devices import rewind_macos
+from sunday.devices import timeline_macos
 from sunday.devices.protocol import event_frame, register_frame, response_frame
 
 log = structlog.get_logger("sunday.satellite")
@@ -51,6 +52,7 @@ def _capabilities() -> list[str]:
         caps.append("imessage")
     if rewind_macos.is_available():
         caps.append("rewind")
+        caps.append("timeline")   # semantic layer over the same capture engine
     if control_macos.is_available():
         caps.append("control")
     return caps
@@ -301,6 +303,104 @@ async def _h_screen_text(params: dict[str, Any]) -> dict[str, Any]:
     return await rewind_macos.capture_text()
 
 
+# ─── Timeline handlers (semantic layer over rewind frames, macOS only) ───
+
+
+async def _h_timeline_segment(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.segment(float(params.get("lookback_hours") or 72.0))
+
+
+async def _h_timeline_events(params: dict[str, Any]) -> dict[str, Any]:
+    return {"events": timeline_macos.events(
+        from_ts=params.get("from_ts"), to_ts=params.get("to_ts"),
+        limit=int(params.get("limit") or 500),
+        type=params.get("type"), project=params.get("project"), q=params.get("q"),
+    )}
+
+
+async def _h_timeline_day(params: dict[str, Any]) -> dict[str, Any]:
+    date = (params.get("date") or "").strip()
+    if not date:
+        return {"error": "'date' (YYYY-MM-DD) is required"}
+    return timeline_macos.day(date)
+
+
+async def _h_timeline_search(params: dict[str, Any]) -> dict[str, Any]:
+    q = (params.get("q") or "").strip()
+    if not q:
+        return {"error": "'q' is required"}
+    return {"events": timeline_macos.search(
+        q, from_ts=params.get("from_ts"), to_ts=params.get("to_ts"),
+        limit=int(params.get("limit") or 50),
+    )}
+
+
+async def _h_timeline_event_frames(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.event_frames(int(params.get("event_id") or 0))
+
+
+async def _h_timeline_state(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.state()
+
+
+async def _h_timeline_start(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.start(params.get("interval_seconds"))
+
+
+async def _h_timeline_stop(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.stop()
+
+
+async def _h_timeline_unsummarized(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.unsummarized(int(params.get("limit") or 12))
+
+
+async def _h_timeline_summarize(params: dict[str, Any]) -> dict[str, Any]:
+    """Vision summarize on the Mac via the local codex/claude CLI — screenshots
+    never leave the machine. Bounded by a wall-clock budget so it fits under the
+    daemon's WS timeout; the daemon loops until remaining hits 0."""
+    return await timeline_macos.summarize_pending(
+        limit=int(params.get("limit") or 6),
+        tool=params.get("tool"), model=params.get("model"),
+        time_budget_s=float(params.get("time_budget_s") or 110.0),
+    )
+
+
+async def _h_timeline_apply_summary(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.apply_summary(
+        id=int(params.get("id") or 0), title=params.get("title"),
+        summary=params.get("summary"), type=params.get("type"),
+        projects=params.get("projects"), people=params.get("people"),
+        importance=params.get("importance"),
+    )
+
+
+async def _h_timeline_period_stats(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.period_stats(
+        float(params.get("period_start") or 0), float(params.get("period_end") or 0),
+    )
+
+
+async def _h_timeline_apply_wrapped(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.apply_wrapped(
+        period_type=str(params.get("period_type") or "week"),
+        period_start=float(params.get("period_start") or 0),
+        period_end=float(params.get("period_end") or 0),
+        title=params.get("title"), summary=params.get("summary"),
+        highlights=params.get("highlights"), projects=params.get("projects"),
+        people=params.get("people"), apps=params.get("apps"),
+        websites=params.get("websites"), stats=params.get("stats"),
+        observations=params.get("observations"),
+    )
+
+
+async def _h_timeline_get_wrapped(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.get_wrapped(
+        str(params.get("period_type") or "week"),
+        float(params.get("period_start") or 0), float(params.get("period_end") or 0),
+    )
+
+
 # ─── native UI control (macOS Accessibility) ─────────────────────────────
 
 
@@ -347,6 +447,20 @@ HANDLERS = {
     "rewind_search":          _h_rewind_search,
     "rewind_recent":          _h_rewind_recent,
     "rewind_stats":           _h_rewind_stats,
+    "timeline_segment":       _h_timeline_segment,
+    "timeline_events":        _h_timeline_events,
+    "timeline_day":           _h_timeline_day,
+    "timeline_search":        _h_timeline_search,
+    "timeline_event_frames":  _h_timeline_event_frames,
+    "timeline_state":         _h_timeline_state,
+    "timeline_start":         _h_timeline_start,
+    "timeline_stop":          _h_timeline_stop,
+    "timeline_unsummarized":  _h_timeline_unsummarized,
+    "timeline_summarize":     _h_timeline_summarize,
+    "timeline_apply_summary": _h_timeline_apply_summary,
+    "timeline_period_stats":  _h_timeline_period_stats,
+    "timeline_apply_wrapped": _h_timeline_apply_wrapped,
+    "timeline_get_wrapped":   _h_timeline_get_wrapped,
     "screen_text":            _h_screen_text,
     "ax_snapshot":            _h_ax_snapshot,
     "ax_click":               _h_ax_click,
