@@ -59,6 +59,27 @@ _last_hash: str | None = None
 
 # ─── storage ────────────────────────────────────────────────────────────
 
+# Richer per-frame metadata the Timeline layer segments/summarizes on. Old
+# rewind DBs predate these; _ensure_frame_columns adds any that are missing on
+# every connect so both the rewind watcher and timeline_macos see one schema.
+_FRAME_EXTRA_COLUMNS = {
+    "active_app":       "TEXT",
+    "window_title":     "TEXT",
+    "browser_url":      "TEXT",
+    "thumbnail_path":   "TEXT",
+    "privacy_redacted": "INTEGER DEFAULT 0",
+}
+
+
+def _ensure_frame_columns(conn: sqlite3.Connection) -> None:
+    """Idempotently add the Timeline metadata columns. ALTER TABLE ADD COLUMN
+    can't be `IF NOT EXISTS`, so we diff against PRAGMA table_info and only add
+    what's absent — safe to run on every connect."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(frames)")}
+    for col, decl in _FRAME_EXTRA_COLUMNS.items():
+        if col not in have:
+            conn.execute(f"ALTER TABLE frames ADD COLUMN {col} {decl}")
+
 
 def _connect() -> sqlite3.Connection:
     REWIND_DB.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +98,7 @@ def _connect() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_frames_hash ON frames(content_hash);
         """
     )
+    _ensure_frame_columns(conn)
     try:
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS frames_fts USING fts5("
@@ -166,6 +188,42 @@ async def _downscale(path: Path) -> None:
             )
     except Exception as exc:  # noqa: BLE001 — never let resizing kill a capture
         log.warning("rewind downscale errored; keeping full-size frame", error=str(exc))
+
+
+# ─── active-window context (best-effort, for the Timeline layer) ─────────
+
+
+async def _active_context() -> tuple[str, str]:
+    """Frontmost app name + focused window title via osascript. The app name
+    needs no special permission; the window title needs Accessibility — if it
+    isn't granted we still return the app and leave the title blank. Never
+    raises: any failure yields ('', '') and the frame is still indexed. This is
+    what lets the timeline say "Cursor — rewind_macos.py" instead of guessing
+    from OCR alone."""
+    script = (
+        'tell application "System Events"\n'
+        '  set p to first application process whose frontmost is true\n'
+        '  set appName to name of p\n'
+        '  set winTitle to ""\n'
+        '  try\n'
+        '    set winTitle to name of front window of p\n'
+        '  end try\n'
+        'end tell\n'
+        'return appName & "\t" & winTitle'
+    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/osascript", "-e", script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode != 0:
+            return "", ""
+        app, _sep, title = out.decode("utf-8", errors="replace").strip().partition("\t")
+        return app.strip(), title.strip()
+    except Exception:  # noqa: BLE001 — context is a nice-to-have, never fatal
+        return "", ""
 
 
 # ─── OCR via Apple Vision (free + local) ────────────────────────────────
@@ -362,14 +420,19 @@ async def watcher_loop(interval: float = DEFAULT_INTERVAL_SECONDS) -> None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("rewind ocr failed", error=str(exc))
                 ocr_text = ""
+            active_app, window_title = await _active_context()
             ts = time.time()
             conn.execute(
-                "INSERT INTO frames (ts, image_path, content_hash, ocr_text, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (ts, str(png_path), h, ocr_text, ts),
+                "INSERT INTO frames "
+                "(ts, image_path, content_hash, ocr_text, active_app, window_title, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ts, str(png_path), h, ocr_text, active_app, window_title, ts),
             )
             conn.commit()
-            log.info("rewind frame indexed", hash=h, ocr_chars=len(ocr_text))
+            log.info(
+                "rewind frame indexed",
+                hash=h, ocr_chars=len(ocr_text), app=active_app or None,
+            )
             _ticks += 1
             if _ticks % 12 == 0:   # ~hourly at the 5-min default
                 _prune(conn)

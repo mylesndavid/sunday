@@ -13,7 +13,7 @@
       <button class="tab active" data-view="chat" role="tab">Chat</button>
       <button class="tab" data-view="memory" role="tab">Memory</button>
       <button class="tab" data-view="inbox" role="tab">Inbox</button>
-      <button class="tab" data-view="rewind" role="tab">Rewind</button>
+      <button class="tab" data-view="timeline" role="tab">Timeline</button>
       <button class="tab" data-view="settings" role="tab">Settings</button>
     </nav>
     <span class="status mono" id="status" title="daemon status" hidden></span>
@@ -276,32 +276,33 @@
     </div>
   </section>
 
-  <section class="view view-rewind" id="view-rewind">
-    <div class="rw-stage">
-      <div class="rw-frame" id="rw-frame">
-        <img id="rw-img" alt="screen at the selected time" hidden>
-        <div class="rw-empty" id="rw-empty" hidden>
-          <div class="rw-empty-icon">
-            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-          </div>
-          <h2 id="rw-empty-title">Screen history is off</h2>
-          <p id="rw-empty-sub">Turn it on and Sunday quietly keeps a private, on-device timeline of your screen you can scroll back through. Nothing leaves your Mac.</p>
-          <button class="btn btn-primary" id="rw-enable">Turn on screen history</button>
+  <section class="view view-timeline" id="view-timeline">
+    <header class="tl-top">
+      <nav class="tl-modes" id="tl-modes" role="tablist" aria-label="Timeline range">
+        <button class="tl-mode active" data-mode="today" role="tab">Today</button>
+        <button class="tl-mode" data-mode="yesterday" role="tab">Yesterday</button>
+        <button class="tl-mode" data-mode="week" role="tab">This Week</button>
+        <button class="tl-mode" data-mode="wrapped" role="tab">Wrapped</button>
+      </nav>
+      <nav class="tl-periods" id="tl-periods" hidden aria-label="Wrapped period">
+        <button class="tl-period active" data-period="week">Week</button>
+        <button class="tl-period" data-period="month">Month</button>
+        <button class="tl-period" data-period="year">Year</button>
+      </nav>
+      <input type="search" class="tl-search" id="tl-search" placeholder="Search your timeline…" aria-label="Search timeline">
+    </header>
+    <div class="tl-body">
+      <div class="tl-main" id="tl-main"></div>
+      <div class="tl-empty" id="tl-empty" hidden>
+        <div class="tl-empty-icon">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         </div>
+        <h2 id="tl-empty-title">Your timeline is off</h2>
+        <p id="tl-empty-sub">Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.</p>
+        <button class="btn btn-primary" id="tl-enable">Turn on timeline</button>
       </div>
-      <div class="rw-controls" id="rw-controls" hidden>
-        <button class="iconbtn" id="rw-play" title="Play"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
-        <button class="iconbtn" id="rw-prev" title="Previous"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
-        <input type="range" id="rw-slider" min="0" max="0" value="0" class="rw-slider">
-        <button class="iconbtn" id="rw-next" title="Next"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
-        <span class="rw-time mono" id="rw-time">—</span>
-        <button class="iconbtn" id="rw-stop" title="Turn off"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-      </div>
+      <aside class="tl-detail" id="tl-detail" hidden></aside>
     </div>
-    <aside class="rw-text" id="rw-text" hidden>
-      <h3>On screen then</h3>
-      <div class="rw-ocr mono" id="rw-ocr">—</div>
-    </aside>
   </section>
 
   <!-- ─── SETTINGS ─────────────────────────────────────────────────── -->

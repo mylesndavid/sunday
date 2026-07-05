@@ -4,7 +4,7 @@
 
 import * as memoryView from './memory-view.js';
 import * as settingsView from './settings-view.js';
-import * as rewindView from './rewind-view.js';
+import * as timelineView from './timeline-view.js';
 import * as inboxView from './inbox-view.js';
 
 const $ = (s) => document.querySelector(s);
@@ -70,10 +70,10 @@ async function boot() {
   }
   memoryView.init({ daemonHttp: DAEMON_HTTP }, {});
   settingsView.init(DAEMON_HTTP);
-  rewindView.init({ daemonHttp: DAEMON_HTTP }, {
-    img: $('#rw-img'), empty: $('#rw-empty'), emptyTitle: $('#rw-empty-title'), emptySub: $('#rw-empty-sub'),
-    enable: $('#rw-enable'), controls: $('#rw-controls'), text: $('#rw-text'), ocr: $('#rw-ocr'),
-    slider: $('#rw-slider'), time: $('#rw-time'), play: $('#rw-play'), prev: $('#rw-prev'), next: $('#rw-next'), stop: $('#rw-stop'),
+  timelineView.init({ daemonHttp: DAEMON_HTTP }, {
+    modes: $('#tl-modes'), wrappedPeriod: $('#tl-periods'), search: $('#tl-search'),
+    main: $('#tl-main'), detail: $('#tl-detail'),
+    empty: $('#tl-empty'), emptyTitle: $('#tl-empty-title'), emptySub: $('#tl-empty-sub'), enable: $('#tl-enable'),
   });
   inboxView.init({ daemonHttp: DAEMON_HTTP }, {
     list: $('#inbox-list'), rows: $('#inbox-rows'), refresh: $('#inbox-refresh'),
@@ -1107,7 +1107,7 @@ $('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.clic
 
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
-  if (!['chat', 'memory', 'inbox', 'rewind', 'settings'].includes(name)) return;
+  if (!['chat', 'memory', 'inbox', 'timeline', 'settings'].includes(name)) return;
   // Leaving for a real tab while a thread view is open tears its state down so
   // nothing lingers (e.g. a click on Memory from inside a thread).
   if (openThread && name !== 'chat') { openThread = null; threadComposer.value = ''; showThreadStop(false); }
@@ -1116,7 +1116,7 @@ function switchView(name) {
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'memory') { memoryView.refresh(); }
   if (name === 'inbox') inboxView.load();
-  if (name === 'rewind') rewindView.load();
+  if (name === 'timeline') timelineView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
   if (name === 'chat') scrollToEnd();
 }
@@ -1127,7 +1127,7 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); switchView('chat'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '2') { e.preventDefault(); switchView('memory'); }
   if ((e.metaKey || e.ctrlKey) && e.key === '3') { e.preventDefault(); switchView('inbox'); }
-  if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); switchView('rewind'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === '4') { e.preventDefault(); switchView('timeline'); }
 });
 window.sunday?.onSwitchView?.((name) => switchView(name));
 window.sunday?.onOpenAdmin?.(() => switchView('settings'));
