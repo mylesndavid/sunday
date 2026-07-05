@@ -37,6 +37,17 @@ const TYPE_LABEL = {
 const colorFor = (t) => TYPE_COLOR[t] || TYPE_COLOR.other;
 const labelFor = (t) => TYPE_LABEL[t] || 'Activity';
 
+// Calendar geometry — matched to Dayflow: a proportional time axis anchored at
+// 4 AM, 168px per hour (2.8px/min), so a card's HEIGHT is its real duration and
+// empty time shows as real vertical space. Week compresses to fit 7 columns.
+const DAY_START_HOUR = 4;
+const HOURS = 24;
+const HOUR_PX = 168;
+const PX_PER_MIN = HOUR_PX / 60;   // 2.8
+const MIN_CARD_PX = 12;
+const COMPACT_MIN = 13;            // shorter than this → single-line card
+const WEEK_HOUR_PX = 64;
+
 export function init(config, refs) { cfg = config; els = refs; wire(); }
 export function isLoaded() { return loaded; }
 
@@ -75,29 +86,36 @@ async function loadRange(m, opts = {}) {
   const { silent = false } = opts;
   if (!silent) showLoading();
   try {
-    let url, grouped = false;
-    if (m === 'week') {
-      const to = Date.now() / 1000;
-      const from = to - 7 * 86400;
-      url = `${cfg.daemonHttp}/v1/timeline/events?from_ts=${from}&to_ts=${to}&limit=800`;
-      grouped = true;
-    } else {
-      const d = new Date();
-      if (m === 'yesterday') d.setDate(d.getDate() - 1);
-      url = `${cfg.daemonHttp}/v1/timeline/day?date=${ymd(d)}`;
-    }
+    const win = windowFor(m);
+    const url = `${cfg.daemonHttp}/v1/timeline/events?from_ts=${win.from}&to_ts=${win.to}&limit=800`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.error) return showState(data.error);
-    events = (data.events || []).slice();
-    if (!grouped) events.sort((a, b) => a.start_ts - b.start_ts);
+    events = (data.events || []).slice().sort((a, b) => a.start_ts - b.start_ts);
     if (!events.length) return silent ? undefined : showEmpty();
-    renderTimeline(events, grouped);
+    if (m === 'week') renderWeek(events, win); else renderDay(events, win);
     if (!silent) startSummaryPolling();
   } catch (err) {
     console.warn('timeline load failed', err);
     if (!silent) showState('Could not reach the timeline.');
   }
+}
+
+// The 4 AM–anchored window(s) for a mode. Anchoring at 4 AM (Dayflow's rule)
+// keeps past-midnight work on the same "day" instead of splitting it.
+function windowFor(m) {
+  const now = new Date();
+  const base = new Date(now);
+  if (now.getHours() < DAY_START_HOUR) base.setDate(base.getDate() - 1);
+  const origin = new Date(base.getFullYear(), base.getMonth(), base.getDate(), DAY_START_HOUR, 0, 0);
+  if (m === 'yesterday') origin.setDate(origin.getDate() - 1);
+  if (m === 'week') {
+    const start = new Date(origin); start.setDate(start.getDate() - 6);
+    return { from: start.getTime() / 1000, to: origin.getTime() / 1000 + 86400,
+             origin: start.getTime() / 1000, week: true };
+  }
+  const originTs = origin.getTime() / 1000;
+  return { from: originTs, to: originTs + 86400, origin: originTs };
 }
 
 async function runSearch(q) {
@@ -107,7 +125,7 @@ async function runSearch(q) {
     const data = await res.json();
     events = (data.events || []).slice().sort((a, b) => b.start_ts - a.start_ts);
     if (!events.length) return showState(`No moments match “${q}”.`);
-    renderTimeline(events, true, `${events.length} result${events.length > 1 ? 's' : ''} for “${q}”`);
+    renderList(events, `${events.length} result${events.length > 1 ? 's' : ''} for “${q}”`);
   } catch { showState('Search failed.'); }
 }
 
@@ -129,81 +147,151 @@ function startSummaryPolling() {
   summarizeTimer = setTimeout(tick, 15000);
 }
 
-// ─── timeline rendering ───────────────────────────────────────────────────
+// ─── proportional calendar rendering ─────────────────────────────────────
 
-function renderTimeline(list, grouped, banner) {
-  els.detail.hidden = true;
-  els.empty.hidden = true;
-  const main = els.main;
-  main.innerHTML = '';
-  if (banner) {
-    const b = document.createElement('div');
-    b.className = 'tl-banner';
-    b.textContent = banner;
-    main.appendChild(b);
-  }
-  const rail = document.createElement('div');
-  rail.className = 'tl-rail';
-
-  let lastDay = null;
-  for (const ev of list) {
-    if (grouped) {
-      const day = new Date(ev.start_ts * 1000).toDateString();
-      if (day !== lastDay) {
-        lastDay = day;
-        const h = document.createElement('div');
-        h.className = 'tl-dayhead';
-        h.textContent = dayLabel(ev.start_ts);
-        rail.appendChild(h);
-      }
-    }
-    rail.appendChild(cardRow(ev));
-  }
-  main.appendChild(rail);
-}
-
-function cardRow(ev) {
-  const row = document.createElement('div');
-  row.className = 'tl-row';
-
-  const gutter = document.createElement('div');
-  gutter.className = 'tl-gutter mono';
-  gutter.textContent = clock(ev.start_ts);
-  row.appendChild(gutter);
+// One activity block, positioned + sized by time. `originTs` is the 4 AM anchor
+// of its column; `hourPx` is the vertical scale. Returns {el, top} or null when
+// the event falls outside the window.
+function calCard(ev, originTs, hourPx) {
+  const ppm = hourPx / 60;
+  let startMin = (ev.start_ts - originTs) / 60;
+  const durMin = Math.max(0, (ev.end_ts - ev.start_ts) / 60);
+  if (startMin > HOURS * 60) return null;
+  if (startMin < 0) startMin = 0;
+  const top = startMin * ppm + 1;
+  const height = Math.max(MIN_CARD_PX, durMin * ppm - 2);
+  const compact = height < 34 || durMin < COMPACT_MIN;
 
   const card = document.createElement('button');
-  card.className = 'tl-card';
+  card.className = 'tl-card tl-cal-card' + (compact ? ' compact' : '') + (ev.id === selected ? ' sel' : '');
+  card.style.top = top + 'px';
+  card.style.height = height + 'px';
   card.style.setProperty('--cat', colorFor(ev.type));
   card.dataset.id = ev.id;
-  if (ev.id === selected) card.classList.add('sel');
 
-  const badge = document.createElement('span');
-  badge.className = 'tl-badge';
-  badge.style.background = colorFor(ev.type);
-  badge.textContent = (ev.dominant_app || labelFor(ev.type) || '?').trim().charAt(0).toUpperCase();
-
-  const body = document.createElement('div');
-  body.className = 'tl-card-body';
-  const title = document.createElement('div');
-  title.className = 'tl-card-title';
+  const title = document.createElement('span');
+  title.className = 'tl-cc-title';
   title.textContent = ev.title || labelFor(ev.type);
-  const meta = document.createElement('div');
-  meta.className = 'tl-card-meta';
-  meta.textContent = `${clock(ev.start_ts)} – ${clock(ev.end_ts)} · ${labelFor(ev.type)}`;
-  body.appendChild(title);
-  body.appendChild(meta);
-
-  card.appendChild(badge);
-  card.appendChild(body);
+  card.appendChild(title);
+  if (!compact) {
+    const meta = document.createElement('span');
+    meta.className = 'tl-cc-meta mono';
+    meta.textContent = `${clock(ev.start_ts)} – ${clock(ev.end_ts)}`;
+    card.appendChild(meta);
+  }
   if (!ev.summarized) {
-    const dot = document.createElement('span');
-    dot.className = 'tl-pending';
-    dot.title = 'summarizing…';
+    const dot = document.createElement('span'); dot.className = 'tl-pending'; dot.title = 'summarizing…';
     card.appendChild(dot);
   }
   card.addEventListener('click', () => openDetail(ev));
-  row.appendChild(card);
-  return row;
+  return { el: card, top };
+}
+
+function hourLabels(hourPx, into) {
+  for (let h = 0; h < HOURS; h++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'tl-hourlabel mono';
+    lbl.style.top = (h * hourPx) + 'px';
+    lbl.textContent = formatHour((DAY_START_HOUR + h) % 24);
+    into.appendChild(lbl);
+  }
+}
+function hourLines(hourPx, into, inset) {
+  for (let h = 0; h <= HOURS; h++) {
+    const line = document.createElement('div');
+    line.className = 'tl-hourline';
+    line.style.top = (h * hourPx) + 'px';
+    if (inset) line.style.left = '0';
+    into.appendChild(line);
+  }
+}
+
+function renderDay(list, win) {
+  els.empty.hidden = true;
+  const main = els.main; main.innerHTML = '';
+  const cal = document.createElement('div');
+  cal.className = 'tl-cal';
+  cal.style.height = (HOURS * HOUR_PX) + 'px';
+  hourLabels(HOUR_PX, cal);
+  hourLines(HOUR_PX, cal);
+  let firstTop = Infinity;
+  for (const ev of list) {
+    const block = calCard(ev, win.origin, HOUR_PX);
+    if (block) { cal.appendChild(block.el); firstTop = Math.min(firstTop, block.top); }
+  }
+  main.appendChild(cal);
+  if (firstTop < Infinity) main.scrollTop = Math.max(0, firstTop - 56);
+}
+
+function renderWeek(list, win) {
+  els.empty.hidden = true;
+  const main = els.main; main.innerHTML = '';
+  const week = document.createElement('div');
+  week.className = 'tl-week';
+
+  const headrow = document.createElement('div');
+  headrow.className = 'tl-week-headrow';
+  const sp = document.createElement('div'); sp.className = 'tl-week-sp'; headrow.appendChild(sp);
+  for (let i = 0; i < 7; i++) {
+    const h = document.createElement('div'); h.className = 'tl-week-head';
+    h.textContent = shortDayTs(win.origin + i * 86400 + 12 * 3600);
+    headrow.appendChild(h);
+  }
+  week.appendChild(headrow);
+
+  const body = document.createElement('div');
+  body.className = 'tl-week-body';
+  const axis = document.createElement('div');
+  axis.className = 'tl-week-axis';
+  axis.style.height = (HOURS * WEEK_HOUR_PX) + 'px';
+  hourLabels(WEEK_HOUR_PX, axis);
+  body.appendChild(axis);
+
+  const grid = document.createElement('div'); grid.className = 'tl-week-grid';
+  const lanes = [];
+  for (let i = 0; i < 7; i++) {
+    const col = document.createElement('div'); col.className = 'tl-week-col';
+    const lane = document.createElement('div'); lane.className = 'tl-week-lane';
+    lane.style.height = (HOURS * WEEK_HOUR_PX) + 'px';
+    hourLines(WEEK_HOUR_PX, lane, true);
+    col.appendChild(lane);
+    grid.appendChild(col);
+    lanes.push({ origin: win.origin + i * 86400, lane });
+  }
+  body.appendChild(grid);
+  week.appendChild(body);
+
+  for (const ev of list) {
+    const i = Math.floor((ev.start_ts - win.origin) / 86400);
+    if (i < 0 || i > 6) continue;
+    const block = calCard(ev, lanes[i].origin, WEEK_HOUR_PX);
+    if (block) lanes[i].lane.appendChild(block.el);
+  }
+  main.appendChild(week);
+  main.scrollTop = Math.max(0, (8 - DAY_START_HOUR) * WEEK_HOUR_PX);   // ~8 AM into view
+}
+
+// Search spans arbitrary time, so it stays a compact list rather than a calendar.
+function renderList(list, banner) {
+  els.detail.hidden = true; els.empty.hidden = true;
+  const main = els.main; main.innerHTML = '';
+  if (banner) {
+    const b = document.createElement('div'); b.className = 'tl-banner'; b.textContent = banner; main.appendChild(b);
+  }
+  const wrap = document.createElement('div'); wrap.className = 'tl-list';
+  for (const ev of list) {
+    const card = document.createElement('button');
+    card.className = 'tl-card tl-list-card' + (ev.id === selected ? ' sel' : '');
+    card.style.setProperty('--cat', colorFor(ev.type));
+    card.dataset.id = ev.id;
+    card.innerHTML = `<div class="tl-lc-when mono"></div><div class="tl-lc-body"><div class="tl-lc-title"></div><div class="tl-lc-meta"></div></div>`;
+    card.querySelector('.tl-lc-when').textContent = `${dayShortTs(ev.start_ts)} ${clock(ev.start_ts)}`;
+    card.querySelector('.tl-lc-title').textContent = ev.title || labelFor(ev.type);
+    card.querySelector('.tl-lc-meta').textContent = `${clock(ev.start_ts)} – ${clock(ev.end_ts)} · ${labelFor(ev.type)}`;
+    card.addEventListener('click', () => openDetail(ev));
+    wrap.appendChild(card);
+  }
+  main.appendChild(wrap);
 }
 
 // ─── detail pane (play-by-play + evidence) ────────────────────────────────
@@ -445,19 +533,21 @@ async function enableCapture() {
 function clock(ts) {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
-function dayLabel(ts) {
+function formatHour(h) {
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr} ${period}`;
+}
+function shortDayTs(ts) {   // "Mon 5" — week column header
   const d = new Date(ts * 1000);
-  const t = new Date(), y = new Date(); y.setDate(y.getDate() - 1);
-  if (d.toDateString() === t.toDateString()) return 'Today';
-  if (d.toDateString() === y.toDateString()) return 'Yesterday';
-  return d.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+}
+function dayShortTs(ts) {   // "Mon Jul 5" — search-result timestamp
+  return new Date(ts * 1000).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 function shortDay(ymdStr) {
   const [Y, M, D] = ymdStr.split('-').map(Number);
   return new Date(Y, M - 1, D).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-}
-function ymd(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function debounce(fn, ms) {
   let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
