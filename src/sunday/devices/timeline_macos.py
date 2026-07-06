@@ -669,9 +669,15 @@ def event_frames(event_id: int) -> dict[str, Any]:
         conn.close()
 
 
-def state() -> dict[str, Any]:
-    """Capture state (shared with rewind) plus timeline coverage."""
+async def state() -> dict[str, Any]:
+    """Capture state (shared with rewind) plus timeline coverage. Includes `cli`
+    — which local summarizer (codex/claude) is available, or None — so the UI can
+    tell "still building" apart from "no summarizer logged in"."""
     base = rewind_macos.stats()
+    try:
+        cli = await chat_cli.detect()
+    except Exception:  # noqa: BLE001
+        cli = None
     conn = _connect()
     try:
         cards = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
@@ -682,6 +688,7 @@ def state() -> dict[str, Any]:
             "observations": obs,
             "pending_frames": _pending_frames_count(),
             "transcribed_through": _state_get(conn, "transcribed_through_ts", 0.0),
+            "cli": cli,
         })
         return base
     finally:
