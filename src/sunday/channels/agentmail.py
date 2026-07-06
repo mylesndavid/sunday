@@ -647,6 +647,118 @@ async def _sync_messages_to_store(daemon: Any, messages: list[dict[str, Any]], o
     return n
 
 
+# ─── full-inbox sync: a persisted "last synced at" watermark + pagination ──
+# The 30s poll only ever looked at the most recent POLL_LIMIT messages, so an
+# email older than that page (or that arrived while the daemon was down) never
+# entered the store and never showed in the Inbox. This walks the mailbox with
+# page_token pagination and remembers how far it got, so first boot backfills
+# the whole history and every run after is a cheap incremental top-up.
+
+SYNC_PAGE_SIZE = 100     # AgentMail list page size
+SYNC_MAX_PAGES = 40      # safety cap: up to ~4k messages per full backfill
+
+
+def _synced_ts_path():
+    from sunday.paths import sunday_home
+    return sunday_home() / "agentmail.synced"
+
+
+def _get_synced_ts() -> float:
+    """The newest message timestamp we've mirrored into the store, persisted so a
+    restart resumes instead of re-walking history. 0.0 = never synced."""
+    try:
+        return float(_synced_ts_path().read_text().strip())
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _set_synced_ts(ts: float) -> None:
+    try:
+        p = _synced_ts_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(ts))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("agentmail synced-ts write failed", error=str(exc))
+
+
+def _next_page_token(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        tok = payload.get("next_page_token")
+        if tok:
+            return str(tok)
+        data = payload.get("data")
+        if isinstance(data, dict) and data.get("next_page_token"):
+            return str(data["next_page_token"])
+    return None
+
+
+async def sync_inbox(daemon: Any, full: bool = False,
+                     max_pages: int = SYNC_MAX_PAGES) -> dict[str, Any]:
+    """Mirror AgentMail into the activity store so the Inbox reflects the WHOLE
+    mailbox. Pages newest→oldest with `page_token`; incremental runs stop once
+    they reach mail older than the watermark, a full run walks to the end (or the
+    page cap). Idempotent (upsert keyed on message_id). Advances the watermark to
+    the newest message seen. Safe against a mis-handled token: a page with no new
+    ids ends the walk."""
+    headers = _agentmail_headers()
+    if headers is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY)."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": "no AgentMail inbox id (set AGENTMAIL_INBOX_ID)."}
+    url = f"{AGENTMAIL_INBOXES}/{inbox_id}/messages"
+    watermark = 0.0 if full else _get_synced_ts()
+    newest = watermark
+    seen: set[str] = set()
+    synced = 0
+    page_token: str | None = None
+    pages = 0
+    while pages < max_pages:
+        params: dict[str, Any] = {"limit": SYNC_PAGE_SIZE}
+        if page_token:
+            params["page_token"] = page_token
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                res = await client.get(url, headers=headers, params=params)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("agentmail sync page failed", error=str(exc), page=pages)
+            break
+        if res.status_code != 200:
+            log.warning("agentmail sync non-200", status=res.status_code, page=pages)
+            break
+        payload = res.json()
+        msgs = _extract_messages(payload)
+        fresh = [m for m in msgs if str(m.get("message_id") or m.get("id") or "") not in seen]
+        if not fresh:
+            break   # end of feed, or a token that didn't advance — stop cleanly
+        for m in fresh:
+            mid = str(m.get("message_id") or m.get("id") or "")
+            if mid:
+                seen.add(mid)
+            newest = max(newest, _msg_ts(m))
+        synced += await _sync_messages_to_store(daemon, fresh, inbox_id)
+        pages += 1
+        oldest = min((_msg_ts(m) for m in fresh), default=0.0)
+        if not full and watermark > 0 and oldest <= watermark:
+            break   # reached history we've already indexed
+        page_token = _next_page_token(payload)
+        if not page_token:
+            break
+    if newest > watermark:
+        _set_synced_ts(newest)
+    if synced and hasattr(daemon, "_broadcast"):
+        try:
+            await daemon._broadcast({"type": "inbox", "channel": "email"})
+        except Exception:  # noqa: BLE001
+            pass
+    through_iso = (
+        datetime.fromtimestamp(newest, tz=timezone.utc).isoformat() if newest else None
+    )
+    log.info("agentmail sync", synced=synced, pages=pages, full=full, through=through_iso)
+    return {"synced": synced, "pages": pages, "full": full,
+            "synced_through_ts": newest, "synced_through": through_iso}
+
+
 async def start_poller(daemon: Any) -> None:
     """Backup loop for when AgentMail's webhook isn't reaching us (no relay yet,
     or a dropped hosted delivery).
@@ -670,17 +782,25 @@ async def start_poller(daemon: Any) -> None:
     messages_url = f"{AGENTMAIL_INBOXES}/{inbox_id}/messages"
     own_address = inbox_id  # inbox id is the address per AgentMail's model
 
-    # Seed
+    # Backfill the WHOLE mailbox into the store so the Inbox shows real history,
+    # not just the recent page. First boot (no watermark) walks to the end via
+    # pagination; later boots are a cheap incremental top-up against the persisted
+    # "last synced at". This is the fix for older/non-indexed mail never showing.
+    try:
+        r = await sync_inbox(daemon, full=(_get_synced_ts() == 0.0))
+        log.info("agentmail boot sync", synced=r.get("synced"), pages=r.get("pages"),
+                 through=r.get("synced_through"))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("agentmail boot sync failed", error=str(exc))
+
+    # Seed the seen-id set (brain-drive dedup) from the recent page so we don't
+    # auto-reply to old inbound — separate concern from the store backfill above.
     now = datetime.now(timezone.utc).timestamp()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             res = await client.get(messages_url, headers=_agentmail_headers(), params={"limit": POLL_LIMIT})
         if res.status_code == 200:
             seed_msgs = _extract_messages(res.json())
-            # Mirror the full message list (sent + received) into the activity
-            # store up front, so the Inbox shows the account's real history the
-            # moment the daemon starts — not just messages that arrive later.
-            await _sync_messages_to_store(daemon, seed_msgs, own_address)
             seeded = 0
             inbound_left = 0
             for m in seed_msgs:
@@ -707,13 +827,10 @@ async def start_poller(daemon: Any) -> None:
                 continue
             msgs = _extract_messages(res.json())
 
-            # Mirror every message (both directions) into the activity store so
-            # the Inbox reflects AgentMail itself, then nudge any open Inbox.
-            if await _sync_messages_to_store(daemon, msgs, own_address) and hasattr(daemon, "_broadcast"):
-                try:
-                    await daemon._broadcast({"type": "inbox", "channel": "email"})
-                except Exception:  # noqa: BLE001
-                    pass
+            # Keep the store current with a cheap incremental sync (stops at the
+            # watermark — usually one page). It mirrors both directions + nudges
+            # any open Inbox itself.
+            await sync_inbox(daemon)
 
             for m in reversed(msgs):  # oldest unseen first
                 mid = m.get("message_id") or m.get("id")
