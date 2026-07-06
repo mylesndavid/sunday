@@ -46,6 +46,25 @@ async def _t_sunday_config(args: dict[str, Any], ctx: ToolContext) -> Any:
             "facts_stored": mem.count() if getattr(mem, "available", False) else 0,
             "mode": "local FTS5 keyword search + always-injected core (no embeddings)",
         }
+
+    # Sunday's OWN channel identities — the addresses she can be reached at. This
+    # is authoritative: report these when asked "what's your email/number", never
+    # guess. (A guessed address once sent a user's forwarded mail into the void.)
+    channels: dict[str, Any] = {}
+    try:
+        from sunday.channels import agentmail
+        am = await agentmail.account_status()
+        if am.get("configured"):
+            channels["email"] = {
+                "address": am.get("address"),
+                "connected": am.get("connected", False),
+                "provider": "agentmail",
+                "note": "Sunday's OWN mailbox — read it with agentmail_inbox/agentmail_thread.",
+            }
+    except Exception:  # noqa: BLE001 — self-config must never fail on a channel probe
+        pass
+    if channels:
+        out["channels"] = channels
     # connected MCP servers, best-effort
     try:
         from sunday import mcp
@@ -61,9 +80,11 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         description=(
             "Read your own runtime configuration — your model, your per-turn "
             "tool-call ceiling, your version, how your memory and context work, "
-            "how many tools you have, and which integrations are connected. Use "
-            "it to answer questions about yourself or to self-diagnose when you "
-            "hit a limit (e.g. so you can tell the user what the limit actually is)."
+            "how many tools you have, which integrations are connected, and YOUR "
+            "OWN channel addresses (e.g. your email address). Use it to answer "
+            "questions about yourself — including 'what's your email address' "
+            "(read it from channels.email, never guess) — or to self-diagnose "
+            "when you hit a limit."
         ),
         parameters={"type": "object", "properties": {}},
         run=_t_sunday_config,
