@@ -2180,6 +2180,21 @@ class Daemon:
             grouped.append(it)
         return web.json_response({"items": grouped[:limit]})
 
+    async def _http_inbox_sync(self, request: web.Request) -> web.Response:
+        """POST /v1/inbox/sync {full?:bool} — pull the mailbox into the store now.
+        The Inbox refresh triggers this so the list reflects AgentMail live, not
+        just what the 30s poller has caught. `full:true` re-walks all history."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        from sunday.channels import agentmail
+        try:
+            res = await agentmail.sync_inbox(self, full=bool(body.get("full")))
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc)}, status=502)
+        return web.json_response(res)
+
     async def _http_inbox_mark_read(self, request: web.Request) -> web.Response:
         """POST /v1/inbox/{id}/read — mark an item read once the user opens it."""
         item_id = request.match_info.get("id", "").strip()
@@ -3898,6 +3913,7 @@ class Daemon:
         # Unified Inbox: merged activity feed (spec §4b). Voice rows stay live
         # from VAPI; text/email/webhook rows come from the local activity store.
         app.router.add_get("/v1/inbox", self._http_inbox_list)
+        app.router.add_post("/v1/inbox/sync", self._http_inbox_sync)
         app.router.add_post("/v1/inbox/{id}/read", self._http_inbox_mark_read)
         app.router.add_get("/v1/inbox/{id}", self._http_inbox_get)
         app.router.add_get("/v1/ollama/models", self._http_ollama_models)

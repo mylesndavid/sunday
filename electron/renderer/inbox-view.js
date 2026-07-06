@@ -63,7 +63,8 @@ export function refresh() {
 export function load() {
   showEmptyDetail();
   selectedId = null;
-  fetchList();
+  fetchList();              // instant paint from the local store
+  syncNow();                // then pull AgentMail live and repaint when it lands
 }
 
 // Fetch the active facet's list. Spinner lives inside the list pane only; the
@@ -436,8 +437,22 @@ function showDetailBody() {
   els.audio.pause?.();
 }
 
+// Pull the mailbox into the store live, then repaint. Best-effort: if the sync
+// endpoint isn't there or errors, we still re-read what's already stored. Only
+// user-initiated (button/tab-open) — NOT the WS 'inbox' refresh, which would
+// loop (sync broadcasts 'inbox' → refresh → sync…).
+async function syncNow(full = false) {
+  try {
+    await fetch(`${cfg.daemonHttp}/v1/inbox/sync`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full }), signal: AbortSignal.timeout(30000),
+    });
+  } catch { /* best-effort — fall through to a plain re-read */ }
+  fetchList();
+}
+
 function wire() {
-  els.refresh?.addEventListener('click', () => fetchList());
+  els.refresh?.addEventListener('click', () => syncNow());
   // Back is vestigial in the split layout (the list is always present), but
   // app.js may still pass it — wire it to clear the selection if so.
   els.back?.addEventListener('click', () => { els.audio.pause?.(); selectedId = null; renderRows(); showEmptyDetail(); });
