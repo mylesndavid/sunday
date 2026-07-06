@@ -369,9 +369,6 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-mode.active, .tl-period.active { background: var(--surface); color: var(--text-1); box-shadow: var(--shadow-1); }
 .tl-search { margin-left: auto; flex: 0 1 260px; height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--bg-2); color: var(--text-1); font-size: 13px; }
 .tl-search:focus { outline: none; border-color: var(--accent); }
-.tl-capture { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
-.tl-capture[hidden] { display: none; }
-.tl-cap-label { font: 500 12.5px/1 inherit; color: var(--text-2); }
 .tl-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tl-main { flex: 1 1 auto; overflow-y: auto; overflow-x: auto; padding: 8px clamp(14px, 3vw, 26px) 60px; min-width: 0; }
 
@@ -494,6 +491,10 @@ textarea#composer::placeholder { color: var(--text-3); }
 /* a labelled card grouping a set of related controls */
 .set-panel { padding: 18px 20px; margin: 0 0 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .set-panel-flush { padding: 0; margin: 0 0 18px; background: transparent; border: 0; }
+.set-toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.set-toggle-copy { min-width: 0; }
+.set-toggle-copy .brain-label { margin-top: 0; }
+.set-toggle-row .toggle { margin-top: 3px; }
 .set-panel .brain-label:first-child { margin-top: 0; }
 .set-help-tight { margin: 0 0 12px; max-width: 60ch; }
 .brain-label-sm { font-size: 10px; margin: 16px 0 8px; }

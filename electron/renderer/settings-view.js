@@ -116,6 +116,7 @@ export async function loadAll() {
   loadRelayStatus();
   loadVapiStatus();
   loadAgentmailStatus();
+  loadTimeline();
   loadNet();
   loadMemorySummary();
   loadSkills();
@@ -1697,9 +1698,51 @@ async function sendTestText() {
   } catch (err) { if (line) { line.dataset.state = 'fail'; line.textContent = `failed — ${err.message}`; } }
 }
 
+// ── timeline (screen capture) ───────────────────────────────────────────
+async function loadTimeline() {
+  const box = $('#set-timeline-capture');
+  if (!box) return;
+  const status = $('#set-timeline-status');
+  try {
+    const s = await (await fetch(`${DAEMON_HTTP}/v1/timeline/state`)).json();
+    if (s.error) {
+      box.checked = false; box.disabled = true;
+      if (status) status.textContent = 'No Mac connected — open Sunday on the Mac you want a timeline for.';
+      return;
+    }
+    box.disabled = false;
+    box.checked = !!s.running;
+    if (status) status.textContent = timelineStatusText(s);
+  } catch { if (status) status.textContent = ''; }
+}
+function timelineStatusText(s) {
+  const frames = s.total || 0, cards = s.cards || 0;
+  const bits = [s.running ? 'Capturing.' : 'Off.'];
+  bits.push(`${frames} frame${frames !== 1 ? 's' : ''} captured · ${cards} card${cards !== 1 ? 's' : ''} built.`);
+  if (frames > 0 && !s.cli) bits.push('No codex/claude CLI logged in, so cards can’t be built yet — run `codex` (or `claude`) in a terminal.');
+  else if (s.cli) bits.push(`Summarized on-device by your local ${s.cli}.`);
+  return bits.join(' ');
+}
+function wireTimeline() {
+  const box = $('#set-timeline-capture');
+  if (!box) return;
+  box.addEventListener('change', async () => {
+    box.disabled = true;
+    try {
+      await fetch(`${DAEMON_HTTP}/v1/timeline/toggle`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(box.checked ? { on: true, interval_seconds: 60 } : { on: false }),
+      });
+    } catch { box.checked = !box.checked; }   // revert on failure
+    box.disabled = false;
+    loadTimeline();
+  });
+}
+
 function wire() {
   // ── nav ──
   document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.page)));
+  wireTimeline();
   document.querySelectorAll('.ov-action[data-goto]').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.goto)));
 
   // ── runtime segmented control + migrate ──
