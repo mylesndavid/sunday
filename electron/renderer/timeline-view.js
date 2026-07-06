@@ -129,22 +129,26 @@ async function runSearch(q) {
   } catch { showState('Search failed.'); }
 }
 
-// If any events are still on their heuristic title, kick ONE background
-// summarize pass (the daemon drains a batch through the local vision CLI), then
-// quietly re-fetch a few times so real titles + play-by-play stream in without
+// When there are captured frames not yet turned into cards, kick ONE background
+// process pass (the daemon drains it through the local vision CLI: transcribe →
+// synthesize) and quietly re-fetch a few times so cards stream in — without
 // stacking requests or flashing the loading state.
-function startSummaryPolling() {
+async function startSummaryPolling() {
   clearTimeout(summarizeTimer);
-  if (!events.some((e) => !e.summarized)) return;
+  let st;
+  try { st = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch { return; }
+  if (!st || (st.pending_frames || 0) <= 0) return;
   fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
   let tries = 0;
   const tick = async () => {
     if (mode === 'wrapped' || els.search.value.trim()) return;
     await loadRange(mode, { silent: true });
+    let s;
+    try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch { s = {}; }
     tries += 1;
-    if (tries < 8 && events.some((e) => !e.summarized)) summarizeTimer = setTimeout(tick, 15000);
+    if (tries < 10 && (s.pending_frames || 0) > 0) summarizeTimer = setTimeout(tick, 20000);
   };
-  summarizeTimer = setTimeout(tick, 15000);
+  summarizeTimer = setTimeout(tick, 20000);
 }
 
 // ─── proportional calendar rendering ─────────────────────────────────────
@@ -169,22 +173,36 @@ function calCard(ev, originTs, hourPx) {
   card.style.setProperty('--cat', colorFor(ev.type));
   card.dataset.id = ev.id;
 
+  const headRow = document.createElement('span');
+  headRow.className = 'tl-cc-head';
+  const fav = faviconEl(ev.app_primary);
+  if (fav) headRow.appendChild(fav);
   const title = document.createElement('span');
   title.className = 'tl-cc-title';
   title.textContent = ev.title || labelFor(ev.type);
-  card.appendChild(title);
+  headRow.appendChild(title);
+  card.appendChild(headRow);
   if (!compact) {
     const meta = document.createElement('span');
     meta.className = 'tl-cc-meta mono';
     meta.textContent = `${clock(ev.start_ts)} – ${clock(ev.end_ts)}`;
     card.appendChild(meta);
   }
-  if (!ev.summarized) {
-    const dot = document.createElement('span'); dot.className = 'tl-pending'; dot.title = 'summarizing…';
-    card.appendChild(dot);
-  }
   card.addEventListener('click', () => openDetail(ev));
   return { el: card, top };
+}
+
+// A small favicon for the card's primary app/site domain (Dayflow uses these).
+// Falls back to nothing on error — never blocks the card.
+function faviconEl(domain) {
+  const host = (domain || '').trim().toLowerCase();
+  if (!host || !host.includes('.') || host === 'terminal') return null;
+  const img = document.createElement('img');
+  img.className = 'tl-fav';
+  img.loading = 'lazy';
+  img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  img.addEventListener('error', () => img.remove());
+  return img;
 }
 
 function hourLabels(hourPx, into) {
@@ -321,8 +339,17 @@ async function openDetail(ev) {
     p.textContent = ev.summary;
     d.appendChild(p);
   }
+  if (ev.detailed_summary && ev.detailed_summary !== ev.summary) {
+    const p = document.createElement('p');
+    p.className = 'tl-d-detail';
+    p.textContent = ev.detailed_summary;
+    d.appendChild(p);
+  }
 
-  const chips = [...(ev.apps || []), ...(ev.projects || []).map((x) => '#' + x)];
+  const chips = [];
+  if (ev.app_primary) chips.push(ev.app_primary);
+  if (ev.app_secondary) chips.push(ev.app_secondary);
+  (ev.projects || []).forEach((x) => chips.push('#' + x));
   if (chips.length) {
     const wrap = document.createElement('div');
     wrap.className = 'tl-chips';
@@ -332,26 +359,24 @@ async function openDetail(ev) {
     d.appendChild(wrap);
   }
 
-  // Play-by-play scenes
-  if ((ev.scenes || []).length) {
-    const h = document.createElement('h3'); h.className = 'tl-d-h'; h.textContent = 'Play-by-play';
+  // Play-by-play — the observations overlapping this card's time span.
+  const scenesWrap = document.createElement('div');
+  d.appendChild(scenesWrap);
+  loadPlayByPlay(ev, scenesWrap);
+
+  // Distractions — brief interruptions the model logged inside the card.
+  if ((ev.distractions || []).length) {
+    const h = document.createElement('h3'); h.className = 'tl-d-h'; h.textContent = 'Distractions';
     d.appendChild(h);
-    const ul = document.createElement('div');
-    ul.className = 'tl-scenes';
-    ev.scenes.forEach((s) => {
-      const row = document.createElement('div');
-      row.className = 'tl-scene';
-      row.innerHTML = `<span class="tl-scene-t mono"></span><span class="tl-scene-x"></span>`;
-      row.querySelector('.tl-scene-t').textContent = s.time || '';
-      row.querySelector('.tl-scene-x').textContent = s.text || '';
+    const ul = document.createElement('div'); ul.className = 'tl-scenes';
+    ev.distractions.forEach((x) => {
+      const row = document.createElement('div'); row.className = 'tl-distraction';
+      const t = document.createElement('div'); t.className = 'tl-dx-title'; t.textContent = x.title || '';
+      const s = document.createElement('div'); s.className = 'tl-dx-sub'; s.textContent = x.summary || '';
+      row.appendChild(t); if (x.summary) row.appendChild(s);
       ul.appendChild(row);
     });
     d.appendChild(ul);
-  } else if (!ev.summarized) {
-    const p = document.createElement('p');
-    p.className = 'tl-d-pending';
-    p.textContent = 'Reconstructing this session…';
-    d.appendChild(p);
   }
 
   // Evidence: the raw frames, scrubbable (demoted from the old main view).
@@ -367,6 +392,37 @@ async function openDetail(ev) {
     </div>`;
   d.appendChild(stage);
   loadEvidence(ev.id, stage);
+}
+
+async function loadPlayByPlay(ev, wrap) {
+  const h = document.createElement('h3'); h.className = 'tl-d-h'; h.textContent = 'Play-by-play';
+  wrap.appendChild(h);
+  const body = document.createElement('div');
+  body.className = 'tl-scenes';
+  body.innerHTML = `<div class="tl-d-pending">Reconstructing this session…</div>`;
+  wrap.appendChild(body);
+  try {
+    const res = await fetch(
+      `${cfg.daemonHttp}/v1/timeline/observations?from_ts=${ev.start_ts}&to_ts=${ev.end_ts}`);
+    const data = await res.json();
+    const obs = (data.observations || []).slice().sort((a, b) => a.start_ts - b.start_ts);
+    body.innerHTML = '';
+    if (!obs.length) {
+      body.innerHTML = ev.summarized
+        ? `<div class="tl-d-pending">No moment-by-moment detail for this card.</div>`
+        : `<div class="tl-d-pending">Reconstructing this session…</div>`;
+      return;
+    }
+    obs.forEach((o) => {
+      const row = document.createElement('div');
+      row.className = 'tl-scene';
+      row.innerHTML = `<span class="tl-scene-t mono"></span><span class="tl-scene-x"></span>`;
+      row.querySelector('.tl-scene-t').textContent =
+        `${clock(o.start_ts)}${o.end_ts && o.end_ts !== o.start_ts ? '–' + clock(o.end_ts) : ''}`;
+      row.querySelector('.tl-scene-x').textContent = o.text || '';
+      body.appendChild(row);
+    });
+  } catch { body.innerHTML = `<div class="tl-d-pending">Couldn’t load the play-by-play.</div>`; }
 }
 
 async function loadEvidence(eventId, stage) {

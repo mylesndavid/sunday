@@ -3319,8 +3319,7 @@ class Daemon:
         return None
 
     async def _http_timeline_events(self, request: web.Request) -> web.Response:
-        # Segment fresh frames into events before reading — cheap + incremental.
-        await self._timeline_call("timeline_segment", {})
+        # Reads just return cards; the model pipeline advances via /summarize.
         params: dict = {}
         for key in ("from_ts", "to_ts"):
             v = request.query.get(key)
@@ -3338,9 +3337,17 @@ class Daemon:
         return web.json_response(await self._timeline_call("timeline_events", params))
 
     async def _http_timeline_day(self, request: web.Request) -> web.Response:
-        await self._timeline_call("timeline_segment", {})
         date = request.query.get("date", "")
         return web.json_response(await self._timeline_call("timeline_day", {"date": date}))
+
+    async def _http_timeline_observations(self, request: web.Request) -> web.Response:
+        params: dict = {}
+        for key in ("from_ts", "to_ts"):
+            v = request.query.get(key)
+            if v:
+                try: params[key] = float(v)
+                except ValueError: pass
+        return web.json_response(await self._timeline_call("timeline_observations", params))
 
     async def _http_timeline_search(self, request: web.Request) -> web.Response:
         params = {"q": request.query.get("q", "")}
@@ -3372,97 +3379,35 @@ class Daemon:
         return web.json_response(await self._timeline_call("timeline_stop", {}))
 
     async def _http_timeline_segment(self, request: web.Request) -> web.Response:
-        return web.json_response(await self._timeline_call("timeline_segment", {}))
-
-    async def _timeline_summarize_pass(self, limit: int = 16) -> int:
-        """Turn heuristic-titled events into real ones. Pulls the derived-text
-        bundle for each un-summarized event, asks the utility model for a tight
-        title + one-line summary + type/projects/people, writes it back. Returns
-        how many it summarized. Screenshots are never involved."""
-        pending = await self._timeline_call("timeline_unsummarized", {"limit": limit})
-        evs = (pending or {}).get("events") or []
-        if not evs:
-            return 0
-        from sunday.runtime import build_utility_runtime
-        rt = build_utility_runtime(self.config)
-        system = (
-            "You reconstruct what a knowledge worker was doing during one screen "
-            "session, from a timestamped trail of on-screen text (apps, window "
-            "titles, OCR snippets). Reply with ONLY a JSON object: "
-            "{\"title\": short specific title (<=8 words, no app name unless "
-            "meaningful), \"summary\": 1-2 plain sentences on what they did and why "
-            "it mattered, \"type\": one of coding|messaging|email|meeting|design|"
-            "writing|browsing|media|admin|other, \"projects\": [repo/product/doc "
-            "names you can identify], \"people\": [names of people involved], "
-            "\"scenes\": [a minute-by-minute play-by-play as objects "
-            "{\"time\": \"9:37–9:40 AM\", \"text\": \"searched X, watched Y\"} — one "
-            "per distinct thing they did, in order, concrete and specific like a "
-            "narrator]}. Ground everything strictly in the evidence — never invent "
-            "titles, view counts, names, or actions. No prose outside the JSON."
+        # Compat alias — advances the pipeline one round.
+        return web.json_response(
+            await self._timeline_call("timeline_process", {"time_budget_s": 110}, timeout=150)
         )
-        done = 0
-        for ev in evs:
-            apps = ", ".join(ev.get("apps") or []) or ev.get("dominant_app") or "unknown"
-            trail = "\n".join(
-                f"  {f.get('clock')} · {f.get('app')}"
-                + (f" · {f.get('window')}" if f.get('window') else "")
-                + (f" · {f.get('ocr')}" if f.get('ocr') else "")
-                for f in (ev.get("frames") or [])
-            )
-            user = (
-                f"Apps: {apps}\nDuration: {ev.get('duration_min')} min\n"
-                f"Timestamped trail:\n{trail or '(no captured frames)'}\n\n"
-                f"Extra on-screen text:\n{(ev.get('evidence') or '')[:1600]}\n\nJSON:"
-            )
-            try:
-                res = await rt.complete(
-                    system_prompt=system,
-                    messages=[{"role": "user", "content": user}],
-                    tools_schema=None, purpose="timeline_summary",
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("timeline summary model call failed", error=str(exc))
-                continue
-            parsed = self._timeline_parse_json(res.content or "")
-            if not isinstance(parsed, dict):
-                continue
-            await self._timeline_call("timeline_apply_summary", {
-                "id": ev["id"],
-                "title": (parsed.get("title") or "").strip() or None,
-                "summary": (parsed.get("summary") or "").strip() or None,
-                "type": parsed.get("type"),
-                "projects": parsed.get("projects") if isinstance(parsed.get("projects"), list) else None,
-                "people": parsed.get("people") if isinstance(parsed.get("people"), list) else None,
-            })
-            done += 1
-        return done
 
-    async def _timeline_ensure_summaries(self, rounds: int = 4, per_round: int = 6) -> dict:
-        """Fill in event titles + play-by-play scenes. Prefers the satellite's
-        LOCAL vision CLI (codex/claude — screenshots stay on the Mac); falls back
-        to the daemon's text model over OCR when no CLI is logged in. Loops a few
-        bounded rounds under a long WS timeout so a backlog drains."""
-        total = 0
-        via = "cli"
+    async def _timeline_ensure_summaries(self, rounds: int = 4) -> dict:
+        """Advance the transcribe→synthesize pipeline ON THE MAC (local vision CLI;
+        screenshots never leave the machine). Loops bounded rounds under a long WS
+        timeout so a capture backlog drains into observations + cards. If no CLI is
+        logged in, it reports that and stops — there is no cloud fallback by design."""
+        transcribed = cards = 0
+        available = True
         for _ in range(max(1, rounds)):
             res = await self._timeline_call(
-                "timeline_summarize", {"limit": per_round, "time_budget_s": 110}, timeout=140,
+                "timeline_process", {"time_budget_s": 110}, timeout=150,
             )
             if res.get("error"):
-                via = "error"
                 break
             if res.get("available") is False:
-                # No local CLI on the Mac — summarize from OCR text on the daemon.
-                via = "text"
-                total += await self._timeline_summarize_pass(limit=12)
+                available = False
                 break
-            total += int(res.get("summarized") or 0)
-            if int(res.get("remaining") or 0) <= 0 or int(res.get("summarized") or 0) == 0:
+            transcribed += int(res.get("transcribed") or 0)
+            cards += int(res.get("cards") or 0)
+            # Stop once the frame backlog is drained and nothing new transcribed.
+            if int(res.get("remaining") or 0) <= 0 and int(res.get("transcribed") or 0) == 0:
                 break
-        return {"summarized": total, "via": via}
+        return {"available": available, "transcribed": transcribed, "cards": cards}
 
     async def _http_timeline_summarize(self, request: web.Request) -> web.Response:
-        await self._timeline_call("timeline_segment", {})
         return web.json_response(await self._timeline_ensure_summaries())
 
     @staticmethod
@@ -3488,12 +3433,11 @@ class Daemon:
         if period not in ("week", "month", "year"):
             period = "week"
         start, end = self._timeline_period_bounds(period)
-        await self._timeline_call("timeline_segment", {})
-        # Best-effort: give the narrator real titles to work with. Bounded to
-        # one round so Wrapped stays responsive — background polling on the
-        # timeline view drains the rest of the backlog over time.
+        # Best-effort: advance the pipeline so the narrator has real cards to work
+        # with. Bounded to one round so Wrapped stays responsive — background
+        # polling on the timeline view drains the rest of the backlog over time.
         try:
-            await self._timeline_ensure_summaries(rounds=1, per_round=8)
+            await self._timeline_ensure_summaries(rounds=1)
         except Exception as exc:  # noqa: BLE001
             log.warning("timeline wrapped summarize pass failed", error=str(exc))
         stats = await self._timeline_call(
@@ -4003,6 +3947,7 @@ class Daemon:
         app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)
         app.router.add_get("/v1/timeline/events", self._http_timeline_events)
         app.router.add_get("/v1/timeline/day", self._http_timeline_day)
+        app.router.add_get("/v1/timeline/observations", self._http_timeline_observations)
         app.router.add_get("/v1/timeline/search", self._http_timeline_search)
         app.router.add_get("/v1/timeline/event-frames", self._http_timeline_event_frames)
         app.router.add_get("/v1/timeline/state", self._http_timeline_state)

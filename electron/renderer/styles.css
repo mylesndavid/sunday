@@ -382,6 +382,8 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-cal-card.compact { flex-direction: row; align-items: center; gap: 8px; padding: 0 12px; }
 .tl-cal-card:hover { box-shadow: var(--shadow-2); transform: scale(1.004); z-index: 3; }
 .tl-cal-card.sel { box-shadow: 0 0 0 1.5px var(--cat, var(--accent)) inset, var(--shadow-2); z-index: 4; }
+.tl-cc-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tl-fav { width: 15px; height: 15px; border-radius: 3px; flex: 0 0 auto; }
 .tl-cc-title { font: 550 14px/1.3 inherit; color: var(--text-1); letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl-cal-card.compact .tl-cc-title { font-size: 12.5px; font-weight: 500; }
 .tl-cc-meta { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
@@ -428,7 +430,11 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-d-close:hover { background: var(--surface-3); color: var(--text-1); }
 .tl-d-kicker { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
 .tl-d-title { margin: 3px 0 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em; line-height: 1.25; }
-.tl-d-summary { margin: 0 0 14px; font-size: 13.5px; line-height: 1.6; color: var(--text-2); }
+.tl-d-summary { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--text-1); font-weight: 500; }
+.tl-d-detail { margin: 0 0 14px; font-size: 13px; line-height: 1.65; color: var(--text-2); }
+.tl-distraction { padding: 7px 0; border-top: 1px solid var(--line); }
+.tl-dx-title { font-size: 12.5px; font-weight: 550; color: var(--text-1); }
+.tl-dx-sub { font-size: 12px; color: var(--text-3); margin-top: 1px; }
 .tl-d-h { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 18px 0 10px; }
 .tl-d-pending { font-size: 13px; color: var(--text-3); font-style: italic; }
 .tl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }

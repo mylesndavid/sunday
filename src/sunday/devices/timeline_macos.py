@@ -1,27 +1,26 @@
 """Timeline — a semantic activity layer over the raw rewind frames.
 
-Runs on the satellite, alongside `rewind_macos`. Rewind is the *capture*
-layer: it drops a screenshot + OCR + active-app/window every few minutes into
-`~/.sunday/rewind.db`. Timeline is the *product* layer: it groups those frames
-into human-readable **events** ("9:10–10:25 · Coding — sunday"), and rolls
-events up into **Wrapped** summaries (week / month / year).
+Runs on the satellite, alongside `rewind_macos`. Rewind is the *capture* layer:
+it drops a screenshot + OCR + active-app/window into `~/.sunday/rewind.db`.
+Timeline is the *product* layer, built on Dayflow's two-stage model:
 
-Division of labour, deliberately:
+1. **Transcribe** (`transcribe_pending`): hand ~15 screenshots from each
+   15-minute window to the LOCAL vision CLI (`chat_cli` → codex/claude) and get
+   back timestamped **observations** — the play-by-play atoms.
+2. **Synthesize** (`synthesize_recent`): hand the recent observations to the CLI
+   and let the model group them into **cards** (title / summary /
+   detailedSummary / category / distractions / appSites), merging by GOAL across
+   app switches. A rolling window makes this idempotent for the mutable tail.
 
-* **Segmentation is local + rule-based** and lives here. Frames → events using
-  time gaps and (smoothed) active-app changes. No model, no network. Cheap
-  enough to run incrementally every time the UI loads.
-* **Summarization + Wrapped narratives need a model**, which the satellite
-  doesn't have. So this module produces *derived text* (window titles, OCR
-  excerpts, app lists) and exposes it via `unsummarized()` / `period_stats()`.
-  The daemon reads that text, runs the model, and writes results back through
-  `apply_summary()` / `apply_wrapped()`. **Screenshots never leave the Mac** —
-  only derived text does, and only when the user has capture on.
+`process_pending` runs both stages under a wall-clock budget; the daemon calls it
+and loops until the backlog drains. **Screenshots never leave the Mac** — they go
+only to the user's own local CLI subscription. Cards + observations then roll up
+into **Wrapped** (week / month / year), narrated daemon-side from derived stats.
 
-Storage shares rewind's DB file so evidence (the frames) and meaning (the
-events) live together and the existing image IPC bridge keeps working. We add
-two tables — `timeline_events`, `timeline_summaries` — plus a tiny
-`timeline_state` for the incremental-segmentation cursor.
+Storage shares rewind's DB file so evidence (frames) and meaning (cards) live
+together and the image IPC bridge keeps working: `timeline_observations`,
+`timeline_events` (cards), `timeline_summaries` (Wrapped), and `timeline_state`
+(pipeline cursors).
 """
 
 from __future__ import annotations
@@ -149,6 +148,15 @@ def _connect() -> sqlite3.Connection:
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_summaries_period
             ON timeline_summaries(period_type, period_start, period_end);
+        CREATE TABLE IF NOT EXISTS timeline_observations (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_ts     REAL NOT NULL,
+            end_ts       REAL NOT NULL,
+            observation  TEXT NOT NULL,
+            batch_start  REAL NOT NULL,
+            created_at   REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tl_obs_start ON timeline_observations(start_ts);
         CREATE TABLE IF NOT EXISTS timeline_state (
             key   TEXT PRIMARY KEY,
             value TEXT
@@ -156,8 +164,28 @@ def _connect() -> sqlite3.Connection:
         """
     )
     rewind_macos._ensure_frame_columns(conn)
+    _ensure_card_columns(conn)
     conn.commit()
     return conn
+
+
+# Dayflow-shaped card fields the synthesis stage fills in, added to the base
+# timeline_events table on any DB that predates them.
+_CARD_EXTRA_COLUMNS = {
+    "category":         "TEXT",
+    "subcategory":      "TEXT",
+    "detailed_summary": "TEXT",
+    "distractions_json": "TEXT",
+    "app_primary":      "TEXT",
+    "app_secondary":    "TEXT",
+}
+
+
+def _ensure_card_columns(conn: sqlite3.Connection) -> None:
+    have = {r[1] for r in conn.execute("PRAGMA table_info(timeline_events)")}
+    for col, decl in _CARD_EXTRA_COLUMNS.items():
+        if col not in have:
+            conn.execute(f"ALTER TABLE timeline_events ADD COLUMN {col} {decl}")
 
 
 def _state_get(conn: sqlite3.Connection, key: str, default: float = 0.0) -> float:
@@ -244,114 +272,286 @@ def _dedupe_ocr(texts: list[str], cap: int = EVIDENCE_CHARS) -> str:
     return "\n".join(out)
 
 
-# ─── segmenter ───────────────────────────────────────────────────────────
+# ─── two-stage pipeline: frames → observations → cards (Dayflow's model) ──
+#
+# We do NOT rule-segment. Stage 1 (transcribe) hands ~15 screenshots from each
+# 15-minute window to the local vision CLI and gets back timestamped
+# "observations" — the play-by-play atoms. Stage 2 (synthesize) hands the recent
+# observations to the CLI and lets the model group them into cards, merging by
+# GOAL across app switches, with title/summary/detailedSummary/category/
+# distractions/appSites. Both prompts are Dayflow's, adapted to reference frame/
+# observation INDICES instead of parsing clock strings (robust round-tripping).
+
+BATCH_SECONDS        = 15 * 60   # transcription window length
+BATCH_SAMPLES        = 15        # frames sampled per window (evenly)
+BATCH_SETTLE_SECONDS = 120       # don't transcribe a window until it's this old
+SYNTH_WINDOW_SECONDS = 60 * 60   # rolling window of observations re-grouped into cards
 
 
-def _smoothed_apps(frames: list[dict]) -> list[str]:
-    """Kill single-frame app flickers: a frame's app only counts if it matches a
-    neighbour. Otherwise inherit the previous frame's app. Prevents a two-second
-    glance at Slack mid-coding from shattering the session into three events."""
-    apps = [(f.get("active_app") or "") for f in frames]
-    out: list[str] = []
-    for i, app in enumerate(apps):
-        prev = apps[i - 1] if i > 0 else ""
-        nxt = apps[i + 1] if i + 1 < len(apps) else ""
-        if app and (app == prev or app == nxt):
-            out.append(app)
-        elif out:
-            out.append(out[-1])
-        else:
-            out.append(app)
+def _parse_json(raw: str):
+    """Pull the first JSON object or array out of a model reply (tolerates code
+    fences and surrounding prose)."""
+    s = (raw or "").strip()
+    if s.startswith("```"):
+        s = s[s.find("\n") + 1: s.rfind("```")].strip()
+    for op, cl in (("[", "]"), ("{", "}")):
+        a, b = s.find(op), s.rfind(cl)
+        if a >= 0 and b > a:
+            try:
+                return json.loads(s[a:b + 1])
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+def _sample_frames(rows: list[tuple], n: int) -> list[dict]:
+    """Evenly sample up to n (id, ts, image_path) rows whose image still exists."""
+    if not rows:
+        return []
+    picks = rows if len(rows) <= n else \
+        [rows[round(i * (len(rows) - 1) / (n - 1))] for i in range(n)]
+    out = []
+    for r in picks:
+        if r[2] and Path(r[2]).exists():
+            out.append({"id": r[0], "ts": r[1], "path": r[2],
+                        "clock": time.strftime("%-I:%M %p", time.localtime(r[1]))})
     return out
 
 
-def _build_event_row(frames: list[dict], smoothed: list[str]) -> tuple:
-    """Turn one finalized run of frames into a timeline_events insert tuple."""
-    start_ts = frames[0]["ts"]
-    end_ts = frames[-1]["ts"]
-    app_counts = Counter(a for a in smoothed if a)
-    dominant_app = app_counts.most_common(1)[0][0] if app_counts else ""
-    kind = _app_type(dominant_app)
-    apps = [a for a, _ in app_counts.most_common()]
-    window_titles = [f.get("window_title") or "" for f in frames]
-    urls = sorted({(f.get("browser_url") or "").strip() for f in frames if f.get("browser_url")})
-    frame_ids = [f["id"] for f in frames]
-    evidence = _dedupe_ocr([f.get("ocr_text") or "" for f in frames])
-    title = _heuristic_title(kind, dominant_app, window_titles)
-    importance = _importance(kind, end_ts - start_ts)
-    thumb = frames[len(frames) // 2]["image_path"]
-    now = time.time()
-    return (
-        start_ts, end_ts, kind, title, None,
-        json.dumps(apps), json.dumps(urls), json.dumps([]), json.dumps([]),
-        json.dumps(frame_ids), json.dumps([]), evidence, dominant_app, thumb,
-        0.5, importance, 0, now, now,
-    )
+_TRANSCRIBE_PROMPT = (
+    "Analyze these {n} screenshots from a screen recording ({start} to {end}), in "
+    "chronological order. Create an activity log detailed enough that someone "
+    "could reconstruct EXACTLY what the user did.\n\n"
+    "For each segment ask: \"What EXACTLY did they do? What SPECIFIC things can I "
+    "see?\" Read app names from the macOS menu bar (top-left). Capture exact app/"
+    "site names, file names, URLs, page titles, usernames, search queries, "
+    "messages, numbers, view counts, prices.\n\n"
+    "Bad: \"Checked email\"  Good: \"Gmail: read 'RE: Budget approval' from "
+    "boss@co.com, replied 'looks good'\".\n"
+    "Bad: \"Browsing YouTube\"  Good: \"YouTube: searched 'charlie brown "
+    "christmas', watched Vince Guaraldi Trio (5.8M views)\".\n\n"
+    "3-8 segments total. Use 1 only if idle for most of the recording. Group by "
+    "GOAL not app (debugging across IDE+Terminal+Browser = 1 segment). Cover the "
+    "whole range, no gaps.\n\n"
+    "Screenshots are numbered 0..{last} at times: {clocks}.\n"
+    "Return ONLY JSON: {{\"segments\":[{{\"startIndex\":0,\"endIndex\":3,"
+    "\"description\":\"...\"}}]}} — indices reference the numbered screenshots."
+)
 
 
-def segment(lookback_hours: float = 72.0) -> dict[str, Any]:
-    """Incrementally turn un-segmented frames into events. Only frames newer than
-    the stored cursor are considered, and the still-open trailing session is held
-    back until a gap proves it's closed — so already-built events (and their
-    model summaries) are never rewritten. Idempotent and cheap; safe to call on
-    every timeline load."""
+async def transcribe_pending(tool: str | None = None, model: str | None = None,
+                             time_budget_s: float = 90.0) -> dict[str, Any]:
+    """Stage 1: turn each settled 15-minute frame window into observations via the
+    vision CLI. A cursor guarantees each window is transcribed once."""
+    detected = await chat_cli.detect(prefer=tool)
     conn = _connect()
     try:
-        cursor = _state_get(conn, "segmented_through_ts", 0.0)
-        floor = max(cursor, time.time() - lookback_hours * 3600)
+        if not detected:
+            return {"available": False, "transcribed": 0}
+        cursor = _state_get(conn, "transcribed_through_ts", 0.0)
+        win_start = cursor or conn.execute("SELECT MIN(ts) FROM frames").fetchone()[0]
+        if win_start is None:
+            return {"available": True, "transcribed": 0}
+        started = time.time()
+        made = 0
+        workdir = str(sunday_home())
+        while win_start + BATCH_SECONDS <= time.time() - BATCH_SETTLE_SECONDS:
+            if time.time() - started > time_budget_s:
+                break
+            win_end = win_start + BATCH_SECONDS
+            rows = conn.execute(
+                "SELECT id, ts, image_path FROM frames WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
+                (win_start, win_end),
+            ).fetchall()
+            frames = _sample_frames(rows, BATCH_SAMPLES)
+            if len(frames) >= 2:
+                clocks = ", ".join(f"{i}:{f['clock']}" for i, f in enumerate(frames))
+                prompt = _TRANSCRIBE_PROMPT.format(
+                    n=len(frames), last=len(frames) - 1,
+                    start=frames[0]["clock"], end=frames[-1]["clock"], clocks=clocks,
+                )
+                budget_left = max(20.0, time_budget_s - (time.time() - started))
+                res = await chat_cli.run(
+                    prompt, image_paths=[f["path"] for f in frames], tool=detected,
+                    model=model, workdir=workdir,
+                    timeout=min(chat_cli.TIMEOUT_SECONDS, budget_left),
+                )
+                if not res.get("ok"):
+                    log.warning("timeline transcribe failed", error=res.get("error"))
+                    break   # retry this window on the next call
+                parsed = _parse_json(res.get("text") or "")
+                segs = parsed.get("segments") if isinstance(parsed, dict) else None
+                for seg in (segs or []):
+                    try:
+                        si = max(0, min(len(frames) - 1, int(seg.get("startIndex", 0))))
+                        ei = max(si, min(len(frames) - 1, int(seg.get("endIndex", si))))
+                    except (TypeError, ValueError):
+                        continue
+                    desc = (seg.get("description") or "").strip()
+                    if desc:
+                        conn.execute(
+                            "INSERT INTO timeline_observations "
+                            "(start_ts, end_ts, observation, batch_start, created_at) "
+                            "VALUES (?,?,?,?,?)",
+                            (frames[si]["ts"], frames[ei]["ts"], desc, win_start, time.time()),
+                        )
+                        made += 1
+            _state_set(conn, "transcribed_through_ts", win_end)
+            conn.commit()
+            win_start = win_end
+        return {"available": True, "transcribed": made}
+    finally:
+        conn.close()
+
+
+_SYNTH_PROMPT = (
+    "You are synthesizing a user's activity observations into timeline cards. "
+    "Each card = one coherent activity (roughly 10-60 min). Time is a constraint, "
+    "not a goal.\n\n"
+    "MERGE aggressively. Switching apps/tools within one task is the SAME card "
+    "(Figma→Meet→Figma for one review; IDE+Terminal+Browser debugging = one "
+    "session). Start a new card only when the GOAL changes for 10+ minutes. Brief "
+    "(<5 min) unrelated detours are 'distractions' INSIDE the card, not new cards. "
+    "Default to merging.\n\n"
+    "For each card:\n"
+    "- title: specific; no 'and' joining unrelated things\n"
+    "- summary: one sentence — what + why it mattered\n"
+    "- detailedSummary: 2-4 sentences of concrete specifics\n"
+    "- category: one of coding|browsing|writing|design|meeting|email|messaging|media|admin|other\n"
+    "- distractions: [{{\"title\":\"\",\"summary\":\"\"}}] brief interruptions, or []\n"
+    "- appSites: {{\"primary\":\"canonical domain e.g. figma.com, github.com, "
+    "youtube.com, docs.google.com\",\"secondary\":\"\"}} — lower-case host, no "
+    "protocol; omit secondary if none\n\n"
+    "Observations are numbered 0..{last} at times: {clocks}.\n"
+    "Return ONLY a JSON array of cards: [{{\"startIndex\":0,\"endIndex\":4,"
+    "\"title\":\"\",\"summary\":\"\",\"detailedSummary\":\"\",\"category\":\"\","
+    "\"distractions\":[],\"appSites\":{{\"primary\":\"\",\"secondary\":\"\"}}}}] — "
+    "indices reference the numbered observations. Cover every observation in order, "
+    "no gaps or overlaps.\n\nObservations:\n{obs}"
+)
+
+
+async def synthesize_recent(tool: str | None = None, model: str | None = None,
+                            timeout: float = 120.0) -> dict[str, Any]:
+    """Stage 2: (re)group the rolling window of recent observations into cards.
+    Idempotent for the mutable tail — deletes the window's cards and rebuilds — so
+    a session spanning several transcription batches lands as ONE merged card."""
+    detected = await chat_cli.detect(prefer=tool)
+    conn = _connect()
+    try:
+        if not detected:
+            return {"available": False, "cards": 0}
+        floor = time.time() - SYNTH_WINDOW_SECONDS
+        frozen = _state_get(conn, "cards_frozen_through_ts", 0.0)
+        lo = max(floor, frozen)
         rows = conn.execute(
-            "SELECT id, ts, image_path, ocr_text, active_app, window_title, browser_url "
-            "FROM frames WHERE ts > ? ORDER BY ts ASC",
-            (floor,),
+            "SELECT start_ts, end_ts, observation FROM timeline_observations "
+            "WHERE end_ts > ? ORDER BY start_ts ASC", (lo,),
         ).fetchall()
         if not rows:
-            return {"created": 0, "segmented_through": cursor}
-        frames = [
-            {"id": r[0], "ts": r[1], "image_path": r[2], "ocr_text": r[3],
-             "active_app": r[4], "window_title": r[5], "browser_url": r[6]}
-            for r in rows
-        ]
-        smoothed = _smoothed_apps(frames)
+            return {"available": True, "cards": 0}
+        obs = [{"start_ts": r[0], "end_ts": r[1], "text": r[2]} for r in rows]
+        clocks = ", ".join(f"{i}:{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}"
+                           for i, o in enumerate(obs))
+        obs_txt = "\n".join(
+            f"{i}. [{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}] {o['text']}"
+            for i, o in enumerate(obs)
+        )
+        prompt = _SYNTH_PROMPT.format(last=len(obs) - 1, clocks=clocks, obs=obs_txt)
+        res = await chat_cli.run(prompt, tool=detected, model=model,
+                                 workdir=str(sunday_home()), timeout=timeout)
+        if not res.get("ok"):
+            log.warning("timeline synthesize failed", error=res.get("error"))
+            return {"available": True, "cards": 0, "error": res.get("error")}
+        cards = _parse_json(res.get("text") or "")
+        if not isinstance(cards, list) or not cards:
+            return {"available": True, "cards": 0}
 
-        # Walk frames, cutting a boundary on a long gap or a smoothed-app change.
-        segments: list[tuple[int, int]] = []   # (start_idx, end_idx) inclusive
-        seg_start = 0
-        for i in range(1, len(frames)):
-            gap = frames[i]["ts"] - frames[i - 1]["ts"]
-            app_changed = bool(smoothed[i]) and smoothed[i] != smoothed[i - 1]
-            if gap > SEGMENT_GAP_SECONDS or app_changed:
-                segments.append((seg_start, i - 1))
-                seg_start = i
-        segments.append((seg_start, len(frames) - 1))
-
-        # Hold back the trailing segment if it might still be growing (its last
-        # frame is recent). Everything before it is safe to finalize.
+        window_start = obs[0]["start_ts"]
+        conn.execute("DELETE FROM timeline_events WHERE end_ts >= ?", (window_start,))
+        made = 0
         now = time.time()
-        if frames[-1]["ts"] > now - TRAILING_HOLD_SECONDS and segments:
-            segments = segments[:-1]
-        if not segments:
-            return {"created": 0, "segmented_through": cursor}
-
-        created = 0
-        last_finalized_ts = cursor
-        for a, b in segments:
-            group = frames[a:b + 1]
-            row = _build_event_row(group, smoothed[a:b + 1])
+        for c in cards:
+            try:
+                si = max(0, min(len(obs) - 1, int(c.get("startIndex", 0))))
+                ei = max(si, min(len(obs) - 1, int(c.get("endIndex", si))))
+            except (TypeError, ValueError):
+                continue
+            start_ts, end_ts = obs[si]["start_ts"], obs[ei]["end_ts"]
+            cat = (c.get("category") or "other").strip().lower()
+            if cat not in _TYPE_LABEL:
+                cat = "other"
+            appsites = c.get("appSites") if isinstance(c.get("appSites"), dict) else {}
+            primary = (appsites.get("primary") or "").strip().lower()
+            secondary = (appsites.get("secondary") or "").strip().lower()
+            distractions = c.get("distractions") if isinstance(c.get("distractions"), list) else []
+            title = (c.get("title") or _TYPE_LABEL.get(cat, "Activity")).strip()[:160]
             conn.execute(
                 "INSERT INTO timeline_events "
-                "(start_ts, end_ts, type, title, summary, apps_json, urls_json, "
-                " people_json, projects_json, frame_ids_json, scenes_json, evidence_text, "
-                " dominant_app, thumb_path, confidence, importance, summarized, "
-                " created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                row,
+                "(start_ts, end_ts, type, category, subcategory, title, summary, "
+                " detailed_summary, distractions_json, app_primary, app_secondary, "
+                " apps_json, urls_json, people_json, projects_json, frame_ids_json, "
+                " dominant_app, importance, summarized, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (start_ts, end_ts, cat, cat, (c.get("subcategory") or "").strip()[:80],
+                 title, (c.get("summary") or "").strip()[:600],
+                 (c.get("detailedSummary") or "").strip()[:1600],
+                 json.dumps(distractions), primary, secondary,
+                 json.dumps([primary] if primary else []), json.dumps([]),
+                 json.dumps([]), json.dumps([]), json.dumps([]),
+                 primary or "", _importance(cat, end_ts - start_ts), 1, now, now),
             )
-            created += 1
-            last_finalized_ts = max(last_finalized_ts, group[-1]["ts"])
-        _state_set(conn, "segmented_through_ts", last_finalized_ts)
+            made += 1
+        _state_set(conn, "cards_frozen_through_ts", max(frozen, floor))
         conn.commit()
-        log.info("timeline segmented", created=created, through=last_finalized_ts)
-        return {"created": created, "segmented_through": last_finalized_ts}
+        log.info("timeline synthesized", cards=made, from_obs=len(obs))
+        return {"available": True, "cards": made}
+    finally:
+        conn.close()
+
+
+def _pending_frames_count() -> int:
+    """Frames captured but not yet transcribed into observations."""
+    conn = _connect()
+    try:
+        cursor = _state_get(conn, "transcribed_through_ts", 0.0)
+        settled = time.time() - BATCH_SETTLE_SECONDS
+        return conn.execute(
+            "SELECT COUNT(*) FROM frames WHERE ts > ? AND ts < ?", (cursor, settled)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+async def process_pending(tool: str | None = None, model: str | None = None,
+                          time_budget_s: float = 110.0) -> dict[str, Any]:
+    """Run both stages under a wall-clock budget: transcribe settled frame windows,
+    then re-synthesize recent observations into cards. Returns coverage so the
+    daemon/UI can poll until the backlog drains."""
+    t = await transcribe_pending(tool=tool, model=model, time_budget_s=time_budget_s * 0.7)
+    if not t.get("available"):
+        return {"available": False, "transcribed": 0, "cards": 0,
+                "remaining": _pending_frames_count()}
+    s = await synthesize_recent(tool=tool, model=model, timeout=max(30.0, time_budget_s * 0.4))
+    return {"available": True, "transcribed": t.get("transcribed", 0),
+            "cards": s.get("cards", 0), "remaining": _pending_frames_count()}
+
+
+def observations(from_ts: float, to_ts: float) -> dict[str, Any]:
+    """The play-by-play atoms overlapping a time range — used to show a card's
+    minute-by-minute breakdown in the detail pane."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT start_ts, end_ts, observation FROM timeline_observations "
+            "WHERE end_ts >= ? AND start_ts <= ? ORDER BY start_ts ASC",
+            (from_ts, to_ts),
+        ).fetchall()
+        return {"observations": [
+            {"start_ts": r[0], "end_ts": r[1], "text": r[2],
+             "time": time.strftime("%-I:%M %p", time.localtime(r[0]))}
+            for r in rows
+        ]}
     finally:
         conn.close()
 
@@ -361,26 +561,26 @@ def segment(lookback_hours: float = 72.0) -> dict[str, Any]:
 
 def _event_dict(row: sqlite3.Row | tuple, cols: list[str]) -> dict[str, Any]:
     d = dict(zip(cols, row))
-    for jkey in ("apps_json", "urls_json", "people_json", "projects_json",
-                 "frame_ids_json", "scenes_json"):
+    for jkey in ("apps_json", "urls_json", "people_json", "projects_json", "distractions_json"):
         raw = d.pop(jkey, None)
         try:
             d[jkey[:-5]] = json.loads(raw) if raw else []
         except (TypeError, json.JSONDecodeError):
             d[jkey[:-5]] = []
-    d.pop("evidence_text", None)   # never ship the raw OCR blob to the UI
     return d
 
 
 _EVENT_COLS = [
-    "id", "start_ts", "end_ts", "type", "title", "summary", "apps_json",
-    "urls_json", "people_json", "projects_json", "frame_ids_json", "scenes_json",
-    "dominant_app", "thumb_path", "confidence", "importance", "summarized",
+    "id", "start_ts", "end_ts", "type", "category", "subcategory", "title",
+    "summary", "detailed_summary", "distractions_json", "app_primary",
+    "app_secondary", "apps_json", "urls_json", "people_json", "projects_json",
+    "dominant_app", "importance", "summarized",
 ]
 _EVENT_SELECT = (
-    "SELECT id, start_ts, end_ts, type, title, summary, apps_json, urls_json, "
-    "people_json, projects_json, frame_ids_json, scenes_json, dominant_app, "
-    "thumb_path, confidence, importance, summarized FROM timeline_events"
+    "SELECT id, start_ts, end_ts, type, category, subcategory, title, summary, "
+    "detailed_summary, distractions_json, app_primary, app_secondary, apps_json, "
+    "urls_json, people_json, projects_json, dominant_app, importance, summarized "
+    "FROM timeline_events"
 )
 
 
@@ -395,8 +595,9 @@ def events(
     project: str | None = None,
     q: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Events overlapping [from_ts, to_ts], newest first. Optional type/project/
-    text filters. Segmentation is the caller's job (daemon segments first)."""
+    """Cards overlapping [from_ts, to_ts], newest first, with optional type/
+    project/text filters. Cards are produced by the transcribe→synthesize
+    pipeline (process_pending); reads never block on the model."""
     conn = _connect()
     try:
         where = ["end_ts >= ?" if from_ts else "1"]
@@ -408,10 +609,10 @@ def events(
             where.append("type = ?")
             args.append(type)
         if project:
-            where.append("projects_json LIKE ?")
-            args.append(f"%{project}%")
+            where.append("(projects_json LIKE ? OR app_primary LIKE ?)")
+            args += [f"%{project}%", f"%{project}%"]
         if q:
-            where.append("(title LIKE ? OR summary LIKE ? OR evidence_text LIKE ?)")
+            where.append("(title LIKE ? OR summary LIKE ? OR detailed_summary LIKE ?)")
             args += [f"%{q}%", f"%{q}%", f"%{q}%"]
         sql = f"{_EVENT_SELECT} WHERE {' AND '.join(where)} ORDER BY start_ts DESC LIMIT ?"
         args.append(int(limit))
@@ -444,25 +645,20 @@ def search(q: str, from_ts: float | None = None, to_ts: float | None = None,
 
 
 def event_frames(event_id: int) -> dict[str, Any]:
-    """The frames behind one event — evidence for the detail-pane scrubber."""
+    """The raw frames within a card's time span — evidence for the detail-pane
+    scrubber. Cards no longer store frame ids (they come from observations), so
+    we fetch by time range."""
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT frame_ids_json FROM timeline_events WHERE id = ?", (int(event_id),)
+            "SELECT start_ts, end_ts FROM timeline_events WHERE id = ?", (int(event_id),)
         ).fetchone()
         if not row:
             return {"frames": []}
-        try:
-            ids = json.loads(row[0] or "[]")
-        except json.JSONDecodeError:
-            ids = []
-        if not ids:
-            return {"frames": []}
-        qmarks = ",".join("?" * len(ids))
         frows = conn.execute(
-            f"SELECT id, ts, image_path, ocr_text, active_app, window_title "
-            f"FROM frames WHERE id IN ({qmarks}) ORDER BY ts ASC",
-            ids,
+            "SELECT id, ts, image_path, ocr_text, active_app, window_title "
+            "FROM frames WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+            (row[0], row[1]),
         ).fetchall()
         return {"frames": [
             {"id": r[0], "ts": r[1], "image_path": r[2],
@@ -478,14 +674,14 @@ def state() -> dict[str, Any]:
     base = rewind_macos.stats()
     conn = _connect()
     try:
-        total_events = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
-        unsummarized = conn.execute(
-            "SELECT COUNT(*) FROM timeline_events WHERE summarized = 0"
-        ).fetchone()[0]
+        cards = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
+        obs = conn.execute("SELECT COUNT(*) FROM timeline_observations").fetchone()[0]
         base.update({
-            "events": total_events,
-            "unsummarized": unsummarized,
-            "segmented_through": _state_get(conn, "segmented_through_ts", 0.0),
+            "events": cards,
+            "cards": cards,
+            "observations": obs,
+            "pending_frames": _pending_frames_count(),
+            "transcribed_through": _state_get(conn, "transcribed_through_ts", 0.0),
         })
         return base
     finally:
@@ -502,238 +698,6 @@ def start(interval: float | None = None) -> dict[str, Any]:
 
 def stop() -> dict[str, Any]:
     return rewind_macos.stop()
-
-
-# ─── summarization plumbing (daemon runs the model, we hold the text) ────
-
-
-def _frame_timeline(conn: sqlite3.Connection, frame_ids: list[int], cap: int = 40) -> list[dict]:
-    """A compact, chronological per-frame trail for one event — timestamp + app
-    + window + a short OCR snippet per captured moment. This is what lets the
-    model write a timestamped play-by-play ('9:37–9:40: searched X, watched Y')
-    instead of a single flat summary. Bounded to `cap` frames so a long session
-    doesn't blow the prompt."""
-    if not frame_ids:
-        return []
-    ids = frame_ids[:cap] if len(frame_ids) <= cap else \
-        [frame_ids[round(i * (len(frame_ids) - 1) / (cap - 1))] for i in range(cap)]
-    qmarks = ",".join("?" * len(ids))
-    rows = conn.execute(
-        f"SELECT ts, active_app, window_title, ocr_text FROM frames "
-        f"WHERE id IN ({qmarks}) ORDER BY ts ASC",
-        ids,
-    ).fetchall()
-    out = []
-    for ts, app, win, ocr in rows:
-        clock = time.strftime("%-I:%M %p", time.localtime(ts))
-        snippet = " ".join((ocr or "").split())[:220]
-        out.append({"clock": clock, "app": app or "", "window": win or "", "ocr": snippet})
-    return out
-
-
-def unsummarized(limit: int = 12) -> dict[str, Any]:
-    """Events still on their heuristic title, with the derived text the model
-    needs to write a real title, summary, and a timestamped play-by-play. No
-    screenshots — OCR snippets + window titles + apps + timestamps only."""
-    conn = _connect()
-    try:
-        rows = conn.execute(
-            "SELECT id, start_ts, end_ts, type, dominant_app, apps_json, "
-            "frame_ids_json, evidence_text FROM timeline_events "
-            "WHERE summarized = 0 ORDER BY start_ts DESC LIMIT ?",
-            (int(limit),),
-        ).fetchall()
-        out = []
-        for r in rows:
-            try:
-                apps = json.loads(r[5] or "[]")
-            except json.JSONDecodeError:
-                apps = []
-            try:
-                fids = json.loads(r[6] or "[]")
-            except json.JSONDecodeError:
-                fids = []
-            out.append({
-                "id": r[0], "start_ts": r[1], "end_ts": r[2], "type": r[3],
-                "dominant_app": r[4], "apps": apps,
-                "duration_min": round((r[2] - r[1]) / 60, 1),
-                "frames": _frame_timeline(conn, fids),
-                "evidence": (r[7] or "")[:EVIDENCE_CHARS],
-            })
-        return {"events": out}
-    finally:
-        conn.close()
-
-
-def apply_summary(
-    id: int, title: str | None = None, summary: str | None = None,
-    type: str | None = None, projects: list | None = None,
-    people: list | None = None, importance: float | None = None,
-    scenes: list | None = None,
-) -> dict[str, Any]:
-    """Write a model-produced summary back onto an event and mark it done.
-    `scenes` is the minute-by-minute play-by-play shown when the card is opened:
-    a list of {"time": "9:37–9:40", "text": "..."} objects."""
-    conn = _connect()
-    try:
-        sets = ["summarized = 1", "updated_at = ?"]
-        args: list[Any] = [time.time()]
-        if title:
-            sets.append("title = ?"); args.append(title[:160])
-        if summary is not None:
-            sets.append("summary = ?"); args.append(summary[:800])
-        if type:
-            sets.append("type = ?"); args.append(type)
-        if projects is not None:
-            sets.append("projects_json = ?"); args.append(json.dumps(projects))
-        if people is not None:
-            sets.append("people_json = ?"); args.append(json.dumps(people))
-        if scenes is not None:
-            sets.append("scenes_json = ?"); args.append(json.dumps(scenes))
-        if importance is not None:
-            sets.append("importance = ?"); args.append(float(importance))
-        args.append(int(id))
-        conn.execute(f"UPDATE timeline_events SET {', '.join(sets)} WHERE id = ?", args)
-        conn.commit()
-        return {"ok": True, "id": int(id)}
-    finally:
-        conn.close()
-
-
-# ─── vision summarizer (local CLI reads the screenshots, never uploads) ──
-
-
-_SUMMARY_SYSTEM = (
-    "You reconstruct exactly what a person did during ONE screen session from "
-    "its screenshots, in order. Read app names from the macOS menu bar; read the "
-    "exact titles, URLs, search queries, view counts, file names, messages, and "
-    "numbers you can see. Be specific and concrete like a narrator — never vague, "
-    "never invented.\n\n"
-    "Reply with ONLY a JSON object, no prose, no code fence:\n"
-    "{\"title\": short specific title, <=8 words, no app name unless meaningful;\n"
-    " \"summary\": 1-2 sentences on what they did and why it mattered;\n"
-    " \"type\": one of coding|messaging|email|meeting|design|writing|browsing|media|admin|other;\n"
-    " \"projects\": [repo/product/doc names you can identify];\n"
-    " \"people\": [names of people involved];\n"
-    " \"scenes\": [a minute-by-minute play-by-play, one object per distinct thing "
-    "they did, in order: {\"time\": \"9:37–9:40 AM\", \"text\": \"searched "
-    "'charlie brown christmas', watched Vince Guaraldi Trio (5.8M views)\"}]}\n"
-    "Ground every field strictly in what is visible in the screenshots."
-)
-
-
-def _parse_json(raw: str) -> dict | None:
-    s = (raw or "").strip()
-    if s.startswith("```"):
-        s = s[s.find("\n") + 1: s.rfind("```")].strip()
-    a, b = s.find("{"), s.rfind("}")
-    if a < 0 or b <= a:
-        return None
-    try:
-        d = json.loads(s[a:b + 1])
-        return d if isinstance(d, dict) else None
-    except json.JSONDecodeError:
-        return None
-
-
-def _sample_event_frames(conn: sqlite3.Connection, frame_ids: list[int],
-                         n: int = SUMMARY_FRAME_SAMPLES) -> list[dict]:
-    """Evenly sample up to `n` frames of an event and return the ones whose image
-    still exists on disk, with their clock times (so the model can timestamp the
-    play-by-play)."""
-    if not frame_ids:
-        return []
-    picks = frame_ids if len(frame_ids) <= n else \
-        [frame_ids[round(i * (len(frame_ids) - 1) / (n - 1))] for i in range(n)]
-    qmarks = ",".join("?" * len(picks))
-    rows = conn.execute(
-        f"SELECT ts, image_path FROM frames WHERE id IN ({qmarks}) ORDER BY ts ASC",
-        picks,
-    ).fetchall()
-    out = []
-    for ts, path in rows:
-        if path and Path(path).exists():
-            out.append({"clock": time.strftime("%-I:%M %p", time.localtime(ts)), "path": path})
-    return out
-
-
-async def summarize_pending(
-    limit: int = 6, tool: str | None = None, model: str | None = None,
-    time_budget_s: float = 110.0,
-) -> dict[str, Any]:
-    """Turn heuristic-titled events into real titles + play-by-play scenes by
-    handing each event's screenshots to the local codex/claude CLI. Runs on the
-    Mac; images never leave it. Processes events until `limit` or the wall-clock
-    budget is hit, so the daemon can call it under a bounded WS timeout and loop.
-    Returns {available, summarized, remaining, tool}."""
-    detected = await chat_cli.detect(prefer=tool)
-    conn = _connect()
-    try:
-        remaining = conn.execute(
-            "SELECT COUNT(*) FROM timeline_events WHERE summarized = 0"
-        ).fetchone()[0]
-        if not detected:
-            return {"available": False, "summarized": 0, "remaining": remaining, "tool": None}
-        rows = conn.execute(
-            "SELECT id, start_ts, end_ts, frame_ids_json FROM timeline_events "
-            "WHERE summarized = 0 ORDER BY start_ts DESC LIMIT ?",
-            (int(limit),),
-        ).fetchall()
-        started = time.time()
-        done = 0
-        workdir = str(sunday_home())
-        for eid, start_ts, end_ts, fids_json in rows:
-            if time.time() - started > time_budget_s:
-                break
-            try:
-                fids = json.loads(fids_json or "[]")
-            except json.JSONDecodeError:
-                fids = []
-            frames = _sample_event_frames(conn, fids)
-            if not frames:
-                # No evidence on disk (pruned) — mark done so we stop retrying.
-                conn.execute(
-                    "UPDATE timeline_events SET summarized = 1, updated_at = ? WHERE id = ?",
-                    (time.time(), eid),
-                )
-                conn.commit()
-                continue
-            when = (f"{time.strftime('%A %-I:%M %p', time.localtime(start_ts))} to "
-                    f"{time.strftime('%-I:%M %p', time.localtime(end_ts))}")
-            clocks = ", ".join(f["clock"] for f in frames)
-            prompt = (
-                f"{_SUMMARY_SYSTEM}\n\nSession: {when}. {len(frames)} screenshots, "
-                f"in order, at these times: {clocks}.\n\nJSON:"
-            )
-            budget_left = max(20.0, time_budget_s - (time.time() - started))
-            res = await chat_cli.run(
-                prompt, image_paths=[f["path"] for f in frames],
-                tool=detected, model=model, workdir=workdir,
-                timeout=min(chat_cli.TIMEOUT_SECONDS, budget_left),
-            )
-            if not res.get("ok"):
-                log.warning("timeline vision summary failed", id=eid, error=res.get("error"))
-                continue
-            parsed = _parse_json(res.get("text") or "")
-            if not parsed:
-                continue
-            scenes = parsed.get("scenes")
-            apply_summary(
-                id=eid,
-                title=(parsed.get("title") or "").strip() or None,
-                summary=(parsed.get("summary") or "").strip() or None,
-                type=parsed.get("type"),
-                projects=parsed.get("projects") if isinstance(parsed.get("projects"), list) else None,
-                people=parsed.get("people") if isinstance(parsed.get("people"), list) else None,
-                scenes=scenes if isinstance(scenes, list) else None,
-            )
-            done += 1
-        remaining = conn.execute(
-            "SELECT COUNT(*) FROM timeline_events WHERE summarized = 0"
-        ).fetchone()[0]
-        return {"available": True, "summarized": done, "remaining": remaining, "tool": detected}
-    finally:
-        conn.close()
 
 
 # ─── Wrapped: aggregate on the Mac, narrate on the daemon ─────────────────

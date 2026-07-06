@@ -306,8 +306,21 @@ async def _h_screen_text(params: dict[str, Any]) -> dict[str, Any]:
 # ─── Timeline handlers (semantic layer over rewind frames, macOS only) ───
 
 
-async def _h_timeline_segment(params: dict[str, Any]) -> dict[str, Any]:
-    return timeline_macos.segment(float(params.get("lookback_hours") or 72.0))
+async def _h_timeline_process(params: dict[str, Any]) -> dict[str, Any]:
+    """Advance the two-stage pipeline: transcribe settled frame windows into
+    observations, then synthesize recent observations into cards — all via the
+    local vision CLI, screenshots staying on the Mac. Wall-clock bounded so it
+    fits under the daemon's WS timeout; the daemon loops until remaining hits 0."""
+    return await timeline_macos.process_pending(
+        tool=params.get("tool"), model=params.get("model"),
+        time_budget_s=float(params.get("time_budget_s") or 110.0),
+    )
+
+
+async def _h_timeline_observations(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.observations(
+        float(params.get("from_ts") or 0), float(params.get("to_ts") or 0),
+    )
 
 
 async def _h_timeline_events(params: dict[str, Any]) -> dict[str, Any]:
@@ -349,30 +362,6 @@ async def _h_timeline_start(params: dict[str, Any]) -> dict[str, Any]:
 
 async def _h_timeline_stop(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.stop()
-
-
-async def _h_timeline_unsummarized(params: dict[str, Any]) -> dict[str, Any]:
-    return timeline_macos.unsummarized(int(params.get("limit") or 12))
-
-
-async def _h_timeline_summarize(params: dict[str, Any]) -> dict[str, Any]:
-    """Vision summarize on the Mac via the local codex/claude CLI — screenshots
-    never leave the machine. Bounded by a wall-clock budget so it fits under the
-    daemon's WS timeout; the daemon loops until remaining hits 0."""
-    return await timeline_macos.summarize_pending(
-        limit=int(params.get("limit") or 6),
-        tool=params.get("tool"), model=params.get("model"),
-        time_budget_s=float(params.get("time_budget_s") or 110.0),
-    )
-
-
-async def _h_timeline_apply_summary(params: dict[str, Any]) -> dict[str, Any]:
-    return timeline_macos.apply_summary(
-        id=int(params.get("id") or 0), title=params.get("title"),
-        summary=params.get("summary"), type=params.get("type"),
-        projects=params.get("projects"), people=params.get("people"),
-        importance=params.get("importance"),
-    )
 
 
 async def _h_timeline_period_stats(params: dict[str, Any]) -> dict[str, Any]:
@@ -447,7 +436,8 @@ HANDLERS = {
     "rewind_search":          _h_rewind_search,
     "rewind_recent":          _h_rewind_recent,
     "rewind_stats":           _h_rewind_stats,
-    "timeline_segment":       _h_timeline_segment,
+    "timeline_process":       _h_timeline_process,
+    "timeline_observations":  _h_timeline_observations,
     "timeline_events":        _h_timeline_events,
     "timeline_day":           _h_timeline_day,
     "timeline_search":        _h_timeline_search,
@@ -455,9 +445,6 @@ HANDLERS = {
     "timeline_state":         _h_timeline_state,
     "timeline_start":         _h_timeline_start,
     "timeline_stop":          _h_timeline_stop,
-    "timeline_unsummarized":  _h_timeline_unsummarized,
-    "timeline_summarize":     _h_timeline_summarize,
-    "timeline_apply_summary": _h_timeline_apply_summary,
     "timeline_period_stats":  _h_timeline_period_stats,
     "timeline_apply_wrapped": _h_timeline_apply_wrapped,
     "timeline_get_wrapped":   _h_timeline_get_wrapped,
