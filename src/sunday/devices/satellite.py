@@ -353,7 +353,7 @@ async def _h_timeline_event_frames(params: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _h_timeline_state(params: dict[str, Any]) -> dict[str, Any]:
-    return timeline_macos.state()
+    return await timeline_macos.state()
 
 
 async def _h_timeline_start(params: dict[str, Any]) -> dict[str, Any]:

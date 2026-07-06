@@ -178,18 +178,26 @@ async function startSummaryPolling() {
   clearTimeout(summarizeTimer);
   let st;
   try { st = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch { return; }
-  if (!st || (st.pending_frames || 0) <= 0) return;
+  if (!st || (st.pending_frames || 0) <= 0 || !st.cli) return;   // nothing to do / no summarizer
+  // Kick one pass now; then poll every few seconds to (a) show live progress and
+  // (b) re-nudge occasionally so the backlog keeps draining. Only while the tab
+  // is open — leaving stops it (cost control on a big backlog).
   fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
   let tries = 0;
   const tick = async () => {
     if (mode === 'wrapped' || els.search.value.trim()) return;
-    await loadRange(mode, { silent: true });
-    let s;
-    try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch { s = {}; }
+    let s = {};
+    try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch {}
+    // Reflect live progress on the building screen (numbers move as it drains).
+    if (!els.empty.hidden && (s.cards || 0) === 0) paintBuilding(s);
+    await loadRange(mode, { silent: true });   // swaps to cards the moment they exist
     tries += 1;
-    if (tries < 10 && (s.pending_frames || 0) > 0) summarizeTimer = setTimeout(tick, 20000);
+    if (tries < 60 && (s.pending_frames || 0) > 0 && s.cli) {
+      if (tries % 3 === 0) fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
+      summarizeTimer = setTimeout(tick, 6000);
+    }
   };
-  summarizeTimer = setTimeout(tick, 20000);
+  summarizeTimer = setTimeout(tick, 6000);
 }
 
 // ─── proportional calendar rendering ─────────────────────────────────────
@@ -597,29 +605,57 @@ async function showEmpty() {
   captureOn = !!s.running;
   paintCapture();
   if (s.error) {
+    setEmptyIcon(false);
     els.emptyTitle.textContent = 'Connect your Mac';
     els.emptySub.textContent = 'Open Sunday on the Mac you want a timeline for, then turn capture on.';
     els.enable.hidden = true;
+  } else if ((s.cards || 0) === 0 && (s.total || 0) > 0) {
+    // Frames captured but no cards yet — show live build progress (or the CLI
+    // gap). Applies whether capture is currently on or off (there's a backlog).
+    paintBuilding(s);
   } else if (s.running) {
-    const frames = s.total || 0;
+    // Capture on, nothing recorded — almost always a Screen Recording permission gap.
+    setEmptyIcon(false);
     els.enable.hidden = true;
-    if (frames === 0) {
-      // Capture is "on" but nothing recorded — almost always a permission gap.
-      els.emptyTitle.textContent = 'Capture is on — but nothing’s recording';
-      els.emptySub.textContent = 'Screen capture is enabled, yet no frames have been recorded. This is almost always a missing permission: give Sunday Screen Recording access in System Settings › Privacy & Security › Screen Recording, then toggle Capture off and on.';
-    } else {
-      // Frames exist but no cards — the summarizer (local CLI) is the blocker.
-      els.emptyTitle.textContent = `Captured ${frames} frame${frames > 1 ? 's' : ''} — building your timeline`;
-      els.emptySub.textContent = 'Screen history is recording. Sunday turns it into activity cards using your local Codex or Claude CLI — cards appear once that runs. If they never show, make sure `codex` (or `claude`) is installed and logged in on this Mac.';
-      // Nudge a processing pass so cards start forming from the frames we have.
-      fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
-    }
+    els.emptyTitle.textContent = 'Capture is on — but nothing’s recording';
+    els.emptySub.textContent = 'Screen capture is enabled, yet no frames have been recorded. This is almost always a missing permission: give Sunday Screen Recording access in System Settings › Privacy & Security › Screen Recording, then toggle Capture off and on.';
   } else {
+    setEmptyIcon(false);
     els.emptyTitle.textContent = 'Your timeline is off';
     els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
     els.enable.hidden = false;
   }
   els.empty.hidden = false;
+}
+
+const TL_CLOCK_SVG = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+function setEmptyIcon(spinning) {
+  const icon = els.empty?.querySelector('.tl-empty-icon');
+  if (!icon) return;
+  icon.classList.toggle('tl-empty-spin', spinning);
+  icon.innerHTML = spinning ? '<span class="tl-spin"></span>' : TL_CLOCK_SVG;
+}
+
+// Live "building" panel: a spinner + real counts (cards / moments / frames left),
+// or a clear "no summarizer" message. Called on first paint and on every poll
+// tick so the numbers move as processing drains the backlog.
+function paintBuilding(s) {
+  els.enable.hidden = true;
+  const frames = s.total || 0, cards = s.cards || 0, obs = s.observations || 0, pend = s.pending_frames || 0;
+  if (!s.cli) {
+    setEmptyIcon(false);
+    els.emptyTitle.textContent = `Captured ${frames} frame${frames !== 1 ? 's' : ''} — but no summarizer`;
+    els.emptySub.textContent = 'Sunday recorded your screen but can’t turn it into cards yet: no codex or claude CLI is logged in on this Mac. Run `codex` (or `claude`) in a terminal to log in, and it’ll start building — using your subscription, not a per-token bill.';
+    return;
+  }
+  setEmptyIcon(true);
+  els.emptyTitle.textContent = 'Building your timeline…';
+  els.emptySub.innerHTML =
+    `<strong>${cards}</strong> card${cards !== 1 ? 's' : ''} · ` +
+    `<strong>${obs}</strong> moment${obs !== 1 ? 's' : ''} · ` +
+    `<strong>${pend}</strong> frame${pend !== 1 ? 's' : ''} left to read` +
+    `<span class="tl-build-note">Summarizing on-device with your local <code>${s.cli}</code> — your subscription, not a per-token bill. Leave the tab to pause.</span>`;
 }
 async function enableCapture() {
   els.enable.disabled = true; els.enable.textContent = 'turning on…';
