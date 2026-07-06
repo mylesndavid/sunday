@@ -50,12 +50,52 @@ const MIN_CARD_PX = 12;
 const COMPACT_MIN = 13;            // shorter than this → single-line card
 const WEEK_HOUR_PX = 64;
 
-export function init(config, refs) { cfg = config; els = refs; wire(); }
+export function init(config, refs) {
+  cfg = config; els = refs;
+  els.capture = document.getElementById('tl-capture');
+  wire();
+}
 export function isLoaded() { return loaded; }
 
 export async function load() {
   loaded = true;
+  refreshCapture();
   setMode(mode, true);
+}
+
+// ─── capture on/off — always-visible header control ──────────────────────
+let captureOn = false, captureNoDevice = false;
+
+async function refreshCapture() {
+  try {
+    const s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json();
+    captureNoDevice = !!s.error;
+    captureOn = !!s.running;
+  } catch { captureNoDevice = true; captureOn = false; }
+  paintCapture();
+}
+function paintCapture() {
+  const btn = els.capture; if (!btn) return;
+  if (captureNoDevice) { btn.hidden = true; return; }   // no Mac connected — can't toggle
+  btn.hidden = false;
+  btn.dataset.on = captureOn ? 'true' : 'false';
+  btn.querySelector('.tl-cap-label').textContent = captureOn ? 'Capturing' : 'Capture off';
+  btn.title = captureOn ? 'Screen capture is on — click to pause' : 'Turn screen capture on';
+}
+async function toggleCapture() {
+  const btn = els.capture; if (!btn || btn.disabled) return;
+  const next = !captureOn;
+  btn.disabled = true;
+  try {
+    await fetch(`${cfg.daemonHttp}/v1/timeline/toggle`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next ? { on: true, interval_seconds: 60 } : { on: false }),
+    });
+    captureOn = next;
+  } catch { /* keep prior state */ }
+  btn.disabled = false;
+  paintCapture();
+  if (mode !== 'wrapped' && !els.search.value.trim()) loadRange(mode);   // repaint empty/list copy
 }
 
 function wire() {
@@ -66,6 +106,7 @@ function wire() {
     if (q) runSearch(q); else setMode(mode, true);
   }, 300));
   els.enable?.addEventListener('click', enableCapture);
+  els.capture?.addEventListener('click', toggleCapture);
   els.wrappedPeriod?.querySelectorAll('[data-period]').forEach((b) =>
     b.addEventListener('click', () => loadWrapped(b.dataset.period)));
   els.detailClose?.addEventListener('click', closeDetail);
@@ -215,7 +256,7 @@ function hourLines(hourPx, into, inset) {
 }
 
 function renderDay(list, win) {
-  els.empty.hidden = true;
+  els.empty.hidden = true; els.main.hidden = false;
   const main = els.main; main.innerHTML = '';
   const cal = document.createElement('div');
   cal.className = 'tl-cal';
@@ -232,7 +273,7 @@ function renderDay(list, win) {
 }
 
 function renderWeek(list, win) {
-  els.empty.hidden = true;
+  els.empty.hidden = true; els.main.hidden = false;
   const main = els.main; main.innerHTML = '';
   const week = document.createElement('div');
   week.className = 'tl-week';
@@ -281,7 +322,7 @@ function renderWeek(list, win) {
 
 // Search spans arbitrary time, so it stays a compact list rather than a calendar.
 function renderList(list, banner) {
-  els.detail.hidden = true; els.empty.hidden = true;
+  els.detail.hidden = true; els.empty.hidden = true; els.main.hidden = false;
   const main = els.main; main.innerHTML = '';
   if (banner) {
     const b = document.createElement('div'); b.className = 'tl-banner'; b.textContent = banner; main.appendChild(b);
@@ -472,7 +513,7 @@ async function loadWrapped(period) {
 
 function renderWrapped(w, period) {
   els.detail.hidden = true;
-  els.empty.hidden = true;
+  els.empty.hidden = true; els.main.hidden = false;
   const m = els.main;
   m.innerHTML = '';
   const box = document.createElement('div');
@@ -541,28 +582,45 @@ function listBlock(title, items) {
 // ─── states ────────────────────────────────────────────────────────────────
 
 function showLoading(msg) {
-  els.detail.hidden = true; els.empty.hidden = true;
+  els.detail.hidden = true; els.empty.hidden = true; els.main.hidden = false;
   els.main.innerHTML = `<div class="tl-loading mono">${msg || 'Loading…'}</div>`;
 }
 function showState(msg) {
-  els.detail.hidden = true; els.empty.hidden = true;
+  els.detail.hidden = true; els.empty.hidden = true; els.main.hidden = false;
   els.main.innerHTML = `<div class="tl-state">${msg}</div>`;
 }
+// The empty state takes the WHOLE view (hide the main column so it's centered
+// across the full width, not shoved into the right half beside an empty rail).
 async function showEmpty() {
-  els.main.innerHTML = '';
-  try {
-    const res = await fetch(`${cfg.daemonHttp}/v1/timeline/state`);
-    const s = await res.json();
-    if (s.error) { els.emptyTitle.textContent = 'Connect your Mac';
-      els.emptySub.textContent = 'Open Sunday on the Mac you want a timeline for, then turn capture on.';
-      els.enable.hidden = true; }
-    else if (s.running) { els.emptyTitle.textContent = 'Capturing — nothing yet';
-      els.emptySub.textContent = 'Timeline is on. Your first activity cards appear within a few minutes.';
-      els.enable.hidden = true; }
-    else { els.emptyTitle.textContent = 'Your timeline is off';
-      els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
-      els.enable.hidden = false; }
-  } catch { els.enable.hidden = false; }
+  els.main.innerHTML = ''; els.main.hidden = true; els.detail.hidden = true;
+  let s = {};
+  try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch {}
+  captureNoDevice = !!s.error;
+  captureOn = !!s.running;
+  paintCapture();
+  if (s.error) {
+    els.emptyTitle.textContent = 'Connect your Mac';
+    els.emptySub.textContent = 'Open Sunday on the Mac you want a timeline for, then turn capture on.';
+    els.enable.hidden = true;
+  } else if (s.running) {
+    const frames = s.total || 0;
+    els.enable.hidden = true;
+    if (frames === 0) {
+      // Capture is "on" but nothing recorded — almost always a permission gap.
+      els.emptyTitle.textContent = 'Capture is on — but nothing’s recording';
+      els.emptySub.textContent = 'Screen capture is enabled, yet no frames have been recorded. This is almost always a missing permission: give Sunday Screen Recording access in System Settings › Privacy & Security › Screen Recording, then toggle Capture off and on.';
+    } else {
+      // Frames exist but no cards — the summarizer (local CLI) is the blocker.
+      els.emptyTitle.textContent = `Captured ${frames} frame${frames > 1 ? 's' : ''} — building your timeline`;
+      els.emptySub.textContent = 'Screen history is recording. Sunday turns it into activity cards using your local Codex or Claude CLI — cards appear once that runs. If they never show, make sure `codex` (or `claude`) is installed and logged in on this Mac.';
+      // Nudge a processing pass so cards start forming from the frames we have.
+      fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
+    }
+  } else {
+    els.emptyTitle.textContent = 'Your timeline is off';
+    els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
+    els.enable.hidden = false;
+  }
   els.empty.hidden = false;
 }
 async function enableCapture() {
@@ -572,8 +630,9 @@ async function enableCapture() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ on: true, interval_seconds: 60 }),
     });
+    captureOn = true; paintCapture();
     els.emptyTitle.textContent = 'Capturing — nothing yet';
-    els.emptySub.textContent = 'Timeline is on. Your first cards appear within a couple of minutes. (Allow Screen Recording for Sunday if prompted.)';
+    els.emptySub.textContent = 'Screen capture is on. Your first cards appear within a few minutes. (Allow Screen Recording for Sunday if prompted.)';
     els.enable.hidden = true;
   } catch { els.enable.textContent = 'Turn on timeline'; els.enable.disabled = false; }
 }
