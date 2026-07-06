@@ -369,6 +369,14 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-mode.active, .tl-period.active { background: var(--surface); color: var(--text-1); box-shadow: var(--shadow-1); }
 .tl-search { margin-left: auto; flex: 0 1 260px; height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--bg-2); color: var(--text-1); font-size: 13px; }
 .tl-search:focus { outline: none; border-color: var(--accent); }
+.tl-capture { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 13px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--bg-2); color: var(--text-2); font: 500 12.5px/1 inherit; cursor: pointer; white-space: nowrap; }
+.tl-capture[hidden] { display: none; }
+.tl-capture:hover { border-color: var(--text-3); color: var(--text-1); }
+.tl-capture:disabled { opacity: .6; cursor: default; }
+.tl-cap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: 0 0 auto; }
+.tl-capture[data-on="true"] { color: var(--text-1); }
+.tl-capture[data-on="true"] .tl-cap-dot { background: #2ecc71; box-shadow: 0 0 0 3px rgba(46,204,113,.18); animation: tl-cap-pulse 2s ease-in-out infinite; }
+@keyframes tl-cap-pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 .tl-body { flex: 1 1 auto; display: flex; min-height: 0; }
 .tl-main { flex: 1 1 auto; overflow-y: auto; overflow-x: auto; padding: 8px clamp(14px, 3vw, 26px) 60px; min-width: 0; }
 
