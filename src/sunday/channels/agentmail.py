@@ -820,6 +820,292 @@ async def _t_agentmail_send(args: dict[str, Any], ctx: ToolContext) -> Any:
     return result
 
 
+# ─── inbound tools (brain-callable): read Sunday's OWN mailbox ────────────
+# The counterpart to agentmail_send. Without these the brain can send from
+# Sunday's address but has no way to see what's IN it — so "check your inbox"
+# / "did anyone email you" / "read the email I forwarded" had no tool to run.
+# These read AgentMail directly, so they work even when the background poller
+# hasn't synced yet or the webhook relay isn't wired.
+
+_INBOX_PARAMS = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "description": "How many recent messages to list (default 15, max 50)."},
+        "inbound_only": {
+            "type": "boolean",
+            "description": "Only show emails Sunday RECEIVED (hide ones she sent). Default false.",
+        },
+    },
+    "required": [],
+}
+
+
+async def _t_agentmail_inbox(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if _agentmail_headers() is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY) — Sunday has no email inbox yet."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": (
+            "No AgentMail inbox id could be resolved. If the account has more than "
+            "one inbox, set AGENTMAIL_INBOX_ID to Sunday's so the reader knows which."
+        )}
+    try:
+        limit = max(1, min(int(args.get("limit") or 15), 50))
+    except (TypeError, ValueError):
+        limit = 15
+    inbound_only = bool(args.get("inbound_only"))
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.get(
+                f"{AGENTMAIL_INBOXES}/{inbox_id}/messages",
+                headers=_agentmail_headers(), params={"limit": limit},
+            )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"AgentMail inbox list failed: {exc}"}
+    if res.status_code != 200:
+        return {"error": f"AgentMail inbox list returned HTTP {res.status_code}"}
+    msgs = _extract_messages(res.json())
+    out: list[dict[str, Any]] = []
+    for m in msgs:
+        inbound = _is_inbound(m, inbox_id)
+        if inbound_only and not inbound:
+            continue
+        mid = m.get("message_id") or m.get("id")
+        to = m.get("to")
+        to = ", ".join(str(t) for t in to) if isinstance(to, list) else str(to or "")
+        out.append({
+            "message_id": str(mid) if mid else None,
+            "direction": "received" if inbound else "sent",
+            "from": str(m.get("from") or ""),
+            "to": to,
+            "subject": str(m.get("subject") or ""),
+            "preview": str(m.get("preview") or m.get("snippet") or m.get("text") or "")[:200],
+            "timestamp": m.get("timestamp") or m.get("created_at") or m.get("createdAt"),
+            "thread_id": m.get("thread_id"),
+        })
+    return {"inbox": inbox_id, "count": len(out), "messages": out}
+
+
+_READ_PARAMS = {
+    "type": "object",
+    "properties": {
+        "message_id": {
+            "type": "string",
+            "description": "The AgentMail message_id to read in full (get it from agentmail_inbox).",
+        },
+    },
+    "required": ["message_id"],
+}
+
+
+async def _t_agentmail_read(args: dict[str, Any], ctx: ToolContext) -> Any:
+    mid = args.get("message_id")
+    if not mid:
+        return {"error": "'message_id' is required"}
+    if _agentmail_headers() is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY)."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": "No AgentMail inbox id resolved (set AGENTMAIL_INBOX_ID)."}
+    full = await _fetch_message(inbox_id, str(mid))
+    if not full:
+        return {"error": f"Couldn't fetch message {mid} — it may not be in this inbox."}
+    to = full.get("to")
+    to = ", ".join(str(t) for t in to) if isinstance(to, list) else str(to or "")
+    # Raw text on purpose: a forwarded email is mostly "quoted" content, so we do
+    # NOT run clean_email_body here — the brain wants the whole thing.
+    return {
+        "message_id": str(full.get("message_id") or full.get("id") or mid),
+        "from": str(full.get("from") or ""),
+        "to": to,
+        "subject": str(full.get("subject") or ""),
+        "timestamp": full.get("timestamp") or full.get("created_at") or full.get("createdAt"),
+        "thread_id": full.get("thread_id"),
+        "text": str(full.get("text") or full.get("preview") or ""),
+    }
+
+
+def _extract_threads(payload: Any) -> list[dict[str, Any]]:
+    """GET .../threads returns {threads:[...]}; tolerate a bare list or a
+    {data:{threads:[...]}} wrapper, same as messages/inboxes."""
+    if isinstance(payload, list):
+        return [t for t in payload if isinstance(t, dict)]
+    if not isinstance(payload, dict):
+        return []
+    if isinstance(payload.get("threads"), list):
+        return [t for t in payload["threads"] if isinstance(t, dict)]
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("threads"), list):
+        return [t for t in data["threads"] if isinstance(t, dict)]
+    return []
+
+
+def _compact_msg(m: dict[str, Any], own: str | None) -> dict[str, Any]:
+    """One AgentMail message → the compact row the list/search/thread tools return."""
+    inbound = _is_inbound(m, own)
+    mid = m.get("message_id") or m.get("id")
+    to = m.get("to")
+    to = ", ".join(str(t) for t in to) if isinstance(to, list) else str(to or "")
+    return {
+        "message_id": str(mid) if mid else None,
+        "direction": "received" if inbound else "sent",
+        "from": str(m.get("from") or ""),
+        "to": to,
+        "subject": str(m.get("subject") or ""),
+        "preview": str(m.get("preview") or m.get("snippet") or m.get("text") or "")[:200],
+        "timestamp": m.get("timestamp") or m.get("created_at") or m.get("createdAt"),
+        "thread_id": m.get("thread_id"),
+    }
+
+
+_THREADS_PARAMS = {
+    "type": "object",
+    "properties": {
+        "limit": {"type": "integer", "description": "How many recent threads/conversations (default 15, max 50)."},
+    },
+    "required": [],
+}
+
+
+async def _t_agentmail_threads(args: dict[str, Any], ctx: ToolContext) -> Any:
+    if _agentmail_headers() is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY)."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": "No AgentMail inbox id resolved (set AGENTMAIL_INBOX_ID)."}
+    try:
+        limit = max(1, min(int(args.get("limit") or 15), 50))
+    except (TypeError, ValueError):
+        limit = 15
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.get(
+                f"{AGENTMAIL_INBOXES}/{inbox_id}/threads",
+                headers=_agentmail_headers(), params={"limit": limit},
+            )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"AgentMail thread list failed: {exc}"}
+    if res.status_code != 200:
+        return {"error": f"AgentMail thread list returned HTTP {res.status_code}"}
+    out = []
+    for t in _extract_threads(res.json()):
+        tid = t.get("thread_id") or t.get("id")
+        senders = t.get("senders") or t.get("from")
+        if isinstance(senders, list):
+            senders = ", ".join(str(x) for x in senders)
+        out.append({
+            "thread_id": str(tid) if tid else None,
+            "subject": str(t.get("subject") or ""),
+            "preview": str(t.get("preview") or t.get("snippet") or "")[:200],
+            "senders": str(senders or ""),
+            "message_count": t.get("message_count") or t.get("count"),
+            "timestamp": t.get("updated_at") or t.get("timestamp") or t.get("created_at"),
+        })
+    return {"inbox": inbox_id, "count": len(out), "threads": out}
+
+
+_THREAD_PARAMS = {
+    "type": "object",
+    "properties": {
+        "thread_id": {
+            "type": "string",
+            "description": "Thread id (from agentmail_threads, or a message's thread_id) to read in full.",
+        },
+    },
+    "required": ["thread_id"],
+}
+
+
+async def _t_agentmail_thread(args: dict[str, Any], ctx: ToolContext) -> Any:
+    tid = args.get("thread_id")
+    if not tid:
+        return {"error": "'thread_id' is required"}
+    if _agentmail_headers() is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY)."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": "No AgentMail inbox id resolved (set AGENTMAIL_INBOX_ID)."}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.get(
+                f"{AGENTMAIL_INBOXES}/{inbox_id}/threads/{tid}", headers=_agentmail_headers(),
+            )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"AgentMail thread fetch failed: {exc}"}
+    if res.status_code != 200:
+        return {"error": f"AgentMail thread {tid} returned HTTP {res.status_code}"}
+    thread = res.json() if isinstance(res.json(), dict) else {}
+    # Whole conversation, every message with its full text (no quote-stripping).
+    out_msgs = []
+    for m in (_extract_messages(thread) or []):
+        row = _compact_msg(m, inbox_id)
+        row["text"] = str(m.get("text") or m.get("preview") or "")
+        row.pop("preview", None)
+        out_msgs.append(row)
+    return {
+        "thread_id": str(tid),
+        "subject": str(thread.get("subject") or ""),
+        "message_count": len(out_msgs),
+        "messages": out_msgs,
+    }
+
+
+_SEARCH_PARAMS = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Text to find in the sender, subject, or body of Sunday's mail."},
+        "limit": {"type": "integer", "description": "Max results (default 15, max 50)."},
+    },
+    "required": ["query"],
+}
+
+
+async def _t_agentmail_search(args: dict[str, Any], ctx: ToolContext) -> Any:
+    q = (args.get("query") or "").strip()
+    if not q:
+        return {"error": "'query' is required"}
+    if _agentmail_headers() is None:
+        return {"error": "AgentMail isn't configured (no AGENTMAIL_API_KEY)."}
+    inbox_id = await discover_inbox_id()
+    if not inbox_id:
+        return {"error": "No AgentMail inbox id resolved (set AGENTMAIL_INBOX_ID)."}
+    try:
+        limit = max(1, min(int(args.get("limit") or 15), 50))
+    except (TypeError, ValueError):
+        limit = 15
+    # Try AgentMail's server-side search; fall back to a client-side scan of
+    # recent mail so the tool always works even if the search body shape shifts.
+    matched: list[dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.post(
+                f"{AGENTMAIL_INBOXES}/{inbox_id}/messages/search",
+                headers=_agentmail_headers(), json={"query": q},
+            )
+        if res.status_code == 200:
+            matched = _extract_messages(res.json())
+    except Exception:  # noqa: BLE001
+        matched = []
+    if not matched:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                res = await client.get(
+                    f"{AGENTMAIL_INBOXES}/{inbox_id}/messages",
+                    headers=_agentmail_headers(), params={"limit": 100},
+                )
+            recent = _extract_messages(res.json()) if res.status_code == 200 else []
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"AgentMail search failed: {exc}"}
+        ql = q.lower()
+        for m in recent:
+            hay = " ".join(str(m.get(k) or "") for k in
+                           ("from", "subject", "preview", "snippet", "text", "to")).lower()
+            if ql in hay:
+                matched.append(m)
+    out = [_compact_msg(m, inbox_id) for m in matched][:limit]
+    return {"inbox": inbox_id, "query": q, "count": len(out), "messages": out}
+
+
 def register(registry: ToolRegistry, config: SundayConfig) -> None:
     from sunday.daemon import register_webhook, register_background_task
     # The relay (docs spec §6) will loopback-deliver AgentMail's webhook here.
@@ -850,6 +1136,68 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         ),
         parameters=_SEND_PARAMS,
         run=_t_agentmail_send,
+    ))
+
+    registry.register(Tool(
+        name="agentmail_inbox",
+        description=(
+            "List recent messages in Sunday's OWN AgentMail inbox (the emails at "
+            "her own address — both received and sent). Use this whenever the user "
+            "asks Sunday to check HER email / inbox — 'did anyone email you', 'check "
+            "your inbox', 'did you get the email I forwarded'. Returns message_ids; "
+            "call agentmail_read to see a full body. This is Sunday's OWN mailbox — "
+            "NOT the user's Gmail (use the Gmail tools for that)."
+        ),
+        parameters=_INBOX_PARAMS,
+        run=_t_agentmail_inbox,
+    ))
+
+    registry.register(Tool(
+        name="agentmail_read",
+        description=(
+            "Read the full body of one message in Sunday's own AgentMail inbox, by "
+            "message_id (from agentmail_inbox). Returns the complete text including "
+            "any forwarded/quoted content, so it's the way to actually read an email "
+            "someone sent or forwarded to Sunday's address."
+        ),
+        parameters=_READ_PARAMS,
+        run=_t_agentmail_read,
+    ))
+
+    registry.register(Tool(
+        name="agentmail_threads",
+        description=(
+            "List recent conversation threads in Sunday's own AgentMail inbox — "
+            "one entry per conversation (subject, participants, message count). Use "
+            "to see what conversations Sunday's mailbox has going; then "
+            "agentmail_thread to read a whole conversation."
+        ),
+        parameters=_THREADS_PARAMS,
+        run=_t_agentmail_threads,
+    ))
+
+    registry.register(Tool(
+        name="agentmail_thread",
+        description=(
+            "Read an entire conversation in Sunday's own AgentMail inbox by "
+            "thread_id — every message in order, with full text (including "
+            "forwarded/quoted content). The right tool for a back-and-forth or a "
+            "forwarded email chain."
+        ),
+        parameters=_THREAD_PARAMS,
+        run=_t_agentmail_thread,
+    ))
+
+    registry.register(Tool(
+        name="agentmail_search",
+        description=(
+            "Search Sunday's own AgentMail inbox for mail matching a query — by "
+            "sender, subject, or body text. Returns matching messages (with "
+            "message_ids for agentmail_read). Sunday's OWN mailbox, not the user's "
+            "Gmail."
+        ),
+        parameters=_SEARCH_PARAMS,
+        run=_t_agentmail_search,
     ))
 
 
