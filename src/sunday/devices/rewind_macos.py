@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import sqlite3
 import subprocess
 import time
@@ -193,35 +194,82 @@ async def _downscale(path: Path) -> None:
 # ─── active-window context (best-effort, for the Timeline layer) ─────────
 
 
-async def _active_context() -> tuple[str, str]:
-    """Frontmost app name + focused window title via osascript. The app name
-    needs no special permission; the window title needs Accessibility — if it
-    isn't granted we still return the app and leave the title blank. Never
-    raises: any failure yields ('', '') and the frame is still indexed. This is
-    what lets the timeline say "Cursor — rewind_macos.py" instead of guessing
-    from OCR alone."""
-    script = (
-        'tell application "System Events"\n'
-        '  set p to first application process whose frontmost is true\n'
-        '  set appName to name of p\n'
-        '  set winTitle to ""\n'
-        '  try\n'
-        '    set winTitle to name of front window of p\n'
-        '  end try\n'
-        'end tell\n'
-        'return appName & "\t" & winTitle'
+def _frontinfo_binary_path() -> Path:
+    """Compile the tiny NSWorkspace/CGWindowList helper once and cache it in
+    ~/.sunday/bin/frontinfo — same compile-once pattern as the OCR binary. Raises
+    if swiftc or the source is missing; the caller treats that as "no rich
+    context" and falls back to lsappinfo."""
+    target = sunday_home() / "bin" / "frontinfo"
+    if target.exists():
+        return target
+    candidates = [
+        Path(__file__).resolve().parents[3] / "bin" / "frontinfo-macos.swift",
+        Path("/opt/sunday/bin/frontinfo-macos.swift"),
+    ]
+    src = next((c for c in candidates if c.exists()), None)
+    if src is None:
+        raise FileNotFoundError(f"frontinfo-macos.swift not found in {candidates}")
+    swiftc = "/usr/bin/swiftc"
+    if not Path(swiftc).exists():
+        raise RuntimeError("swiftc not found (install Xcode Command Line Tools)")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    log.info("building rewind frontinfo binary", src=str(src), target=str(target))
+    res = subprocess.run(
+        [swiftc, "-O", "-o", str(target), str(src)],
+        capture_output=True, text=True, timeout=90,
     )
+    if res.returncode != 0:
+        raise RuntimeError(f"swiftc failed: {res.stderr.strip() or res.stdout.strip()}")
+    return target
+
+
+async def _lsappinfo_front() -> str:
+    """Frontmost app display name via Launch Services — zero dependencies, no
+    permission, no hang. The fallback when the Swift helper isn't available."""
+    p1 = await asyncio.create_subprocess_exec(
+        "/usr/bin/lsappinfo", "front",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    asn_out, _ = await asyncio.wait_for(p1.communicate(), timeout=3)
+    asn = asn_out.decode("utf-8", errors="replace").strip()
+    if not asn:
+        return ""
+    p2 = await asyncio.create_subprocess_exec(
+        "/usr/bin/lsappinfo", "info", "-only", "name", asn,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    )
+    name_out, _ = await asyncio.wait_for(p2.communicate(), timeout=3)
+    m = re.search(r'"LSDisplayName"="(.*)"', name_out.decode("utf-8", errors="replace"))
+    return (m.group(1) if m else "").strip()
+
+
+async def _active_context() -> tuple[str, str]:
+    """Frontmost app name + focused window title — WITHOUT osascript/System Events.
+
+    The old System Events path hung for 5s+ every frame: querying "first
+    application process whose frontmost is true" needs Automation permission, and
+    in a background/headless session macOS blocks waiting on a consent prompt that
+    never shows, so it always timed out to ('', '') — the app=None bug.
+
+    Primary: a compiled Swift helper (NSWorkspace for the app — no permission;
+    CGWindowList for the title — reuses the Screen Recording permission capture
+    already holds). Fallback: `lsappinfo` for the app name alone. Never hangs
+    (short timeouts), never raises — a bad probe just yields ('', '')."""
     try:
+        bin_path = _frontinfo_binary_path()
         proc = await asyncio.create_subprocess_exec(
-            "/usr/bin/osascript", "-e", script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            str(bin_path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-        if proc.returncode != 0:
-            return "", ""
-        app, _sep, title = out.decode("utf-8", errors="replace").strip().partition("\t")
-        return app.strip(), title.strip()
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        if proc.returncode == 0:
+            app, _sep, title = out.decode("utf-8", errors="replace").strip().partition("\t")
+            if app.strip():
+                return app.strip(), title.strip()
+    except Exception as exc:  # noqa: BLE001 — fall through to lsappinfo
+        log.debug("frontinfo helper unavailable, using lsappinfo", error=str(exc))
+    try:
+        return await _lsappinfo_front(), ""
     except Exception:  # noqa: BLE001 — context is a nice-to-have, never fatal
         return "", ""
 

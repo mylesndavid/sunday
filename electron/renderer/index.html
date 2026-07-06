@@ -290,9 +290,13 @@
         <button class="tl-period" data-period="year">Year</button>
       </nav>
       <input type="search" class="tl-search" id="tl-search" placeholder="Search your timeline…" aria-label="Search timeline">
-      <button type="button" class="tl-capture" id="tl-capture" hidden aria-label="Toggle screen capture">
-        <span class="tl-cap-dot"></span><span class="tl-cap-label">Capture</span>
-      </button>
+      <div class="tl-capture" id="tl-capture" hidden>
+        <span class="tl-cap-label">Capture</span>
+        <label class="toggle" title="Screen capture on/off">
+          <input type="checkbox" id="tl-cap-input" aria-label="Screen capture">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
     </header>
     <div class="tl-body">
       <div class="tl-main" id="tl-main"></div>
