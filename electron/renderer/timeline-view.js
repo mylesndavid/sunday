@@ -8,6 +8,8 @@
 // screenshot scrubber survives only inside the detail pane now. Frames load via
 // the same IPC image bridge (files live under ~/.sunday/rewind).
 
+import { cardIcon } from './favicon.js';
+
 let cfg = null, els = null;
 let loaded = false;
 let mode = 'today';                 // today | yesterday | week | wrapped
@@ -175,7 +177,7 @@ function calCard(ev, originTs, hourPx) {
 
   const headRow = document.createElement('span');
   headRow.className = 'tl-cc-head';
-  const fav = faviconEl(ev.app_primary);
+  const fav = cardIcon(ev, 15);
   if (fav) headRow.appendChild(fav);
   const title = document.createElement('span');
   title.className = 'tl-cc-title';
@@ -192,18 +194,6 @@ function calCard(ev, originTs, hourPx) {
   return { el: card, top };
 }
 
-// A small favicon for the card's primary app/site domain (Dayflow uses these).
-// Falls back to nothing on error — never blocks the card.
-function faviconEl(domain) {
-  const host = (domain || '').trim().toLowerCase();
-  if (!host || !host.includes('.') || host === 'terminal') return null;
-  const img = document.createElement('img');
-  img.className = 'tl-fav';
-  img.loading = 'lazy';
-  img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
-  img.addEventListener('error', () => img.remove());
-  return img;
-}
 
 function hourLabels(hourPx, into) {
   for (let h = 0; h < HOURS; h++) {
@@ -302,8 +292,10 @@ function renderList(list, banner) {
     card.className = 'tl-card tl-list-card' + (ev.id === selected ? ' sel' : '');
     card.style.setProperty('--cat', colorFor(ev.type));
     card.dataset.id = ev.id;
-    card.innerHTML = `<div class="tl-lc-when mono"></div><div class="tl-lc-body"><div class="tl-lc-title"></div><div class="tl-lc-meta"></div></div>`;
+    card.innerHTML = `<div class="tl-lc-when mono"></div><div class="tl-lc-body"><div class="tl-lc-title-row"><span class="tl-lc-title"></span></div><div class="tl-lc-meta"></div></div>`;
     card.querySelector('.tl-lc-when').textContent = `${dayShortTs(ev.start_ts)} ${clock(ev.start_ts)}`;
+    const licon = cardIcon(ev, 15);
+    if (licon) card.querySelector('.tl-lc-title-row').prepend(licon);
     card.querySelector('.tl-lc-title').textContent = ev.title || labelFor(ev.type);
     card.querySelector('.tl-lc-meta').textContent = `${clock(ev.start_ts)} – ${clock(ev.end_ts)} · ${labelFor(ev.type)}`;
     card.addEventListener('click', () => openDetail(ev));
@@ -328,7 +320,9 @@ async function openDetail(ev) {
   head.innerHTML = `
     <button class="tl-d-close" id="tl-d-close" title="Close">✕</button>
     <div class="tl-d-kicker mono">${labelFor(ev.type)} · ${clock(ev.start_ts)} – ${clock(ev.end_ts)}</div>
-    <h2 class="tl-d-title"></h2>`;
+    <h2 class="tl-d-title-row"><span class="tl-d-title"></span></h2>`;
+  const dicon = cardIcon(ev, 20);
+  if (dicon) head.querySelector('.tl-d-title-row').prepend(dicon);
   head.querySelector('.tl-d-title').textContent = ev.title || labelFor(ev.type);
   head.querySelector('#tl-d-close').addEventListener('click', closeDetail);
   d.appendChild(head);
