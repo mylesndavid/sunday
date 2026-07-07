@@ -562,28 +562,44 @@ async function showEmpty() {
   els.main.innerHTML = ''; els.main.hidden = true; els.detail.hidden = true;
   let s = {};
   try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch {}
+  const total = s.total || 0, cards = s.cards || 0, pending = s.pending_frames || 0;
   if (s.error) {
     setEmptyIcon(false);
+    els.enable.hidden = true;
     els.emptyTitle.textContent = 'Connect your Mac';
     els.emptySub.textContent = 'Open Sunday on the Mac you want a timeline for, then turn capture on.';
-    els.enable.hidden = true;
-  } else if ((s.cards || 0) === 0 && (s.total || 0) > 0) {
-    // Frames captured but no cards yet — show live build progress (or the CLI
-    // gap). Applies whether capture is currently on or off (there's a backlog).
+  } else if (total === 0) {
+    // No frames captured AT ALL — capture is off, or on-but-not-recording.
+    setEmptyIcon(false);
+    if (s.running) {
+      els.enable.hidden = true;
+      els.emptyTitle.textContent = 'Capture is on — but nothing’s recording';
+      els.emptySub.textContent = 'Screen capture is enabled, yet no frames have been recorded. This is almost always a missing permission: give Sunday Screen Recording access in System Settings › Privacy & Security › Screen Recording, then toggle Capture off and on.';
+    } else {
+      els.enable.hidden = false;
+      els.emptyTitle.textContent = 'Your timeline is off';
+      els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
+    }
+  } else if (cards === 0 || (pending > 0 && s.cli)) {
+    // Frames captured, and either no cards yet OR a backlog still being turned
+    // into cards. Show live build progress — this holds even when some cards
+    // already exist (more are on the way), which is why 904-frames/10-cards no
+    // longer misreads as "nothing's recording".
     paintBuilding(s);
-  } else if (s.running) {
-    // Capture on, nothing recorded — almost always a Screen Recording permission gap.
+  } else {
+    // Cards exist and nothing's pending — this particular range is just empty.
     setEmptyIcon(false);
     els.enable.hidden = true;
-    els.emptyTitle.textContent = 'Capture is on — but nothing’s recording';
-    els.emptySub.textContent = 'Screen capture is enabled, yet no frames have been recorded. This is almost always a missing permission: give Sunday Screen Recording access in System Settings › Privacy & Security › Screen Recording, then toggle Capture off and on.';
-  } else {
-    setEmptyIcon(false);
-    els.emptyTitle.textContent = 'Your timeline is off';
-    els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
-    els.enable.hidden = false;
+    els.emptyTitle.textContent = emptyRangeTitle();
+    els.emptySub.textContent = 'No activity cards for this range yet. Try another range above, or keep capture on and they’ll fill in.';
   }
   els.empty.hidden = false;
+}
+
+function emptyRangeTitle() {
+  if (mode === 'yesterday') return 'Nothing on your timeline for yesterday';
+  if (mode === 'week') return 'Nothing on your timeline this week';
+  return 'Nothing on your timeline for today';
 }
 
 const TL_CLOCK_SVG = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
