@@ -370,6 +370,10 @@ async def _h_timeline_stop(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.stop()
 
 
+async def _h_timeline_reprocess(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.reprocess()
+
+
 async def _h_timeline_period_stats(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.period_stats(
         float(params.get("period_start") or 0), float(params.get("period_end") or 0),
@@ -452,6 +456,7 @@ HANDLERS = {
     "timeline_state":         _h_timeline_state,
     "timeline_start":         _h_timeline_start,
     "timeline_stop":          _h_timeline_stop,
+    "timeline_reprocess":     _h_timeline_reprocess,
     "timeline_period_stats":  _h_timeline_period_stats,
     "timeline_apply_wrapped": _h_timeline_apply_wrapped,
     "timeline_get_wrapped":   _h_timeline_get_wrapped,

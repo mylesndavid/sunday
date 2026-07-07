@@ -871,6 +871,37 @@ def stop() -> dict[str, Any]:
     return rewind_macos.stop()
 
 
+def reprocess() -> dict[str, Any]:
+    """Rebuild the timeline from scratch: drop the DERIVED data (observations +
+    cards) and rewind both pipeline cursors so process_pending re-reads every
+    captured frame. The raw frames (the evidence) are untouched — only the
+    interpretation is rebuilt, so this re-transcribes AND re-synthesizes under the
+    current prompts (e.g. the 10-min-minimum card rule). Use to un-strand frames a
+    pipeline bug dropped, or to re-merge existing cards after a prompt change. The
+    background processor picks the backlog straight back up; cards refill on their
+    own. Costs a full re-summarize pass, so it's an explicit user action."""
+    conn = _connect()
+    try:
+        obs = conn.execute("SELECT COUNT(*) FROM timeline_observations").fetchone()[0]
+        cards = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
+        frames = conn.execute("SELECT COUNT(*) FROM frames").fetchone()[0]
+        conn.execute("DELETE FROM timeline_observations")
+        conn.execute("DELETE FROM timeline_events")
+        _state_set(conn, "transcribed_through_ts", 0.0)
+        _state_set(conn, "cards_frozen_through_ts", 0.0)
+        # Clear any stale failure marker so the UI shows a clean rebuild, not an
+        # old error, while the fresh pass runs.
+        _state_set(conn, "last_error", "")
+        _state_set(conn, "last_error_at", 0.0)
+        conn.commit()
+        log.info("timeline reprocess: cleared derived data",
+                 cleared_observations=obs, cleared_cards=cards, frames=frames)
+        return {"ok": True, "cleared_observations": obs, "cleared_cards": cards,
+                "frames": frames, "pending_frames": _pending_frames_count()}
+    finally:
+        conn.close()
+
+
 # ─── Wrapped: aggregate on the Mac, narrate on the daemon ─────────────────
 
 
