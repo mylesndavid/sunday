@@ -1718,12 +1718,27 @@ async function loadTimeline() {
     const note = $('#set-timeline-catchup-note');
     const pending = s.pending_frames || 0;
     if (row && !catchupRunning) {
-      const show = pending > 0 && !!s.cli;
+      const show = pending > 0 && !!s.summarizer;
       row.hidden = !show;
       if (note) note.textContent = show
-        ? `${pending} frame${pending !== 1 ? 's' : ''} not summarized yet — runs through your local ${s.cli}.`
+        ? `${pending} frame${pending !== 1 ? 's' : ''} not summarized yet — runs through ${s.summarizer}.`
         : '';
     }
+    // Summarizer backend selector.
+    const choice = s.summarizer_choice || 'auto';
+    document.querySelectorAll('#set-timeline-backend .seg-btn').forEach((b) => {
+      const on = b.dataset.tlm === choice;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    const gemField = $('#set-timeline-gemini-field');
+    if (gemField) gemField.hidden = choice !== 'gemini';
+    const gemKey = $('#set-timeline-gemini-key');
+    if (gemKey && !gemKey.value) gemKey.placeholder = s.gemini_key_set ? '•••••••• saved — leave blank to keep' : 'AIza…';
+    const bnote = $('#set-timeline-backend-note');
+    if (bnote) bnote.textContent = s.summarizer
+      ? `Active: ${s.summarizer}${s.summarizer_local ? ' (on-device)' : ' (cloud)'}.`
+      : (choice === 'gemini' ? 'Add a Gemini key to enable.' : 'No summarizer available — log into codex/claude, or pick Gemini + add a key.');
   } catch { if (status) status.textContent = ''; }
 }
 
@@ -1773,6 +1788,46 @@ function wireTimeline() {
     loadTimeline();
   });
   $('#set-timeline-catchup')?.addEventListener('click', timelineCatchup);
+
+  // Summarizer backend: segmented choice + Gemini key.
+  document.querySelectorAll('#set-timeline-backend .seg-btn').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#set-timeline-backend .seg-btn').forEach((x) => {
+        const on = x === b;
+        x.classList.toggle('active', on);
+        x.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+      const gemField = $('#set-timeline-gemini-field');
+      if (gemField) gemField.hidden = b.dataset.tlm !== 'gemini';
+    });
+  });
+  $('#set-timeline-backend-save')?.addEventListener('click', saveTimelineBackend);
+}
+
+async function saveTimelineBackend() {
+  const btn = $('#set-timeline-backend-save');
+  const note = $('#set-timeline-backend-note');
+  const active = document.querySelector('#set-timeline-backend .seg-btn.active');
+  const choice = active ? active.dataset.tlm : 'auto';
+  const key = ($('#set-timeline-gemini-key')?.value || '').trim();
+  if (choice === 'gemini' && !key) {
+    // Allow saving gemini choice if a key is already stored; block if neither.
+    let hasKey = false;
+    try { hasKey = !!(await (await fetch(`${DAEMON_HTTP}/v1/timeline/state`)).json()).gemini_key_set; } catch {}
+    if (!hasKey) { if (note) note.textContent = 'Enter a Gemini API key first.'; return; }
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const creds = { TIMELINE_MODEL: choice };
+    if (key) creds.GEMINI_API_KEY = key;
+    await saveBrain({ credentials: creds });
+    if ($('#set-timeline-gemini-key')) $('#set-timeline-gemini-key').value = '';
+    if (note) note.textContent = 'Saved.';
+  } catch (err) {
+    if (note) note.textContent = `Couldn't save: ${err.message}`;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  loadTimeline();
 }
 
 function wire() {
