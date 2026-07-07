@@ -317,6 +317,14 @@ def _parse_json(raw: str):
     s = (raw or "").strip()
     if s.startswith("```"):
         s = s[s.find("\n") + 1: s.rfind("```")].strip()
+    # Fast path: the reply IS clean JSON. Try the whole string first — otherwise a
+    # wrapper object like {"segments":[...]} gets mis-parsed as its INNER array (the
+    # bracket hunt below tries "[" first), which silently dropped every transcribe
+    # observation (parsed came back a list, so .get("segments") never fired).
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
     for op, cl in (("[", "]"), ("{", "}")):
         a, b = s.find(op), s.rfind(cl)
         if a >= 0 and b > a:
@@ -508,7 +516,15 @@ async def transcribe_pending(tool: str | None = None, model: str | None = None,
                     log.warning("timeline transcribe failed", error=res.get("error"))
                     break   # retry this window on the next call
                 parsed = _parse_json(res.get("text") or "")
-                segs = parsed.get("segments") if isinstance(parsed, dict) else None
+                # Accept both the documented {"segments":[...]} and a bare [...]
+                # array — some backends drop the wrapper, and losing those would
+                # again strand the window's frames with zero observations.
+                if isinstance(parsed, dict):
+                    segs = parsed.get("segments")
+                elif isinstance(parsed, list):
+                    segs = parsed
+                else:
+                    segs = None
                 for seg in (segs or []):
                     try:
                         si = max(0, min(len(frames) - 1, int(seg.get("startIndex", 0))))
