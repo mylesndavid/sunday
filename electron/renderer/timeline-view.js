@@ -50,50 +50,12 @@ const MIN_CARD_PX = 12;
 const COMPACT_MIN = 13;            // shorter than this → single-line card
 const WEEK_HOUR_PX = 64;
 
-export function init(config, refs) {
-  cfg = config; els = refs;
-  els.capture = document.getElementById('tl-capture');
-  els.capInput = document.getElementById('tl-cap-input');
-  wire();
-}
+export function init(config, refs) { cfg = config; els = refs; wire(); }
 export function isLoaded() { return loaded; }
 
 export async function load() {
   loaded = true;
-  refreshCapture();
   setMode(mode, true);
-}
-
-// ─── capture on/off — always-visible header control ──────────────────────
-let captureOn = false, captureNoDevice = false;
-
-async function refreshCapture() {
-  try {
-    const s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json();
-    captureNoDevice = !!s.error;
-    captureOn = !!s.running;
-  } catch { captureNoDevice = true; captureOn = false; }
-  paintCapture();
-}
-function paintCapture() {
-  if (!els.capture) return;
-  if (captureNoDevice) { els.capture.hidden = true; return; }   // no Mac connected — can't toggle
-  els.capture.hidden = false;
-  if (els.capInput) els.capInput.checked = captureOn;
-}
-async function toggleCapture() {
-  if (!els.capInput || els.capInput.disabled) return;
-  const next = els.capInput.checked;    // the checkbox already flipped on click
-  els.capInput.disabled = true;
-  try {
-    await fetch(`${cfg.daemonHttp}/v1/timeline/toggle`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(next ? { on: true, interval_seconds: 60 } : { on: false }),
-    });
-    captureOn = next;
-  } catch { els.capInput.checked = captureOn; }   // revert on failure
-  els.capInput.disabled = false;
-  if (mode !== 'wrapped' && !els.search.value.trim()) loadRange(mode);   // repaint empty/list copy
 }
 
 function wire() {
@@ -104,7 +66,6 @@ function wire() {
     if (q) runSearch(q); else setMode(mode, true);
   }, 300));
   els.enable?.addEventListener('click', enableCapture);
-  els.capInput?.addEventListener('change', toggleCapture);
   els.wrappedPeriod?.querySelectorAll('[data-period]').forEach((b) =>
     b.addEventListener('click', () => loadWrapped(b.dataset.period)));
   els.detailClose?.addEventListener('click', closeDetail);
@@ -601,9 +562,6 @@ async function showEmpty() {
   els.main.innerHTML = ''; els.main.hidden = true; els.detail.hidden = true;
   let s = {};
   try { s = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch {}
-  captureNoDevice = !!s.error;
-  captureOn = !!s.running;
-  paintCapture();
   if (s.error) {
     setEmptyIcon(false);
     els.emptyTitle.textContent = 'Connect your Mac';
@@ -664,7 +622,6 @@ async function enableCapture() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ on: true, interval_seconds: 60 }),
     });
-    captureOn = true; paintCapture();
     els.emptyTitle.textContent = 'Capturing — nothing yet';
     els.emptySub.textContent = 'Screen capture is on. Your first cards appear within a few minutes. (Allow Screen Recording for Sunday if prompted.)';
     els.enable.hidden = true;

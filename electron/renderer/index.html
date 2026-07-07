@@ -290,13 +290,6 @@
         <button class="tl-period" data-period="year">Year</button>
       </nav>
       <input type="search" class="tl-search" id="tl-search" placeholder="Search your timeline…" aria-label="Search timeline">
-      <div class="tl-capture" id="tl-capture" hidden>
-        <span class="tl-cap-label">Capture</span>
-        <label class="toggle" title="Screen capture on/off">
-          <input type="checkbox" id="tl-cap-input" aria-label="Screen capture">
-          <span class="toggle-track"><span class="toggle-thumb"></span></span>
-        </label>
-      </div>
     </header>
     <div class="tl-body">
       <div class="tl-main" id="tl-main"></div>
@@ -322,6 +315,7 @@
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
       <button type="button" class="set-navitem" data-page="page-skills">Skills</button>
       <button type="button" class="set-navitem" data-page="page-voice">Voice &amp; capture</button>
+      <button type="button" class="set-navitem" data-page="page-timeline">Timeline</button>
       <button type="button" class="set-navitem" data-page="page-behavior">Behavior &amp; memory</button>
       <button type="button" class="set-navitem" data-page="page-privacy">Privacy</button>
       <button type="button" class="set-navitem" data-page="page-about">About</button>
@@ -978,6 +972,26 @@
               <button type="button" class="btn btn-primary" id="set-observer-toggle">Turn on</button>
             </div>
             <div class="set-trans" id="set-trans" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <!-- ═══ TIMELINE ═══════════════════════════════════════════════════ -->
+        <section class="set-page" id="page-timeline">
+          <h2>Timeline</h2>
+          <p class="set-help">A private, on-device timeline of what you actually worked on. Screenshots stay on this Mac and are summarized into activity cards by your local Codex/Claude CLI — nothing leaves the machine, and there's no per-token bill.</p>
+
+          <div class="set-panel">
+            <div class="set-toggle-row">
+              <div class="set-toggle-copy">
+                <div class="brain-label">Screen capture</div>
+                <p class="set-help set-help-tight">When on, Sunday quietly captures your screen every minute and builds your timeline. Requires Screen Recording permission (System Settings › Privacy &amp; Security › Screen Recording).</p>
+              </div>
+              <label class="toggle" title="Screen capture on/off">
+                <input type="checkbox" id="set-timeline-capture" aria-label="Screen capture">
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </label>
+            </div>
+            <div class="set-verify" id="set-timeline-status" aria-live="polite"></div>
           </div>
         </section>
 
