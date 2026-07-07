@@ -192,6 +192,15 @@ kbd {
 .onb-verify[data-state="ok"]   { border-color: var(--ok);    background: rgba(132, 209, 139, 0.07); color: var(--text); }
 .onb-verify[data-state="fail"] { border-color: var(--error); background: rgba(215, 122, 106, 0.07); color: var(--error); }
 
+/* connected + test sub-section (email/phone steps) */
+.onb-connected { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--ok); border-radius: var(--radius); background: rgba(132, 209, 139, 0.06); }
+.onb-connected[hidden] { display: none; }
+.onb-connected-line { font-size: 14px; color: var(--text); margin-bottom: 10px; }
+.onb-test-hint { font-size: 13px; color: var(--text-dim); margin: 0 0 10px; line-height: 1.5; }
+.onb-test-row { display: flex; gap: 8px; align-items: center; }
+.onb-test-row .onb-input { margin: 0; flex: 1; }
+.onb-test-row .onb-btn.small { flex: 0 0 auto; white-space: nowrap; }
+
 /* Permission card */
 .onb-permission-card {
   display: flex;
