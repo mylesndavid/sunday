@@ -1794,6 +1794,42 @@ async function timelineCatchup() {
   catchupRunning = false; if (btn) btn.textContent = 'Catch up now';
   loadTimeline();
 }
+// Nuke-and-repave: wipe derived observations + cards, rewind the cursors, and let
+// the satellite's background processor re-read every frame under the current
+// prompts. Rebuilds ALL days (fixes short/smushed cards from before the 10-min
+// rule, and un-strands frames an earlier pipeline bug dropped). Destructive to the
+// interpretation only — screenshots are untouched — so it's an explicit action.
+async function timelineRebuild() {
+  const btn = $('#set-timeline-rebuild');
+  const note = $('#set-timeline-rebuild-note');
+  const ok = window.confirm(
+    'Rebuild your entire timeline?\n\n'
+    + 'Sunday will re-read every captured frame and regroup ALL your activity '
+    + 'cards under the latest rules (including the 10-minute minimum, so cards '
+    + 'aren’t tiny). Your screenshots are kept — only the cards are rebuilt. '
+    + 'This covers every day and can take a few minutes.'
+  );
+  if (!ok) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
+  if (note) note.textContent = 'Clearing old cards…';
+  let s;
+  try {
+    s = await (await fetch(`${DAEMON_HTTP}/v1/timeline/reprocess`, { method: 'POST' })).json();
+    if (s && s.error) throw new Error(s.error);
+  } catch {
+    if (note) note.textContent = 'Rebuild failed — is your Mac connected?';
+    if (btn) { btn.disabled = false; btn.textContent = 'Rebuild timeline'; }
+    return;
+  }
+  const frames = s.frames || 0;
+  if (note) {
+    note.textContent = `Cleared ${s.cleared_cards || 0} old card${(s.cleared_cards || 0) !== 1 ? 's' : ''}. `
+      + `Re-reading ${frames} frame${frames !== 1 ? 's' : ''} — cards refill as it goes.`;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Rebuild timeline'; }
+  loadTimeline();          // refresh status + reveal the catch-up row so they can push it
+  timelineCatchup();       // actively drain the backlog now (else the background loop does it slowly)
+}
 function timelineStatusText(s) {
   const frames = s.total || 0, cards = s.cards || 0;
   const bits = [s.running ? 'Capturing.' : 'Off.'];
@@ -1817,6 +1853,7 @@ function wireTimeline() {
     loadTimeline();
   });
   $('#set-timeline-catchup')?.addEventListener('click', timelineCatchup);
+  $('#set-timeline-rebuild')?.addEventListener('click', timelineRebuild);
 
   // Summarizer backend: segmented choice + Gemini key.
   document.querySelectorAll('#set-timeline-backend .seg-btn').forEach((b) => {

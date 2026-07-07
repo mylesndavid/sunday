@@ -3403,6 +3403,13 @@ class Daemon:
             return web.json_response(await self._timeline_call("timeline_start", params))
         return web.json_response(await self._timeline_call("timeline_stop", {}))
 
+    async def _http_timeline_reprocess(self, request: web.Request) -> web.Response:
+        """POST /v1/timeline/reprocess — wipe derived observations + cards and
+        rewind the pipeline cursors so every captured frame is re-read. Rebuilds
+        cards under the current prompts (re-merges short cards). The background
+        processor drains the backlog afterward; the UI polls state for progress."""
+        return web.json_response(await self._timeline_call("timeline_reprocess", {}))
+
     async def _http_timeline_segment(self, request: web.Request) -> web.Response:
         # Compat alias — advances the pipeline one round.
         return web.json_response(
@@ -3979,6 +3986,7 @@ class Daemon:
         app.router.add_get("/v1/timeline/state", self._http_timeline_state)
         app.router.add_post("/v1/timeline/test", self._http_timeline_test)
         app.router.add_post("/v1/timeline/toggle", self._http_timeline_toggle)
+        app.router.add_post("/v1/timeline/reprocess", self._http_timeline_reprocess)
         app.router.add_post("/v1/timeline/segment", self._http_timeline_segment)
         app.router.add_post("/v1/timeline/summarize", self._http_timeline_summarize)
         app.router.add_get("/v1/timeline/wrapped", self._http_timeline_wrapped)
