@@ -1713,7 +1713,42 @@ async function loadTimeline() {
     box.disabled = false;
     box.checked = !!s.running;
     if (status) status.textContent = timelineStatusText(s);
+    // Reveal "Catch up now" only when there's a real backlog + a summarizer to run it.
+    const row = $('#set-timeline-catchup-row');
+    const note = $('#set-timeline-catchup-note');
+    const pending = s.pending_frames || 0;
+    if (row && !catchupRunning) {
+      const show = pending > 0 && !!s.cli;
+      row.hidden = !show;
+      if (note) note.textContent = show
+        ? `${pending} frame${pending !== 1 ? 's' : ''} not summarized yet — runs through your local ${s.cli}.`
+        : '';
+    }
   } catch { if (status) status.textContent = ''; }
+}
+
+let catchupRunning = false;
+// Grind the whole capture backlog into cards on demand, with live progress and a
+// stop. Each /summarize call drains a bounded chunk; loop until pending hits 0 or
+// the user stops. Runs through the local CLI (their subscription), so we keep it
+// explicit + interruptible rather than firing it silently.
+async function timelineCatchup() {
+  const btn = $('#set-timeline-catchup');
+  const note = $('#set-timeline-catchup-note');
+  if (catchupRunning) { catchupRunning = false; if (btn) btn.textContent = 'Catch up now'; return; }
+  catchupRunning = true; if (btn) btn.textContent = 'Stop';
+  while (catchupRunning) {
+    let s;
+    try { s = await (await fetch(`${DAEMON_HTTP}/v1/timeline/state`)).json(); } catch { break; }
+    if (s.error) { if (note) note.textContent = 'No Mac connected.'; break; }
+    if (!s.cli) { if (note) note.textContent = 'No codex/claude CLI logged in — can’t build cards.'; break; }
+    const pending = s.pending_frames || 0;
+    if (pending <= 0) { if (note) note.textContent = 'All caught up.'; break; }
+    if (note) note.textContent = `Catching up… ${pending} frame${pending !== 1 ? 's' : ''} left · ${s.cards || 0} cards built. Using your local ${s.cli} — stop any time.`;
+    try { await fetch(`${DAEMON_HTTP}/v1/timeline/summarize`, { method: 'POST' }); } catch { break; }
+  }
+  catchupRunning = false; if (btn) btn.textContent = 'Catch up now';
+  loadTimeline();
 }
 function timelineStatusText(s) {
   const frames = s.total || 0, cards = s.cards || 0;
@@ -1737,6 +1772,7 @@ function wireTimeline() {
     box.disabled = false;
     loadTimeline();
   });
+  $('#set-timeline-catchup')?.addEventListener('click', timelineCatchup);
 }
 
 function wire() {
