@@ -46,7 +46,11 @@ const DAY_START_HOUR = 4;
 const HOURS = 24;
 const HOUR_PX = 168;
 const PX_PER_MIN = HOUR_PX / 60;   // 2.8
-const MIN_CARD_PX = 12;
+// Floor a card at ~one readable line. The synthesis prompt enforces a 10-min
+// minimum per card (≈28px), so this only catches the rare straggler (e.g. the
+// still-in-progress last card) — enough height for the title, not a smushed
+// sliver. Kept below the compact threshold so short cards still drop the meta row.
+const MIN_CARD_PX = 24;
 const COMPACT_MIN = 13;            // shorter than this → single-line card
 const WEEK_HOUR_PX = 64;
 

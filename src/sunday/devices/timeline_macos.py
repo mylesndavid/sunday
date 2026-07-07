@@ -550,13 +550,19 @@ async def transcribe_pending(tool: str | None = None, model: str | None = None,
 
 _SYNTH_PROMPT = (
     "You are synthesizing a user's activity observations into timeline cards. "
-    "Each card = one coherent activity (roughly 10-60 min). Time is a constraint, "
-    "not a goal.\n\n"
-    "MERGE aggressively. Switching apps/tools within one task is the SAME card "
-    "(Figma→Meet→Figma for one review; IDE+Terminal+Browser debugging = one "
-    "session). Start a new card only when the GOAL changes for 10+ minutes. Brief "
-    "(<5 min) unrelated detours are 'distractions' INSIDE the card, not new cards. "
-    "Default to merging.\n\n"
+    "Each card = one coherent activity. Time is a constraint, not a goal.\n\n"
+    "MINIMUM 10 MINUTES PER CARD. If an activity would be shorter than 10 minutes, "
+    "fold it into the neighboring card that makes the most sense — do NOT emit it "
+    "as its own card. (The single exception: the very last card of the range may "
+    "be shorter, because it's still in progress.)\n\n"
+    "MERGE aggressively — default to merging. Switching apps/tools within one task "
+    "is the SAME card (Figma→Meet→Figma for one review; IDE+Terminal+Browser "
+    "debugging = one session). Two cards about the same work stream should almost "
+    "never exist — if the previous card's main activity is the same PR / feature / "
+    "article / codebase, merge. A brief (<5 min) unrelated detour (checking X, a "
+    "message, a quick video) is a 'distraction' INSIDE the card, not a new card. "
+    "Start a new card ONLY when the GOAL genuinely changes for 10+ minutes. If "
+    "you're unsure whether to merge or split, MERGE.\n\n"
     "For each card:\n"
     "- title: specific; no 'and' joining unrelated things\n"
     "- summary: one sentence — what + why it mattered\n"
@@ -571,7 +577,10 @@ _SYNTH_PROMPT = (
     "\"title\":\"\",\"summary\":\"\",\"detailedSummary\":\"\",\"category\":\"\","
     "\"distractions\":[],\"appSites\":{{\"primary\":\"\",\"secondary\":\"\"}}}}] — "
     "indices reference the numbered observations. Cover every observation in order, "
-    "no gaps or overlaps.\n\nObservations:\n{obs}"
+    "no gaps or overlaps.\n\n"
+    "REMINDER: every card except the last must be at least 10 minutes long. Merge "
+    "short activities into longer, meaningful cards that tell a coherent story — "
+    "when in doubt, merge.\n\nObservations:\n{obs}"
 )
 
 
