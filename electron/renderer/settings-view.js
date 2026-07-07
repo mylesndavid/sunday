@@ -1733,13 +1733,42 @@ async function loadTimeline() {
     });
     const gemField = $('#set-timeline-gemini-field');
     if (gemField) gemField.hidden = choice !== 'gemini';
-    const gemKey = $('#set-timeline-gemini-key');
-    if (gemKey && !gemKey.value) gemKey.placeholder = s.gemini_key_set ? '•••••••• saved — leave blank to keep' : 'AIza…';
+    geminiKeySet = !!s.gemini_key_set;
+    paintGeminiKeyUI();
     const bnote = $('#set-timeline-backend-note');
-    if (bnote) bnote.textContent = s.summarizer
-      ? `Active: ${s.summarizer}${s.summarizer_local ? ' (on-device)' : ' (cloud)'}.`
-      : (choice === 'gemini' ? 'Add a Gemini key to enable.' : 'No summarizer available — log into codex/claude, or pick Gemini + add a key.');
+    if (bnote && !bnote.dataset.busy) bnote.textContent = summarizerHealth(s);
   } catch { if (status) status.textContent = ''; }
+}
+
+// Health line: is the summarizer actually working, and if not, the real reason.
+function summarizerHealth(s) {
+  if (!s.summarizer) {
+    return (s.summarizer_choice === 'gemini')
+      ? 'Add a Gemini key to enable.'
+      : 'No summarizer available — log into codex/claude, or pick Gemini + a key.';
+  }
+  const where = s.summarizer_local ? 'on-device' : 'cloud';
+  const failing = s.last_error && (!s.last_ok_at || (s.last_error_at || 0) >= (s.last_ok_at || 0));
+  if (failing) return `⚠ ${s.summarizer} is failing: ${s.last_error}`;
+  if (s.last_ok_at) return `Working — ${s.summarizer} (${where}), last built ${agoText(s.last_ok_at)}.`;
+  return `Ready — ${s.summarizer} (${where}). Test it to confirm.`;
+}
+function agoText(ts) {
+  const secs = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  return `${Math.round(secs / 3600)}h ago`;
+}
+
+// Gemini key: a saved key shows masked with an Edit button, not an empty box.
+let geminiKeySet = false, editingGemini = false;
+function paintGeminiKeyUI() {
+  const savedRow = $('#set-timeline-gemini-saved');
+  const input = $('#set-timeline-gemini-key');
+  if (!savedRow || !input) return;
+  const masked = geminiKeySet && !editingGemini && !input.value;
+  savedRow.hidden = !masked;
+  input.hidden = masked;
 }
 
 let catchupRunning = false;
@@ -1799,9 +1828,37 @@ function wireTimeline() {
       });
       const gemField = $('#set-timeline-gemini-field');
       if (gemField) gemField.hidden = b.dataset.tlm !== 'gemini';
+      if (b.dataset.tlm === 'gemini') { editingGemini = false; paintGeminiKeyUI(); }
     });
   });
+  $('#set-timeline-gemini-edit')?.addEventListener('click', () => {
+    editingGemini = true; paintGeminiKeyUI();
+    $('#set-timeline-gemini-key')?.focus();
+  });
   $('#set-timeline-backend-save')?.addEventListener('click', saveTimelineBackend);
+  $('#set-timeline-backend-test')?.addEventListener('click', () => testSummarizer());
+}
+
+// Fire a real round-trip at the (already-saved) summarizer so the user knows the
+// key/CLI actually works. This is how we answer "is my Gemini key valid?".
+async function testSummarizer() {
+  const btn = $('#set-timeline-backend-test');
+  const note = $('#set-timeline-backend-note');
+  if (btn) btn.disabled = true;
+  if (note) { note.dataset.busy = '1'; note.textContent = 'Testing…'; }
+  try {
+    const r = await (await fetch(`${DAEMON_HTTP}/v1/timeline/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    })).json();
+    if (note) note.textContent = r.ok
+      ? `✓ ${r.backend} works (${r.ms} ms).`
+      : `✗ ${r.backend || 'summarizer'} failed: ${r.error || 'unknown error'}`;
+  } catch (err) {
+    if (note) note.textContent = `✗ test failed: ${err.message}`;
+  }
+  if (note) delete note.dataset.busy;
+  if (btn) btn.disabled = false;
+  loadTimeline();
 }
 
 async function saveTimelineBackend() {
@@ -1817,14 +1874,20 @@ async function saveTimelineBackend() {
     if (!hasKey) { if (note) note.textContent = 'Enter a Gemini API key first.'; return; }
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  if (note) { note.dataset.busy = '1'; note.textContent = 'Saving…'; }
   try {
     const creds = { TIMELINE_MODEL: choice };
     if (key) creds.GEMINI_API_KEY = key;
     await saveBrain({ credentials: creds });
     if ($('#set-timeline-gemini-key')) $('#set-timeline-gemini-key').value = '';
-    if (note) note.textContent = 'Saved.';
+    editingGemini = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (note) delete note.dataset.busy;
+    // Immediately validate — the whole point is to know the key works.
+    await testSummarizer();
+    return;
   } catch (err) {
-    if (note) note.textContent = `Couldn't save: ${err.message}`;
+    if (note) { delete note.dataset.busy; note.textContent = `Couldn't save: ${err.message}`; }
   }
   if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   loadTimeline();

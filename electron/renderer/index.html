@@ -1007,12 +1007,17 @@
               <button type="button" class="seg-btn" data-tlm="claude" aria-pressed="false">Claude Code</button>
               <button type="button" class="seg-btn" data-tlm="gemini" aria-pressed="false">Gemini</button>
             </div>
-            <label class="set-field" id="set-timeline-gemini-field" hidden style="margin-top:12px">
+            <div class="set-field" id="set-timeline-gemini-field" hidden style="margin-top:12px">
               <span class="set-field-l">Gemini API key</span>
+              <div class="set-keysaved" id="set-timeline-gemini-saved" hidden>
+                <span class="mono">•••••••••••• saved</span>
+                <button type="button" class="btn" id="set-timeline-gemini-edit">Edit</button>
+              </div>
               <input type="password" id="set-timeline-gemini-key" class="field" placeholder="AIza…" autocomplete="off" spellcheck="false">
-            </label>
+            </div>
             <div class="set-actions">
               <span class="set-verify" id="set-timeline-backend-note" aria-live="polite"></span>
+              <button type="button" class="btn" id="set-timeline-backend-test">Test</button>
               <button type="button" class="btn btn-primary" id="set-timeline-backend-save">Save</button>
             </div>
           </div>

@@ -25,6 +25,7 @@ together and the image IPC bridge keeps working: `timeline_observations`,
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import time
@@ -198,12 +199,34 @@ def _state_get(conn: sqlite3.Connection, key: str, default: float = 0.0) -> floa
         return default
 
 
-def _state_set(conn: sqlite3.Connection, key: str, value: float) -> None:
+def _state_set(conn: sqlite3.Connection, key: str, value: Any) -> None:
     conn.execute(
         "INSERT INTO timeline_state (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, str(value)),
     )
+
+
+def _state_str(conn: sqlite3.Connection, key: str, default: str = "") -> str:
+    row = conn.execute("SELECT value FROM timeline_state WHERE key = ?", (key,)).fetchone()
+    return row[0] if row and row[0] is not None else default
+
+
+def _record_result(ok: bool, error: str | None = None) -> None:
+    """Persist the outcome of the last summarizer call so the UI can show whether
+    processing is actually working, and surface the real error when it isn't
+    (bad Gemini key, quota, CLI not logged in, …)."""
+    conn = _connect()
+    try:
+        if ok:
+            _state_set(conn, "last_ok_at", time.time())
+            _state_set(conn, "last_error", "")
+        else:
+            _state_set(conn, "last_error", (error or "unknown error")[:400])
+            _state_set(conn, "last_error_at", time.time())
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ─── classification + titling heuristics ─────────────────────────────────
@@ -359,24 +382,90 @@ async def resolve_summarizer() -> str | None:
 
 
 async def _summarize_run(prompt: str, image_paths: list[str] | None = None,
-                         backend: str | None = None, timeout: float = 120.0) -> dict[str, Any]:
+                         backend: str | None = None, timeout: float = 120.0,
+                         record: bool = True) -> dict[str, Any]:
     """Dispatch one generation to the resolved backend. codex/claude → local CLI
     (screenshots stay on the Mac); gemini → cloud (cheap, images leave the Mac).
-    Uniform {ok, text, error} return regardless of backend."""
+    Uniform {ok, text, error} return. Records the outcome so the UI can show
+    working/failing (skip with record=False for throwaway probes)."""
     backend = backend or await resolve_summarizer()
     if backend == "gemini":
         from sunday.credentials import get_credential
         from sunday.devices import gemini_vision
-        return await gemini_vision.run(
+        res = await gemini_vision.run(
             prompt, image_paths=image_paths, api_key=get_credential("GEMINI_API_KEY"),
             model=get_credential("GEMINI_MODEL"), timeout=timeout,
         )
-    if backend in ("codex", "claude"):
-        return await chat_cli.run(
+    elif backend in ("codex", "claude"):
+        res = await chat_cli.run(
             prompt, image_paths=image_paths, tool=backend,
             workdir=str(sunday_home()), timeout=timeout,
         )
-    return {"ok": False, "text": "", "error": "no timeline summarizer configured"}
+    else:
+        res = {"ok": False, "text": "", "error": "no timeline summarizer configured"}
+    if record:
+        _record_result(bool(res.get("ok")), res.get("error"))
+    return res
+
+
+# ─── background processor: drain the backlog without the UI open ──────────
+
+_processor_task: asyncio.Task | None = None
+PROCESSOR_INTERVAL = 25.0    # seconds between passes when there's a backlog
+
+
+async def processor_loop() -> None:
+    """Continuously turn captured frames into cards in the background, so the
+    timeline builds whether or not the app is open. Idle-cheap: does nothing when
+    there's no backlog or no summarizer configured. Each pass is wall-clock
+    bounded by process_pending, so it never monopolizes the CLI/API."""
+    log.info("timeline processor loop starting")
+    while True:
+        try:
+            await asyncio.sleep(PROCESSOR_INTERVAL)
+            if _pending_frames_count() <= 0:
+                continue
+            if not await resolve_summarizer():
+                continue
+            await process_pending(time_budget_s=90.0)
+        except asyncio.CancelledError:
+            log.info("timeline processor loop cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the loop
+            log.warning("timeline processor iteration failed", error=str(exc))
+            _record_result(False, f"processor: {exc}")
+
+
+def start_processor() -> dict[str, Any]:
+    """Idempotently start the background processor (called on satellite boot)."""
+    global _processor_task
+    if _processor_task is not None and not _processor_task.done():
+        return {"ok": True, "already_running": True}
+    _processor_task = asyncio.create_task(processor_loop())
+    return {"ok": True, "started": True}
+
+
+async def test_summarizer(backend: str | None = None) -> dict[str, Any]:
+    """Fire one tiny generation at the configured (or given) backend to prove the
+    key/CLI actually works — the answer to "is my Gemini key even valid?". Records
+    the result, so a passing test flips the UI to 'working' and a failing one
+    surfaces the real error."""
+    backend = backend or await resolve_summarizer()
+    if not backend:
+        return {"ok": False, "backend": None,
+                "error": "No summarizer configured — pick Codex/Claude and log in, or Gemini + a key."}
+    t0 = time.time()
+    # Gemini answers in ~1-2s; a cold codex/claude CLI can take much longer, so
+    # give the local backends real headroom rather than false-failing.
+    timeout = 20.0 if backend == "gemini" else 55.0
+    res = await _summarize_run("Reply with exactly: OK", backend=backend, timeout=timeout)
+    return {
+        "ok": bool(res.get("ok")),
+        "backend": backend,
+        "error": res.get("error"),
+        "ms": round((time.time() - t0) * 1000),
+        "reply": (res.get("text") or "").strip()[:60],
+    }
 
 
 async def transcribe_pending(tool: str | None = None, model: str | None = None,
@@ -735,6 +824,10 @@ async def state() -> dict[str, Any]:
             # Raw config for the Settings selector (the choice, not the resolved).
             "summarizer_choice": (get_credential("TIMELINE_MODEL") or "auto").strip().lower(),
             "gemini_key_set": bool(get_credential("GEMINI_API_KEY")),
+            # Observability: is processing actually working, and if not, why.
+            "last_ok_at": _state_get(conn, "last_ok_at", 0.0) or None,
+            "last_error_at": _state_get(conn, "last_error_at", 0.0) or None,
+            "last_error": _state_str(conn, "last_error") or None,
         })
         return base
     finally:

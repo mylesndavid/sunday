@@ -3385,6 +3385,16 @@ class Daemon:
     async def _http_timeline_state(self, request: web.Request) -> web.Response:
         return web.json_response(await self._timeline_call("timeline_state", {}))
 
+    async def _http_timeline_test(self, request: web.Request) -> web.Response:
+        """POST /v1/timeline/test {backend?} — validate the summarizer (Gemini key /
+        CLI login) with a quick round-trip. 45s so a cold CLI/API has room."""
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        params = {"backend": body.get("backend")} if body.get("backend") else {}
+        return web.json_response(await self._timeline_call("timeline_test", params, timeout=70))
+
     async def _http_timeline_toggle(self, request: web.Request) -> web.Response:
         body = await request.json()
         if bool(body.get("on")):
@@ -3967,6 +3977,7 @@ class Daemon:
         app.router.add_get("/v1/timeline/search", self._http_timeline_search)
         app.router.add_get("/v1/timeline/event-frames", self._http_timeline_event_frames)
         app.router.add_get("/v1/timeline/state", self._http_timeline_state)
+        app.router.add_post("/v1/timeline/test", self._http_timeline_test)
         app.router.add_post("/v1/timeline/toggle", self._http_timeline_toggle)
         app.router.add_post("/v1/timeline/segment", self._http_timeline_segment)
         app.router.add_post("/v1/timeline/summarize", self._http_timeline_summarize)
