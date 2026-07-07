@@ -14,8 +14,8 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 // STEP_TOTAL; 'key' shares its slot with 'mic' so "step 3 of 5" reads right on
 // both branches.
 const STEP_ORDER = ['welcome', 'node', 'mic', 'browser', 'done'];
-const STEP_SLOT = { welcome: 1, node: 2, key: 3, mic: 3, browser: 4, done: 5 };
-const STEP_TOTAL = 5;
+const STEP_SLOT = { welcome: 1, node: 2, key: 3, mic: 3, browser: 4, email: 5, phone: 6, done: 7 };
+const STEP_TOTAL = 7;
 
 let chosenDaemonHttp = '';
 let chosenDaemonWs   = '';
@@ -346,7 +346,7 @@ $('#onb-pw-chrome')?.addEventListener('click', async (e) => {
   e.preventDefault();
   try { await window.sunday.openChromeExtensions(); } catch { /* hint text covers it */ }
 });
-$('#onb-pw-skip')?.addEventListener('click', () => showStep('done'));
+$('#onb-pw-skip')?.addEventListener('click', () => showStep('email'));
 $('#onb-pw-connect')?.addEventListener('click', async () => {
   const v = $('#onb-pw-verify');
   const token = $('#onb-pw-token').value.trim();
@@ -454,7 +454,101 @@ showStep = (name) => {
   }
 };
 
-// ─── step 4: finish ────────────────────────────────────────────────────
+// ─── step: Sunday's own email (AgentMail) — save, verify it reaches an inbox, ──
+// then let the user send themselves a real test. Optional; Skip → phone.
+$('#onb-am-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://agentmail.to'); });
+$('#onb-am-skip')?.addEventListener('click', () => showStep('phone'));
+
+let amConnected = false;
+$('#onb-am-save')?.addEventListener('click', async () => {
+  if (amConnected) { showStep('phone'); return; }        // second click = Continue
+  const v = $('#onb-am-verify'); const btn = $('#onb-am-save');
+  const key = ($('#onb-am-key')?.value || '').trim();
+  if (!key) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Paste your AgentMail key (or Skip).'; return; }
+  btn.disabled = true; v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Saving + reaching your inbox…';
+  try {
+    await fetch(`${chosenDaemonHttp}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+      body: JSON.stringify({ credentials: { AGENTMAIL_API_KEY: key } }),
+    });
+    let addr = null;
+    for (let i = 0; i < 12; i++) {   // poll until the inbox actually connects
+      let d; try { d = await (await fetch(`${chosenDaemonHttp}/v1/channels/agentmail/status`, { headers: await daemonAuthHeaders() })).json(); } catch { d = {}; }
+      if (d.connected) { addr = d.address || 'inbox ready'; break; }
+      if (d.configured && d.error) throw new Error(d.error);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (!addr) throw new Error("Key saved, but the inbox didn't connect — double-check the key.");
+    amConnected = true;
+    v.dataset.state = 'ok'; v.textContent = '✓ Connected.';
+    $('#onb-am-key').hidden = true;
+    $('#onb-am-addr').textContent = addr;
+    $('#onb-am-connected').hidden = false;
+    btn.textContent = 'Continue';
+  } catch (err) { v.dataset.state = 'fail'; v.textContent = `✗ ${err.message}`; }
+  finally { btn.disabled = false; }
+});
+$('#onb-am-test')?.addEventListener('click', async () => {
+  const v = $('#onb-am-test-verify'); const btn = $('#onb-am-test');
+  const to = ($('#onb-am-test-to')?.value || '').trim();
+  if (!to) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter your email to send yourself a test.'; return; }
+  btn.disabled = true; v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Sending…';
+  try {
+    const d = await (await fetch(`${chosenDaemonHttp}/v1/channels/agentmail/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+      body: JSON.stringify({ to }),
+    })).json();
+    if (d.ok) { v.dataset.state = 'ok'; v.textContent = `✓ Sent to ${to} — check your inbox. Reply and it lands in your chat.`; }
+    else { v.dataset.state = 'fail'; v.textContent = `✗ ${d.error || 'send failed'}`; }
+  } catch (err) { v.dataset.state = 'fail'; v.textContent = `✗ ${err.message}`; }
+  finally { btn.disabled = false; }
+});
+
+// ─── step: Sunday's own phone (VAPI) — save, verify configured, then a real ──
+// test call to the user's number. Optional; Skip → done.
+$('#onb-vapi-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://vapi.ai'); });
+$('#onb-vapi-skip')?.addEventListener('click', () => showStep('done'));
+
+let vapiConnected = false;
+$('#onb-vapi-save')?.addEventListener('click', async () => {
+  if (vapiConnected) { showStep('done'); return; }
+  const v = $('#onb-vapi-verify'); const btn = $('#onb-vapi-save');
+  const key = ($('#onb-vapi-key')?.value || '').trim();
+  const num = ($('#onb-vapi-number')?.value || '').trim();
+  if (!key || !num) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter both the API key and phone number id (or Skip).'; return; }
+  btn.disabled = true; v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Saving…';
+  try {
+    await fetch(`${chosenDaemonHttp}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+      body: JSON.stringify({ credentials: { VAPI_API_KEY: key, VAPI_PHONE_NUMBER_ID: num } }),
+    });
+    let d; try { d = await (await fetch(`${chosenDaemonHttp}/v1/vapi/status`, { headers: await daemonAuthHeaders() })).json(); } catch { d = {}; }
+    if (!d.configured) throw new Error('Saved, but VAPI reports not configured — check the key + number id.');
+    vapiConnected = true;
+    v.dataset.state = 'ok'; v.textContent = '✓ Configured.';
+    $('#onb-vapi-key').hidden = true;
+    $('#onb-vapi-connected').hidden = false;
+    btn.textContent = 'Continue';
+  } catch (err) { v.dataset.state = 'fail'; v.textContent = `✗ ${err.message}`; }
+  finally { btn.disabled = false; }
+});
+$('#onb-vapi-test')?.addEventListener('click', async () => {
+  const v = $('#onb-vapi-test-verify'); const btn = $('#onb-vapi-test');
+  const to = ($('#onb-vapi-test-to')?.value || '').trim();
+  if (!to) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter your number and Sunday will call it.'; return; }
+  btn.disabled = true; v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Placing the call…';
+  try {
+    const d = await (await fetch(`${chosenDaemonHttp}/v1/vapi/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+      body: JSON.stringify({ to }),
+    })).json();
+    if (d.ok) { v.dataset.state = 'ok'; v.textContent = `✓ Calling ${to} now — pick up. The transcript lands in your chat.`; }
+    else { v.dataset.state = 'fail'; v.textContent = `✗ ${d.error || 'call failed'}`; }
+  } catch (err) { v.dataset.state = 'fail'; v.textContent = `✗ ${err.message}`; }
+  finally { btn.disabled = false; }
+});
+
+// ─── step: finish ────────────────────────────────────────────────────────
 
 $('#onb-finish').addEventListener('click', async () => {
   // For a local install, the token lives in the daemon's own file — grab it

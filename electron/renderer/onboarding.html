@@ -199,7 +199,59 @@
       </div>
     </section>
 
-    <!-- Step 4: done -->
+    <!-- Step: give Sunday her own email (AgentMail) — optional, with a real test -->
+    <section class="onb-step" data-step="email" hidden>
+      <h1>Give Sunday an email.</h1>
+      <p class="lede">
+        Her <strong>own</strong> address — not yours. Forward her things, or let her email people on
+        your behalf and handle the replies. Powered by <a href="#" id="onb-am-link">AgentMail</a>;
+        the key stays on this Mac. Optional — add it later in Settings any time.
+      </p>
+      <input type="password" id="onb-am-key" placeholder="AgentMail API key (am_…)" class="onb-input" autocomplete="off" spellcheck="false">
+      <div class="onb-verify" id="onb-am-verify" hidden></div>
+      <div class="onb-connected" id="onb-am-connected" hidden>
+        <div class="onb-connected-line">Sunday's address: <strong id="onb-am-addr">—</strong></div>
+        <p class="onb-test-hint">Prove it works — send yourself a test. It shows up in your inbox; reply and it lands in your chat.</p>
+        <div class="onb-test-row">
+          <input type="text" id="onb-am-test-to" placeholder="your email address" class="onb-input">
+          <button class="onb-btn small" id="onb-am-test">Send test</button>
+        </div>
+        <div class="onb-verify" id="onb-am-test-verify" hidden></div>
+      </div>
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="browser">Back</button>
+        <button class="onb-btn ghost" id="onb-am-skip">Skip</button>
+        <button class="onb-btn primary" id="onb-am-save">Connect</button>
+      </div>
+    </section>
+
+    <!-- Step: give Sunday a phone (VAPI) — optional, with a real test call -->
+    <section class="onb-step" data-step="phone" hidden>
+      <h1>Give Sunday a phone.</h1>
+      <p class="lede">
+        Let Sunday <strong>place real phone calls</strong> for you — book the table, chase the refund,
+        sit on hold — and drop the transcript in your chat when it's done. Powered by
+        <a href="#" id="onb-vapi-link">VAPI</a>; keys stay on this Mac. Optional.
+      </p>
+      <input type="password" id="onb-vapi-key" placeholder="VAPI API key" class="onb-input" autocomplete="off" spellcheck="false">
+      <input type="text" id="onb-vapi-number" placeholder="VAPI phone number id (Sunday's number)" class="onb-input" style="margin-top:8px" autocomplete="off" spellcheck="false">
+      <div class="onb-verify" id="onb-vapi-verify" hidden></div>
+      <div class="onb-connected" id="onb-vapi-connected" hidden>
+        <p class="onb-test-hint">Prove it works — have Sunday call your phone right now.</p>
+        <div class="onb-test-row">
+          <input type="text" id="onb-vapi-test-to" placeholder="your phone number (+1…)" class="onb-input">
+          <button class="onb-btn small" id="onb-vapi-test">Call me</button>
+        </div>
+        <div class="onb-verify" id="onb-vapi-test-verify" hidden></div>
+      </div>
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="email">Back</button>
+        <button class="onb-btn ghost" id="onb-vapi-skip">Skip</button>
+        <button class="onb-btn primary" id="onb-vapi-save">Connect</button>
+      </div>
+    </section>
+
+    <!-- Step: done -->
     <section class="onb-step" data-step="done" hidden>
       <h1>You're set.</h1>
       <p class="lede">
