@@ -22,7 +22,11 @@ import structlog
 log = structlog.get_logger("sunday.devices.gemini_vision")
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.0-flash"
+# `-latest` alias, not a pinned version: it always points to the current cheap
+# Flash-Lite, so we never break when Google retires a dated model (gemini-2.0-
+# flash was shut down June 2026 — that's the trap this avoids). Cheapest tier
+# that still reads screenshots well; override with the GEMINI_MODEL credential.
+DEFAULT_MODEL = "gemini-flash-lite-latest"
 
 
 def available() -> bool:
