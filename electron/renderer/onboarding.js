@@ -103,43 +103,53 @@ async function testConnection() {
 $('#onb-test-conn').addEventListener('click', testConnection);
 $('#onb-custom-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') testConnection(); });
 
-// ─── step: give her a brain — fully local (Gemma via Ollama) or keys ───
-// The daemon inspects the machine (/v1/local/recommend) and we recommend a
-// path; the user always gets both options. Local = Ollama + the Gemma line,
-// with a real download progress bar; the memory embedding model rides along.
+// ─── step: give her a brain ───────────────────────────────────────────────
+// Five ways to power the brain — the default is ChatGPT (Codex), which needs no
+// key: one sign-in and Sunday uses your subscription. Also OpenRouter/OpenAI/
+// Anthropic keys, and fully-local Ollama. The daemon inspects the machine
+// (/v1/local/recommend) to annotate the local option; keys/Codex stay first.
 $('#onb-or-link')?.addEventListener('click', (e) => { e.preventDefault(); window.sunday.openExternal('https://openrouter.ai/keys'); });
+
+// Reveal only the selected provider's input.
+function syncBrainChoice() {
+  const choice = document.querySelector('input[name="brain"]:checked')?.value;
+  document.querySelectorAll('.onb-choice .onb-input[data-prov]').forEach((el) => {
+    el.hidden = el.dataset.prov !== choice;
+    if (!el.hidden) setTimeout(() => el.focus(), 0);
+  });
+  const sel = $('#onb-local-model');
+  if (sel) sel.style.display = (choice === 'local' && sel.options.length) ? '' : 'none';
+}
+document.querySelectorAll('input[name="brain"]').forEach((r) => r.addEventListener('change', syncBrainChoice));
 
 let hwRec = null;   // payload from /v1/local/recommend
 
 async function loadBrainStep() {
+  syncBrainChoice();
   const verdict = $('#onb-hw-verdict');
   try {
     hwRec = await (await fetch(`${chosenDaemonHttp}/v1/local/recommend`, { headers: await daemonAuthHeaders() })).json();
-  } catch { verdict.textContent = "couldn't inspect this Mac — pick either path."; return; }
+  } catch { verdict.textContent = "couldn't inspect this Mac — any option below works."; return; }
   const { chip, ram_gb, recommendation, models, ollama } = hwRec;
-  const localRadio = document.querySelector('input[name="brain"][value="local"]');
-  const keysRadio = document.querySelector('input[name="brain"][value="keys"]');
   const sel = $('#onb-local-model');
   if (models && models.length) {
-    sel.style.display = '';
     sel.innerHTML = models.map((m) =>
       `<option value="${m.name}" ${m.recommended ? 'selected' : ''}>${m.label} — ${m.note}</option>`).join('');
   }
+  // ChatGPT (Codex) stays the default; we only annotate what local would be like.
   if (recommendation === 'keys') {
-    verdict.textContent = `This Mac (${chip}, ${ram_gb}GB) is below what local models need to feel good — keys recommended.`;
-    if (keysRadio) keysRadio.checked = true;
-    $('#onb-local-note').textContent = 'Possible, but this Mac will struggle. Keys are the better experience here.';
+    verdict.textContent = `This Mac (${chip}, ${ram_gb}GB) is light for local models — a subscription or key is the smoother ride.`;
+    $('#onb-local-note').textContent = 'Possible, but this Mac will struggle with local models.';
   } else {
-    const headline = recommendation === 'local' ? 'runs Gemma 4 comfortably' : 'can run a small Gemma well';
-    verdict.textContent = `This Mac: ${chip} · ${ram_gb}GB — ${headline}.`;
+    verdict.textContent = `This Mac: ${chip} · ${ram_gb}GB — can also run Gemma locally if you'd rather keep everything on-device.`;
     $('#onb-local-tag').hidden = false;
-    if (localRadio) localRadio.checked = true;
     $('#onb-local-note').textContent = ollama.running
-      ? 'Ollama is already running — one download and she thinks entirely on this Mac.'
+      ? 'Ollama is running — one download and she thinks entirely on this Mac.'
       : ollama.installed
         ? "Ollama is installed; we'll start it for you."
         : "Needs Ollama (free, one download) — we'll walk you through it.";
   }
+  syncBrainChoice();
 }
 
 async function pullWithProgress(model, label) {
@@ -184,19 +194,55 @@ async function waitForOllama(maxSec) {
   return false;
 }
 
+// Sign in with ChatGPT (Codex): daemon-side login flips the provider to codex.
+async function connectCodex(v) {
+  v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Starting ChatGPT sign-in…';
+  const res = await fetch(`${chosenDaemonHttp}/v1/codex/login`, { method: 'POST', headers: await daemonAuthHeaders() });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (data.connected) return;
+  if (!data.auth_url) throw new Error('no sign-in URL returned');
+  await window.sunday.openExternal(data.auth_url);
+  v.textContent = 'Opening your browser — sign in to ChatGPT, then come back here.';
+  for (let i = 0; i < 120; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    let s; try { s = await (await fetch(`${chosenDaemonHttp}/v1/codex/status`, { headers: await daemonAuthHeaders() })).json(); } catch { continue; }
+    if (s.connected) return;
+    if (s.error) throw new Error(s.error);
+  }
+  throw new Error('timed out waiting for sign-in');
+}
+
+// OpenRouter / OpenAI / Anthropic: set the provider + write the key.
+async function saveKeyProvider(provider, key) {
+  const credName = { openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY' }[provider];
+  const res = await fetch(`${chosenDaemonHttp}/v1/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+    body: JSON.stringify({ provider, credentials: { [credName]: key } }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(d.error || `config ${res.status}`);
+}
+
 $('#onb-save-key')?.addEventListener('click', async () => {
   const v = $('#onb-key-verify');
   const btn = $('#onb-save-key');
-  const choice = document.querySelector('input[name="brain"]:checked')?.value || 'keys';
+  const choice = document.querySelector('input[name="brain"]:checked')?.value || 'codex';
   btn.disabled = true;
   try {
-    if (choice === 'keys') {
-      const key = $('#onb-or-key').value.trim();
-      if (!key) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Paste your key first (or pick fully local).'; return; }
+    if (choice === 'codex') {
+      await connectCodex(v);
+      v.dataset.state = 'ok'; v.textContent = '✓ Signed in — Sunday thinks with ChatGPT.';
+      setTimeout(() => showStep('mic'), 900);
+      return;
+    }
+    if (choice === 'openrouter' || choice === 'openai' || choice === 'anthropic') {
+      const key = ($(`#onb-key-${choice}`)?.value || '').trim();
+      if (!key) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Paste your key first (or pick another option).'; return; }
       v.hidden = false; v.dataset.state = 'pending'; v.textContent = 'Saving + starting Sunday…';
-      const r = await window.sunday.setOpenRouterKey(key);
-      if (r.ok) { v.dataset.state = 'ok'; v.textContent = '✓ Sunday is running locally.'; setTimeout(() => showStep('mic'), 800); }
-      else { v.dataset.state = 'fail'; v.textContent = `✗ ${r.error || 'failed'}`; }
+      await saveKeyProvider(choice, key);
+      v.dataset.state = 'ok'; v.textContent = '✓ Sunday is running.';
+      setTimeout(() => showStep('mic'), 800);
       return;
     }
     // Fully local: ensure Ollama, pull the chosen Gemma (+ the memory model), flip the brain.
@@ -241,7 +287,8 @@ $('#onb-save-key')?.addEventListener('click', async () => {
     btn.disabled = false;
   }
 });
-$('#onb-or-key')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#onb-save-key').click(); });
+document.querySelectorAll('.onb-choice .onb-input[data-prov]').forEach((el) =>
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#onb-save-key').click(); }));
 
 // ─── step: give Sunday a browser (Cockpit extension) ───────────────────
 // The headline capability — Sunday drives the user's real logged-in browser.

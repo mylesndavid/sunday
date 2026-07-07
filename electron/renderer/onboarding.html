@@ -69,27 +69,50 @@
     <section class="onb-step" data-step="key" hidden>
       <h1>Give her a brain.</h1>
       <p class="lede">
-        Two ways to run Sunday's thinking. <strong>Fully local</strong> keeps everything — every
-        word, every thought — on this Mac, powered by Google's Gemma models. No keys, no accounts,
-        nothing leaves the machine. Or bring an <strong>OpenRouter key</strong> for cloud models.
+        Pick what powers Sunday's thinking. The easiest is your
+        <strong>ChatGPT subscription</strong> — one sign-in, no API key. Or bring a key for any
+        cloud model, or run <strong>fully local</strong> so nothing ever leaves this Mac.
       </p>
       <div class="onb-verdict" id="onb-hw-verdict">checking what this Mac can run…</div>
 
       <fieldset class="onb-choices">
+        <label class="onb-choice">
+          <input type="radio" name="brain" value="codex" checked>
+          <div>
+            <div class="t">Sign in with ChatGPT <span class="onb-tag-rec">easiest</span></div>
+            <div class="m">Use your ChatGPT (Codex) subscription — no API key, no card. One sign-in and Sunday thinks with GPT.</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="brain" value="openrouter">
+          <div>
+            <div class="t">OpenRouter key</div>
+            <input type="password" id="onb-key-openrouter" data-prov="openrouter" placeholder="sk-or-…" class="onb-input" hidden autocomplete="off" spellcheck="false">
+            <div class="m">One key, any cloud model. <a href="#" id="onb-or-link">Get a key</a>. Stored only on this Mac.</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="brain" value="openai">
+          <div>
+            <div class="t">OpenAI key</div>
+            <input type="password" id="onb-key-openai" data-prov="openai" placeholder="sk-…" class="onb-input" hidden autocomplete="off" spellcheck="false">
+            <div class="m">Your OpenAI API key (platform.openai.com).</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="brain" value="anthropic">
+          <div>
+            <div class="t">Anthropic key</div>
+            <input type="password" id="onb-key-anthropic" data-prov="anthropic" placeholder="sk-ant-…" class="onb-input" hidden autocomplete="off" spellcheck="false">
+            <div class="m">Your Anthropic API key (console.anthropic.com).</div>
+          </div>
+        </label>
         <label class="onb-choice" id="onb-brain-local-choice">
           <input type="radio" name="brain" value="local">
           <div>
             <div class="t">Fully local <span class="onb-tag-rec" id="onb-local-tag" hidden>recommended</span></div>
             <select id="onb-local-model" class="onb-input" style="display:none"></select>
-            <div class="m" id="onb-local-note">Runs on this Mac via Ollama.</div>
-          </div>
-        </label>
-        <label class="onb-choice">
-          <input type="radio" name="brain" value="keys">
-          <div>
-            <div class="t">I have keys</div>
-            <input type="password" id="onb-or-key" placeholder="sk-or-... (openrouter.ai/keys)" class="onb-input" autocomplete="off" spellcheck="false">
-            <div class="m">One <a href="#" id="onb-or-link">OpenRouter</a> key, any cloud model. Stored only on this Mac.</div>
+            <div class="m" id="onb-local-note">Runs on this Mac via Ollama. No keys, nothing leaves.</div>
           </div>
         </label>
       </fieldset>
