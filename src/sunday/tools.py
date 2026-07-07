@@ -55,6 +55,13 @@ CORE_TOOLS = frozenset({
     # for it instead of driving a browser page-by-page to read things — the
     # prompt steers research here and reserves the browser for interaction.
     "web_search",
+    # Timeline lookups are always-on so "what did I do today / when did I work
+    # on X" is answered from the SUMMARIZED activity record, not by screenshotting
+    # the screen. If these were tail-only the model would often skip find_tools
+    # and reach for device_screen_text instead — the exact regression the user
+    # hit ("I asked what I did and it screenshotted my computer"). The deeper
+    # timeline tools (moments/stats/capture) stay in the tail.
+    "timeline_activity", "timeline_search",
     "delegate", "delegate_parallel",
     # Hiring a local coding agent (Claude Code / Codex) for long-running repo
     # work is delegation too — core, not tail.

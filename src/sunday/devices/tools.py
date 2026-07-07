@@ -626,104 +626,136 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         run=_t_device_open_app,
     ))
 
-    # ─── Rewind tools — route through satellites that advertise 'rewind' ──
+    # ─── Timeline tools — route through satellites that advertise 'timeline' ──
 
-    def _pick_rewind_device(ctx, explicit=None):
+    # Timeline: the user's SUMMARIZED activity record (activity cards +
+    # play-by-play observations). This is what Sunday reads to answer "what did I
+    # do" — NOT raw screenshots. Replaces the old rewind_* tools, which exposed
+    # raw OCR'd frames; the brain should reason over the summarized timeline.
+    def _pick_timeline_device(ctx, explicit=None):
         mgr = ctx.extras.get("devices")
         if mgr is None:
             return None, None
         for d in mgr.list_devices():
             if explicit and d["device_id"] != explicit:
                 continue
-            if "rewind" in (d.get("capabilities") or []):
+            if "timeline" in (d.get("capabilities") or []):
                 return mgr, d["device_id"]
         return mgr, None
 
-    async def _rewind_proxy(method, params, ctx, explicit=None):
-        mgr, did = _pick_rewind_device(ctx, explicit)
+    async def _timeline_proxy(method, params, ctx, explicit=None):
+        mgr, did = _pick_timeline_device(ctx, explicit)
         if mgr is None:
             return {"error": "DeviceManager unavailable"}
         if did is None:
-            return {"error": "no connected satellite advertises 'rewind' (needs macOS + Screen Recording permission)"}
+            return {"error": "no connected Mac has an activity timeline (needs macOS + Screen Recording permission)"}
         try:
-            return await mgr.command(did, method, params, timeout=15)
+            return await mgr.command(did, method, params, timeout=20)
         except RuntimeError as exc:
             return {"error": str(exc)}
 
-    async def _t_rewind_search(args, ctx):
+    async def _t_timeline_search(args, ctx):
         q = (args.get("query") or "").strip()
-        if not q: return {"error": "'query' is required"}
-        return await _rewind_proxy("rewind_search", {"query": q, "limit": int(args.get("limit") or 10)}, ctx, args.get("device_id"))
+        if not q:
+            return {"error": "'query' is required"}
+        return await _timeline_proxy("timeline_search", {"q": q, "limit": int(args.get("limit") or 20)}, ctx, args.get("device_id"))
 
-    async def _t_rewind_recent(args, ctx):
-        return await _rewind_proxy("rewind_recent", {"limit": int(args.get("limit") or 10)}, ctx, args.get("device_id"))
+    async def _t_timeline_activity(args, ctx):
+        import time as _time
+        if (args.get("date") or "").strip():
+            return await _timeline_proxy("timeline_day", {"date": args["date"].strip()}, ctx, args.get("device_id"))
+        hours = float(args.get("hours") or 24)
+        now = _time.time()
+        return await _timeline_proxy(
+            "timeline_events",
+            {"from_ts": now - hours * 3600, "to_ts": now, "limit": int(args.get("limit") or 100)},
+            ctx, args.get("device_id"),
+        )
 
-    async def _t_rewind_stats(args, ctx):
-        return await _rewind_proxy("rewind_stats", {}, ctx, args.get("device_id"))
+    async def _t_timeline_moments(args, ctx):
+        import time as _time
+        to_ts = float(args.get("to_ts") or _time.time())
+        from_ts = float(args.get("from_ts") or (to_ts - 3600))
+        return await _timeline_proxy("timeline_observations", {"from_ts": from_ts, "to_ts": to_ts}, ctx, args.get("device_id"))
 
-    async def _t_rewind_start(args, ctx):
-        params = {"interval_seconds": int(args.get("interval_seconds") or 300)}
-        return await _rewind_proxy("rewind_start", params, ctx, args.get("device_id"))
+    async def _t_timeline_stats(args, ctx):
+        return await _timeline_proxy("timeline_state", {}, ctx, args.get("device_id"))
 
-    async def _t_rewind_stop(args, ctx):
-        return await _rewind_proxy("rewind_stop", {}, ctx, args.get("device_id"))
+    async def _t_timeline_capture(args, ctx):
+        on = args.get("on")
+        on = True if on is None else bool(on)
+        return await _timeline_proxy("timeline_start" if on else "timeline_stop", {}, ctx, args.get("device_id"))
 
     registry.register(Tool(
-        name="rewind_search",
+        name="timeline_search",
         description=(
-            "Search the user's screen history for frames whose OCR'd text matches the query. "
-            "Use for 'what was on my screen earlier showing X' / 'find the slide that said Y'. "
-            "Returns matching frames with timestamp + OCR text snippet."
+            "Search the user's activity TIMELINE — the summarized record of what "
+            "they actually worked on, as activity cards (title, one-line summary, "
+            "apps/sites, time range). Use for 'when did I work on X', 'find when I "
+            "did Y', 'that thing about Z'. Reads SUMMARIZED data — prefer this over "
+            "screen-reading (device_screen_text/screenshot) for anything in the past."
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Text to search for (FTS5 syntax supported)."},
-                "limit": {"type": "integer", "description": "Max frames to return (default 10)."},
-                "device_id": {"type": "string"},
-            },
-            "required": ["query"],
-        },
-        run=_t_rewind_search,
+        parameters={"type": "object", "properties": {
+            "query": {"type": "string", "description": "What to look for (matches card titles/summaries)."},
+            "limit": {"type": "integer", "description": "Max cards (default 20)."},
+            "device_id": {"type": "string"},
+        }, "required": ["query"]},
+        run=_t_timeline_search,
     ))
     registry.register(Tool(
-        name="rewind_recent",
-        description="Return the most recent N captured + OCR'd screen frames in reverse-chronological order.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "description": "Max frames (default 10)."},
-                "device_id": {"type": "string"},
-            },
-        },
-        run=_t_rewind_recent,
-    ))
-    registry.register(Tool(
-        name="rewind_stats",
-        description="Stats on the user's Rewind index — total frames, oldest/newest timestamp, watcher state.",
-        parameters={"type": "object", "properties": {"device_id": {"type": "string"}}},
-        run=_t_rewind_stats,
-    ))
-    registry.register(Tool(
-        name="rewind_start",
+        name="timeline_activity",
         description=(
-            "Turn on continuous screen capture + OCR indexing on the connected Mac satellite. "
-            "Frames captured every interval_seconds (default 300). Idempotent."
+            "Get the user's activity cards for a day or a recent window — what they "
+            "did, already summarized (each card: title, summary, apps, time range). "
+            "USE THIS for 'what did I do today / yesterday / this morning / earlier / "
+            "this week' — read the timeline, do NOT screenshot the screen for PAST "
+            "activity. Pass `date` (YYYY-MM-DD) for a day, or `hours` for the last N "
+            "hours (default 24)."
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "interval_seconds": {"type": "integer", "description": "Seconds between captures (default 300)."},
-                "device_id": {"type": "string"},
-            },
-        },
-        run=_t_rewind_start,
+        parameters={"type": "object", "properties": {
+            "date": {"type": "string", "description": "A local day (YYYY-MM-DD). Omit to use `hours`."},
+            "hours": {"type": "number", "description": "Look back this many hours (default 24). Ignored if `date` set."},
+            "limit": {"type": "integer", "description": "Max cards (default 100)."},
+            "device_id": {"type": "string"},
+        }},
+        run=_t_timeline_activity,
     ))
     registry.register(Tool(
-        name="rewind_stop",
-        description="Turn off the Rewind watcher. Stored history stays searchable.",
+        name="timeline_moments",
+        description=(
+            "Zoom into a time range for the minute-by-minute play-by-play — the "
+            "detailed observations behind the cards ('searched X, watched Y…'). Use "
+            "after timeline_activity/timeline_search when the user wants the granular "
+            "detail of a session. Pass from_ts/to_ts (unix seconds)."
+        ),
+        parameters={"type": "object", "properties": {
+            "from_ts": {"type": "number", "description": "Start (unix seconds)."},
+            "to_ts": {"type": "number", "description": "End (unix seconds)."},
+            "device_id": {"type": "string"},
+        }},
+        run=_t_timeline_moments,
+    ))
+    registry.register(Tool(
+        name="timeline_stats",
+        description=(
+            "Status of the user's activity timeline — capture on/off, how many "
+            "activity cards + frames, how many still being summarized, and which "
+            "summarizer is running. Use for 'is my timeline on / working'."
+        ),
         parameters={"type": "object", "properties": {"device_id": {"type": "string"}}},
-        run=_t_rewind_stop,
+        run=_t_timeline_stats,
+    ))
+    registry.register(Tool(
+        name="timeline_capture",
+        description=(
+            "Turn the user's activity-timeline screen capture on or off on the "
+            "connected Mac. `on: true` starts it, `on: false` stops it."
+        ),
+        parameters={"type": "object", "properties": {
+            "on": {"type": "boolean", "description": "true to start capture, false to stop."},
+            "device_id": {"type": "string"},
+        }},
+        run=_t_timeline_capture,
     ))
     registry.register(Tool(
         name="device_run_command",

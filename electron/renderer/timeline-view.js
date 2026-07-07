@@ -580,18 +580,23 @@ async function showEmpty() {
       els.emptyTitle.textContent = 'Your timeline is off';
       els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
     }
-  } else if (cards === 0 || (pending > 0 && s.summarizer)) {
-    // Frames captured, and either no cards yet OR a backlog still being turned
-    // into cards. Show live build progress — this holds even when some cards
-    // already exist (more are on the way), which is why 904-frames/10-cards no
-    // longer misreads as "nothing's recording".
+  } else if (cards === 0) {
+    // Frames captured but not a single card exists yet — show live build
+    // progress (the only case where there's genuinely nothing to look at).
     paintBuilding(s);
   } else {
-    // Cards exist and nothing's pending — this particular range is just empty.
+    // Cards DO exist — they're just not in the range being viewed. Never trap
+    // the user on the "building" spinner here (a small always-on backlog would
+    // otherwise hide 10 real cards behind "N frames left to read"). Point them
+    // at where the cards actually are, and note any still-summarizing count.
     setEmptyIcon(false);
     els.enable.hidden = true;
     els.emptyTitle.textContent = emptyRangeTitle();
-    els.emptySub.textContent = 'No activity cards for this range yet. Try another range above, or keep capture on and they’ll fill in.';
+    const built = `You have ${cards} activity card${cards !== 1 ? 's' : ''} — try another range above.`;
+    const more = (pending > 0 && s.summarizer)
+      ? ` Still summarizing ${pending} more frame${pending !== 1 ? 's' : ''} in the background.`
+      : '';
+    els.emptySub.textContent = built + more;
   }
   els.empty.hidden = false;
 }
