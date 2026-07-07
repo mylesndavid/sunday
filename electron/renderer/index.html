@@ -997,6 +997,25 @@
               <button type="button" class="btn" id="set-timeline-catchup">Catch up now</button>
             </div>
           </div>
+
+          <div class="set-panel">
+            <div class="brain-label">Summarizer</div>
+            <p class="set-help set-help-tight">Which model turns your screenshots into activity cards. <strong>Codex</strong> and <strong>Claude Code</strong> run through the local CLI — free and on-device, nothing leaves the Mac. <strong>Gemini</strong> is a cheap cloud key (images go to Google, but it won't touch your Codex quota). <strong>Auto</strong> uses whichever CLI is logged in, then falls back to a Gemini key.</p>
+            <div class="seg" id="set-timeline-backend" role="group" aria-label="Timeline summarizer">
+              <button type="button" class="seg-btn" data-tlm="auto" aria-pressed="false">Auto</button>
+              <button type="button" class="seg-btn" data-tlm="codex" aria-pressed="false">Codex</button>
+              <button type="button" class="seg-btn" data-tlm="claude" aria-pressed="false">Claude Code</button>
+              <button type="button" class="seg-btn" data-tlm="gemini" aria-pressed="false">Gemini</button>
+            </div>
+            <label class="set-field" id="set-timeline-gemini-field" hidden style="margin-top:12px">
+              <span class="set-field-l">Gemini API key</span>
+              <input type="password" id="set-timeline-gemini-key" class="field" placeholder="AIza…" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="set-actions">
+              <span class="set-verify" id="set-timeline-backend-note" aria-live="polite"></span>
+              <button type="button" class="btn btn-primary" id="set-timeline-backend-save">Save</button>
+            </div>
+          </div>
         </section>
 
         <!-- ═══ BEHAVIOR & MEMORY ══════════════════════════════════════════ -->

@@ -339,11 +339,51 @@ _TRANSCRIBE_PROMPT = (
 )
 
 
+async def resolve_summarizer() -> str | None:
+    """Which backend turns screenshots into text: the user's explicit choice from
+    Settings (`TIMELINE_MODEL` = codex|claude|gemini) when it's actually usable,
+    else auto — a local CLI (codex/claude) if logged in, then Gemini if a key is
+    set. None when nothing is available. This is the single knob every stage of
+    the pipeline (and `state`) routes through."""
+    from sunday.credentials import get_credential
+    choice = (get_credential("TIMELINE_MODEL") or "auto").strip().lower()
+    if choice == "gemini":
+        return "gemini" if get_credential("GEMINI_API_KEY") else None
+    if choice in ("codex", "claude"):
+        return await chat_cli.detect(prefer=choice)
+    # auto: prefer a local CLI (free + private), fall back to a Gemini key.
+    tool = await chat_cli.detect()
+    if tool:
+        return tool
+    return "gemini" if get_credential("GEMINI_API_KEY") else None
+
+
+async def _summarize_run(prompt: str, image_paths: list[str] | None = None,
+                         backend: str | None = None, timeout: float = 120.0) -> dict[str, Any]:
+    """Dispatch one generation to the resolved backend. codex/claude → local CLI
+    (screenshots stay on the Mac); gemini → cloud (cheap, images leave the Mac).
+    Uniform {ok, text, error} return regardless of backend."""
+    backend = backend or await resolve_summarizer()
+    if backend == "gemini":
+        from sunday.credentials import get_credential
+        from sunday.devices import gemini_vision
+        return await gemini_vision.run(
+            prompt, image_paths=image_paths, api_key=get_credential("GEMINI_API_KEY"),
+            model=get_credential("GEMINI_MODEL"), timeout=timeout,
+        )
+    if backend in ("codex", "claude"):
+        return await chat_cli.run(
+            prompt, image_paths=image_paths, tool=backend,
+            workdir=str(sunday_home()), timeout=timeout,
+        )
+    return {"ok": False, "text": "", "error": "no timeline summarizer configured"}
+
+
 async def transcribe_pending(tool: str | None = None, model: str | None = None,
                              time_budget_s: float = 90.0) -> dict[str, Any]:
     """Stage 1: turn each settled 15-minute frame window into observations via the
-    vision CLI. A cursor guarantees each window is transcribed once."""
-    detected = await chat_cli.detect(prefer=tool)
+    configured backend (local CLI or Gemini). A cursor transcribes each once."""
+    detected = await resolve_summarizer()
     conn = _connect()
     try:
         if not detected:
@@ -371,9 +411,8 @@ async def transcribe_pending(tool: str | None = None, model: str | None = None,
                     start=frames[0]["clock"], end=frames[-1]["clock"], clocks=clocks,
                 )
                 budget_left = max(20.0, time_budget_s - (time.time() - started))
-                res = await chat_cli.run(
-                    prompt, image_paths=[f["path"] for f in frames], tool=detected,
-                    model=model, workdir=workdir,
+                res = await _summarize_run(
+                    prompt, image_paths=[f["path"] for f in frames], backend=detected,
                     timeout=min(chat_cli.TIMEOUT_SECONDS, budget_left),
                 )
                 if not res.get("ok"):
@@ -436,7 +475,7 @@ async def synthesize_recent(tool: str | None = None, model: str | None = None,
     """Stage 2: (re)group the rolling window of recent observations into cards.
     Idempotent for the mutable tail — deletes the window's cards and rebuilds — so
     a session spanning several transcription batches lands as ONE merged card."""
-    detected = await chat_cli.detect(prefer=tool)
+    detected = await resolve_summarizer()
     conn = _connect()
     try:
         if not detected:
@@ -458,8 +497,7 @@ async def synthesize_recent(tool: str | None = None, model: str | None = None,
             for i, o in enumerate(obs)
         )
         prompt = _SYNTH_PROMPT.format(last=len(obs) - 1, clocks=clocks, obs=obs_txt)
-        res = await chat_cli.run(prompt, tool=detected, model=model,
-                                 workdir=str(sunday_home()), timeout=timeout)
+        res = await _summarize_run(prompt, backend=detected, timeout=timeout)
         if not res.get("ok"):
             log.warning("timeline synthesize failed", error=res.get("error"))
             return {"available": True, "cards": 0, "error": res.get("error")}
@@ -673,11 +711,12 @@ async def state() -> dict[str, Any]:
     """Capture state (shared with rewind) plus timeline coverage. Includes `cli`
     — which local summarizer (codex/claude) is available, or None — so the UI can
     tell "still building" apart from "no summarizer logged in"."""
+    from sunday.credentials import get_credential
     base = rewind_macos.stats()
     try:
-        cli = await chat_cli.detect()
+        summarizer = await resolve_summarizer()
     except Exception:  # noqa: BLE001
-        cli = None
+        summarizer = None
     conn = _connect()
     try:
         cards = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
@@ -688,7 +727,14 @@ async def state() -> dict[str, Any]:
             "observations": obs,
             "pending_frames": _pending_frames_count(),
             "transcribed_through": _state_get(conn, "transcribed_through_ts", 0.0),
-            "cli": cli,
+            # Active summarizer backend + whether it runs on-device. `cli` kept as
+            # an alias so any older reader still sees "is a summarizer available".
+            "summarizer": summarizer,
+            "summarizer_local": summarizer in ("codex", "claude"),
+            "cli": summarizer,
+            # Raw config for the Settings selector (the choice, not the resolved).
+            "summarizer_choice": (get_credential("TIMELINE_MODEL") or "auto").strip().lower(),
+            "gemini_key_set": bool(get_credential("GEMINI_API_KEY")),
         })
         return base
     finally:

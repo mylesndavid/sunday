@@ -139,7 +139,7 @@ async function startSummaryPolling() {
   clearTimeout(summarizeTimer);
   let st;
   try { st = await (await fetch(`${cfg.daemonHttp}/v1/timeline/state`)).json(); } catch { return; }
-  if (!st || (st.pending_frames || 0) <= 0 || !st.cli) return;   // nothing to do / no summarizer
+  if (!st || (st.pending_frames || 0) <= 0 || !st.summarizer) return;   // nothing to do / no summarizer
   // Kick one pass now; then poll every few seconds to (a) show live progress and
   // (b) re-nudge occasionally so the backlog keeps draining. Only while the tab
   // is open — leaving stops it (cost control on a big backlog).
@@ -153,7 +153,7 @@ async function startSummaryPolling() {
     if (!els.empty.hidden && (s.cards || 0) === 0) paintBuilding(s);
     await loadRange(mode, { silent: true });   // swaps to cards the moment they exist
     tries += 1;
-    if (tries < 60 && (s.pending_frames || 0) > 0 && s.cli) {
+    if (tries < 60 && (s.pending_frames || 0) > 0 && s.summarizer) {
       if (tries % 3 === 0) fetch(`${cfg.daemonHttp}/v1/timeline/summarize`, { method: 'POST' }).catch(() => {});
       summarizeTimer = setTimeout(tick, 6000);
     }
@@ -580,7 +580,7 @@ async function showEmpty() {
       els.emptyTitle.textContent = 'Your timeline is off';
       els.emptySub.textContent = 'Turn it on and Sunday quietly builds a private, on-device timeline of what you actually worked on — with a weekly Wrapped. Nothing leaves your Mac.';
     }
-  } else if (cards === 0 || (pending > 0 && s.cli)) {
+  } else if (cards === 0 || (pending > 0 && s.summarizer)) {
     // Frames captured, and either no cards yet OR a backlog still being turned
     // into cards. Show live build progress — this holds even when some cards
     // already exist (more are on the way), which is why 904-frames/10-cards no
@@ -617,19 +617,22 @@ function setEmptyIcon(spinning) {
 function paintBuilding(s) {
   els.enable.hidden = true;
   const frames = s.total || 0, cards = s.cards || 0, obs = s.observations || 0, pend = s.pending_frames || 0;
-  if (!s.cli) {
+  if (!s.summarizer) {
     setEmptyIcon(false);
     els.emptyTitle.textContent = `Captured ${frames} frame${frames !== 1 ? 's' : ''} — but no summarizer`;
-    els.emptySub.textContent = 'Sunday recorded your screen but can’t turn it into cards yet: no codex or claude CLI is logged in on this Mac. Run `codex` (or `claude`) in a terminal to log in, and it’ll start building — using your subscription, not a per-token bill.';
+    els.emptySub.textContent = 'Sunday recorded your screen but can’t turn it into cards yet: no summarizer is set up. In Settings › Timeline, log into the codex or claude CLI, or pick Gemini and add an API key.';
     return;
   }
   setEmptyIcon(true);
   els.emptyTitle.textContent = 'Building your timeline…';
+  const via = s.summarizer_local
+    ? `Summarizing on-device with your local <code>${s.summarizer}</code> — your subscription, not a per-token bill.`
+    : `Summarizing via <code>${s.summarizer}</code> (cheap cloud, not your Codex quota).`;
   els.emptySub.innerHTML =
     `<strong>${cards}</strong> card${cards !== 1 ? 's' : ''} · ` +
     `<strong>${obs}</strong> moment${obs !== 1 ? 's' : ''} · ` +
     `<strong>${pend}</strong> frame${pend !== 1 ? 's' : ''} left to read` +
-    `<span class="tl-build-note">Summarizing on-device with your local <code>${s.cli}</code> — your subscription, not a per-token bill. Leave the tab to pause.</span>`;
+    `<span class="tl-build-note">${via} Leave the tab to pause.</span>`;
 }
 async function enableCapture() {
   els.enable.disabled = true; els.enable.textContent = 'turning on…';
