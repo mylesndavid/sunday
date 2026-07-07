@@ -323,6 +323,12 @@ async def _h_timeline_observations(params: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+async def _h_timeline_test(params: dict[str, Any]) -> dict[str, Any]:
+    """Prove the configured (or given) summarizer works — a quick round-trip so
+    the user knows immediately whether their Gemini key / CLI login is valid."""
+    return await timeline_macos.test_summarizer(params.get("backend"))
+
+
 async def _h_timeline_events(params: dict[str, Any]) -> dict[str, Any]:
     return {"events": timeline_macos.events(
         from_ts=params.get("from_ts"), to_ts=params.get("to_ts"),
@@ -438,6 +444,7 @@ HANDLERS = {
     "rewind_stats":           _h_rewind_stats,
     "timeline_process":       _h_timeline_process,
     "timeline_observations":  _h_timeline_observations,
+    "timeline_test":          _h_timeline_test,
     "timeline_events":        _h_timeline_events,
     "timeline_day":           _h_timeline_day,
     "timeline_search":        _h_timeline_search,
@@ -527,6 +534,13 @@ async def _serve(server_url: str, device_id: str, token: str | None) -> None:
                             log.info("rewind watcher resumed", interval_s=result.get("interval_s"))
                     except Exception as exc:  # noqa: BLE001
                         log.warning("rewind auto-start failed", error=str(exc))
+                # Start the background timeline processor so cards build with the
+                # app closed. Idempotent — a reconnect won't spawn a second loop.
+                if "timeline" in caps:
+                    try:
+                        timeline_macos.start_processor()
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("timeline processor start failed", error=str(exc))
 
                 async for raw in ws:
                     try:

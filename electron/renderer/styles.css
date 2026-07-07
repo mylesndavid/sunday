@@ -491,6 +491,8 @@ textarea#composer::placeholder { color: var(--text-3); }
 /* a labelled card grouping a set of related controls */
 .set-panel { padding: 18px 20px; margin: 0 0 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
 .set-panel-flush { padding: 0; margin: 0 0 18px; background: transparent; border: 0; }
+.set-keysaved { display: flex; align-items: center; gap: 12px; }
+.set-keysaved .mono { color: var(--text-2); font-size: 13px; letter-spacing: 0.08em; }
 .set-toggle-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .set-toggle-copy { min-width: 0; }
 .set-toggle-copy .brain-label { margin-top: 0; }

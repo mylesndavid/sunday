@@ -623,16 +623,38 @@ function paintBuilding(s) {
     els.emptySub.textContent = 'Sunday recorded your screen but can’t turn it into cards yet: no summarizer is set up. In Settings › Timeline, log into the codex or claude CLI, or pick Gemini and add an API key.';
     return;
   }
+  // Persistent failure → surface the real error instead of a hopeful spinner.
+  const failing = s.last_error && (!s.last_ok_at || (s.last_error_at || 0) >= (s.last_ok_at || 0));
+  if (failing) {
+    setEmptyIcon(false);
+    els.emptyTitle.textContent = 'Timeline can’t build right now';
+    els.emptySub.innerHTML =
+      `Your summarizer (<code>${escapeHtml(s.summarizer)}</code>) is erroring:<br>` +
+      `<strong>${escapeHtml(s.last_error)}</strong>` +
+      `<span class="tl-build-note">Fix it in Settings › Timeline — check your Gemini key or CLI login — and it resumes automatically. ` +
+      `${pend} frame${pend !== 1 ? 's' : ''} waiting.</span>`;
+    return;
+  }
   setEmptyIcon(true);
   els.emptyTitle.textContent = 'Building your timeline…';
   const via = s.summarizer_local
-    ? `Summarizing on-device with your local <code>${s.summarizer}</code> — your subscription, not a per-token bill.`
-    : `Summarizing via <code>${s.summarizer}</code> (cheap cloud, not your Codex quota).`;
+    ? `on-device with your local <code>${escapeHtml(s.summarizer)}</code> — your subscription, not a per-token bill`
+    : `via <code>${escapeHtml(s.summarizer)}</code> (cheap cloud, not your Codex quota)`;
+  const last = s.last_ok_at ? ` Last card ${agoShort(s.last_ok_at)}.` : '';
   els.emptySub.innerHTML =
     `<strong>${cards}</strong> card${cards !== 1 ? 's' : ''} · ` +
     `<strong>${obs}</strong> moment${obs !== 1 ? 's' : ''} · ` +
     `<strong>${pend}</strong> frame${pend !== 1 ? 's' : ''} left to read` +
-    `<span class="tl-build-note">${via} Leave the tab to pause.</span>`;
+    `<span class="tl-build-note">Summarizing ${via}, in the background — you can close the app.${last}</span>`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function agoShort(ts) {
+  const secs = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  return `${Math.round(secs / 3600)}h ago`;
 }
 async function enableCapture() {
   els.enable.disabled = true; els.enable.textContent = 'turning on…';
