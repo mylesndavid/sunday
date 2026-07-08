@@ -652,7 +652,7 @@ def _merge_short_cards(cards: list, obs: list, exempt_last: bool = True) -> list
     return norm
 
 
-def _set_state_val(key: str, value: float) -> None:
+def _set_state_val(key: str, value: Any) -> None:
     conn = _connect()
     try:
         _state_set(conn, key, value)
@@ -822,6 +822,12 @@ async def process_pending(tool: str | None = None, model: str | None = None,
     # Bake per-card timelapses while the source frames still exist. Cheap and
     # bounded; runs after synthesis so new cards get their permanent clip promptly.
     baked = await bake_pending_evidence(time_budget_s=min(30.0, time_budget_s * 0.25))
+    # Refresh the drift verdict for the active block (rate-limited internally, and a
+    # no-op when no block is running). Non-fatal.
+    try:
+        await block_drift_check()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("block drift check failed", error=str(exc))
     return {"available": True, "transcribed": t.get("transcribed", 0),
             "cards": s.get("cards", 0), "baked": baked.get("baked", 0),
             "remaining": _pending_frames_count()}
@@ -1093,6 +1099,16 @@ def current_block() -> dict[str, Any]:
         ).fetchone()
         current = dict(zip(_BLOCK_COLS, cur)) if cur else None
         nextb = dict(zip(_BLOCK_COLS, nxt)) if nxt else None
+        # Attach the cached drift verdict for the current block, if it's fresh.
+        if current:
+            raw = _state_str(conn, f"drift_{current['id']}", "")
+            if raw:
+                try:
+                    d = json.loads(raw)
+                    if now - float(d.get("at") or 0) <= DRIFT_WINDOW_SECONDS:
+                        current["drift"] = {"on_track": d.get("on_track"), "note": d.get("note") or ""}
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
         return {
             "now": now,
             "current": current,
@@ -1102,6 +1118,66 @@ def current_block() -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+DRIFT_WINDOW_SECONDS = 15 * 60
+
+
+async def block_drift_check() -> dict[str, Any]:
+    """The killer feature: judge whether the user's ACTUAL recent activity matches
+    the CURRENT block's intention — reusing the observations we already collect, so
+    no other tool can do this. Cheap text-only LLM call, only when a block is
+    active; result cached in timeline_state so the menu bar reads it without an LLM
+    per poll. Not a nag — just an honest 'you said Gravity, you're in Slack chaos'."""
+    cb = current_block()
+    cur = cb.get("current")
+    if not cur:
+        return {"active": False}
+    now = time.time()
+    # Rate-limit the LLM: serve a cached verdict if it's under ~3 min old.
+    conn = _connect()
+    try:
+        raw = _state_str(conn, f"drift_{cur['id']}", "")
+    finally:
+        conn.close()
+    if raw:
+        try:
+            d = json.loads(raw)
+            if now - float(d.get("at") or 0) < 180:
+                return {"active": True, "on_track": d.get("on_track"),
+                        "note": d.get("note") or "", "cached": True}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    lo = max(float(cur["start_ts"]), now - DRIFT_WINDOW_SECONDS)
+    obs = observations(lo, now).get("observations", [])
+    if not obs:
+        return {"active": True, "on_track": None, "note": "nothing observed yet"}
+    detected = await resolve_summarizer()
+    if not detected:
+        return {"active": True, "on_track": None, "note": "no summarizer"}
+    recent = "; ".join(o["text"] for o in obs[-8:])[:1200]
+    intent = cur["label"] + (f" — {cur['intent']}" if cur.get("intent") else "")
+    prompt = (
+        "The user set this timeblock (their intention for right now):\n"
+        f'  "{intent}"\n\n'
+        "In the last few minutes they actually did:\n"
+        f"  {recent}\n\n"
+        "Is their actual activity consistent with the timeblock's intention? Be "
+        "lenient about tools (ANY app that serves the goal counts — IDE, browser, "
+        "docs, terminal), but honest about clear drift (social media, unrelated "
+        "browsing, a different project). Return ONLY JSON: "
+        '{"on_track": true|false, "note": "<= 8 words, e.g. \'deep in the repo\' or '
+        "'scrolling X, not Gravity'\"}."
+    )
+    res = await _summarize_run(prompt, backend=detected, timeout=30)
+    if not res.get("ok"):
+        return {"active": True, "on_track": None, "note": "check failed"}
+    parsed = _parse_json(res.get("text") or "")
+    on_track = bool(parsed.get("on_track")) if isinstance(parsed, dict) else None
+    note = ((parsed.get("note") if isinstance(parsed, dict) else "") or "")[:60]
+    _set_state_val(f"drift_{cur['id']}", json.dumps(
+        {"on_track": on_track, "note": note, "at": now, "block_id": cur["id"]}))
+    return {"active": True, "on_track": on_track, "note": note}
 
 
 def event_frames(event_id: int) -> dict[str, Any]:
