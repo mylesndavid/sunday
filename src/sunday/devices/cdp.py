@@ -84,6 +84,54 @@ def _provision_login(dest_user_data_dir: Path) -> None:
             shutil.copytree(s, dest_default / d, dirs_exist_ok=True)
 
 
+def cleanup_stale_profiles(max_age_days: float = 14.0, root: Path | None = None) -> dict:
+    """Garbage-collect one-off task browser profiles under ~/.sunday/chrome that
+    haven't been used in `max_age_days`. Each task (dentist-…, book-…, research…)
+    gets its own profile with copied logins/cache, and they pile up — this is
+    usually the biggest disposable chunk of ~/.sunday. NEVER removes:
+      - "default" (the primary shared profile),
+      - "app:*" (real Electron-app logins the user relies on),
+      - any profile with a live session right now.
+    "Last used" = newest mtime among the dir + its key session files, so an
+    actively-browsed profile isn't misjudged by a stale top-level dir mtime.
+    `root` is injectable for tests; defaults to ~/.sunday/chrome."""
+    root = root or (Path.home() / ".sunday" / "chrome")
+    if not root.exists():
+        return {"removed": 0, "freed_bytes": 0, "kept": 0}
+    cutoff = time.time() - max_age_days * 86400
+    removed, freed, kept = 0, 0, 0
+    for d in root.iterdir():
+        if not d.is_dir():
+            continue
+        name = d.name
+        if name == "default" or name.startswith("app:") or name in _SESSIONS:
+            kept += 1
+            continue
+        last_used = 0.0
+        for cand in (d, d / "Local State", d / "Default" / "Cookies", d / "Default" / "History"):
+            try:
+                last_used = max(last_used, cand.stat().st_mtime)
+            except OSError:
+                pass
+        if last_used >= cutoff:
+            kept += 1
+            continue
+        size = 0
+        for p in d.rglob("*"):
+            try:
+                if p.is_file():
+                    size += p.stat().st_size
+            except OSError:
+                pass
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+            removed += 1
+            freed += size
+        except Exception:  # noqa: BLE001
+            pass
+    return {"removed": removed, "freed_bytes": freed, "kept": kept}
+
+
 async def launch(
     profile_id: str = "default",
     start_url: str | None = None,
