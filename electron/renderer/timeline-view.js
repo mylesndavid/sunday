@@ -52,7 +52,12 @@ const PX_PER_MIN = HOUR_PX / 60;   // 2.8
 // sliver. Kept below the compact threshold so short cards still drop the meta row.
 const MIN_CARD_PX = 24;
 const COMPACT_MIN = 13;            // shorter than this → single-line card
-const WEEK_HOUR_PX = 64;
+// Week grid matched to Dayflow's WeekTimelineGridView: 111px/hour (≈1.85px/min)
+// across a fixed 4 AM→4 AM axis, 7 full-height day columns. The old 64px/hour was
+// ~1px/min — a 10-min card rendered as an 11px sliver. At 111 the same card is
+// ~19px and readable. Cards float at real times against the fixed-height column.
+const WEEK_HOUR_PX = 111;
+const WEEK_MIN_CARD_PX = 16;       // Dayflow's week card floor (narrower columns → smaller than the day's)
 
 export function init(config, refs) { cfg = config; els = refs; wire(); }
 export function isLoaded() { return loaded; }
@@ -170,14 +175,14 @@ async function startSummaryPolling() {
 // One activity block, positioned + sized by time. `originTs` is the 4 AM anchor
 // of its column; `hourPx` is the vertical scale. Returns {el, top} or null when
 // the event falls outside the window.
-function calCard(ev, originTs, hourPx) {
+function calCard(ev, originTs, hourPx, minPx = MIN_CARD_PX) {
   const ppm = hourPx / 60;
   let startMin = (ev.start_ts - originTs) / 60;
   const durMin = Math.max(0, (ev.end_ts - ev.start_ts) / 60);
   if (startMin > HOURS * 60) return null;
   if (startMin < 0) startMin = 0;
   const top = startMin * ppm + 1;
-  const height = Math.max(MIN_CARD_PX, durMin * ppm - 2);
+  const height = Math.max(minPx, durMin * ppm - 2);
   const compact = height < 34 || durMin < COMPACT_MIN;
 
   const card = document.createElement('button');
@@ -284,7 +289,7 @@ function renderWeek(list, win) {
   for (const ev of list) {
     const i = Math.floor((ev.start_ts - win.origin) / 86400);
     if (i < 0 || i > 6) continue;
-    const block = calCard(ev, lanes[i].origin, WEEK_HOUR_PX);
+    const block = calCard(ev, lanes[i].origin, WEEK_HOUR_PX, WEEK_MIN_CARD_PX);
     if (block) lanes[i].lane.appendChild(block.el);
   }
   main.appendChild(week);
