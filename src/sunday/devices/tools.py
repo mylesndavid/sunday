@@ -750,6 +750,9 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             return {"error": "'block_id' is required"}
         return await _timeline_proxy("timeline_block_clear", {"block_id": int(bid)}, ctx, args.get("device_id"))
 
+    async def _t_timeline_now(args, ctx):
+        return await _timeline_proxy("timeline_current_block", {}, ctx, args.get("device_id"))
+
     registry.register(Tool(
         name="timeline_search",
         description=(
@@ -866,6 +869,18 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "device_id": {"type": "string"},
         }, "required": ["block_id"]},
         run=_t_timeline_block_clear,
+    ))
+    registry.register(Tool(
+        name="timeline_now",
+        description=(
+            "What the user is supposed to be doing RIGHT NOW: the current timeblock "
+            "(+ minutes left), the next block, and a drift verdict — whether their "
+            "actual recent activity matches the block's intention (on_track + a short "
+            "note). Use for 'what am I meant to be doing', 'am I on track', 'am I "
+            "focused'. The drift read compares intention against the observed timeline."
+        ),
+        parameters={"type": "object", "properties": {"device_id": {"type": "string"}}},
+        run=_t_timeline_now,
     ))
     registry.register(Tool(
         name="device_run_command",

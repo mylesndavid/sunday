@@ -834,9 +834,12 @@ function startTrayStatus() {
     if (cur) {
       const left = _fmtMins(block.ends_in_s || 0);
       const short = (cur.label || 'Block').slice(0, 22);
-      tray.setTitle(` ◉ ${short} ${left}`);
+      const drift = cur.drift || {};
+      const warn = drift.on_track === false ? ' ⚠' : '';
+      tray.setTitle(` ◉ ${short} ${left}${warn}`);
       tray.setToolTip(
         `Now: ${cur.label} · ${left} left`
+        + (drift.note ? `\n${drift.on_track === false ? '⚠' : '✓'} ${drift.note}` : '')
         + (nxt ? `\nNext: ${nxt.label} at ${_clockOf(nxt.start_ts)}` : '')
         + (n > 0 ? `\n${n} agent${n > 1 ? 's' : ''} working` : '')
       );
