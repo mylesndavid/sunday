@@ -584,6 +584,49 @@ _SYNTH_PROMPT = (
 )
 
 
+# The synthesis prompt asks for a 10-min-minimum per card, but models don't always
+# comply — a stray 3-min card renders as an unreadable sliver. Enforce it in code.
+MIN_CARD_SECONDS = 10 * 60
+
+
+def _merge_short_cards(cards: list, obs: list) -> list:
+    """Deterministically enforce the 10-minute floor: fold any card shorter than
+    MIN_CARD_SECONDS into an adjacent card (previous by default, so it reads as a
+    continuation), repeating until none remain. The LAST card is exempt — it may
+    still be in progress. Returns an ordered list of [start_index, end_index, data]
+    referencing `obs`. This is what stops sub-10-min slivers regardless of what the
+    model returns."""
+    norm: list = []
+    for c in cards:
+        try:
+            si = max(0, min(len(obs) - 1, int(c.get("startIndex", 0))))
+            ei = max(si, min(len(obs) - 1, int(c.get("endIndex", si))))
+        except (TypeError, ValueError):
+            continue
+        norm.append([si, ei, c])
+    if not norm:
+        return []
+    norm.sort(key=lambda x: x[0])
+
+    def _dur(item: list) -> float:
+        return obs[item[1]]["end_ts"] - obs[item[0]]["start_ts"]
+
+    changed = True
+    while changed and len(norm) > 1:
+        changed = False
+        for idx in range(len(norm) - 1):   # never fold the final (in-progress) card
+            if _dur(norm[idx]) >= MIN_CARD_SECONDS:
+                continue
+            if idx > 0:                    # fold into the previous card
+                norm[idx - 1][1] = max(norm[idx - 1][1], norm[idx][1])
+            else:                          # first card: fold into the next
+                norm[idx + 1][0] = min(norm[idx + 1][0], norm[idx][0])
+            del norm[idx]
+            changed = True
+            break
+    return norm
+
+
 async def synthesize_recent(tool: str | None = None, model: str | None = None,
                             timeout: float = 120.0) -> dict[str, Any]:
     """Stage 2: (re)group the rolling window of recent observations into cards.
@@ -618,17 +661,16 @@ async def synthesize_recent(tool: str | None = None, model: str | None = None,
         cards = _parse_json(res.get("text") or "")
         if not isinstance(cards, list) or not cards:
             return {"available": True, "cards": 0}
+        # Fold sub-10-min cards into neighbors so nothing renders as a sliver.
+        merged = _merge_short_cards(cards, obs)
+        if not merged:
+            return {"available": True, "cards": 0}
 
         window_start = obs[0]["start_ts"]
         conn.execute("DELETE FROM timeline_events WHERE end_ts >= ?", (window_start,))
         made = 0
         now = time.time()
-        for c in cards:
-            try:
-                si = max(0, min(len(obs) - 1, int(c.get("startIndex", 0))))
-                ei = max(si, min(len(obs) - 1, int(c.get("endIndex", si))))
-            except (TypeError, ValueError):
-                continue
+        for si, ei, c in merged:
             start_ts, end_ts = obs[si]["start_ts"], obs[ei]["end_ts"]
             cat = (c.get("category") or "other").strip().lower()
             if cat not in _TYPE_LABEL:
