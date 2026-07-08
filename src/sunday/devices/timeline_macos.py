@@ -914,32 +914,43 @@ def stop() -> dict[str, Any]:
 
 
 def reprocess() -> dict[str, Any]:
-    """Rebuild the timeline from scratch: drop the DERIVED data (observations +
-    cards) and rewind both pipeline cursors so process_pending re-reads every
-    captured frame. The raw frames (the evidence) are untouched — only the
-    interpretation is rebuilt, so this re-transcribes AND re-synthesizes under the
-    current prompts (e.g. the 10-min-minimum card rule). Use to un-strand frames a
-    pipeline bug dropped, or to re-merge existing cards after a prompt change. The
-    background processor picks the backlog straight back up; cards refill on their
-    own. Costs a full re-summarize pass, so it's an explicit user action."""
+    """Re-derive cards from what we STILL HAVE — never a destructive from-frames
+    wipe. Cards are the permanent record; frames are pruned after RETENTION_DAYS,
+    so deleting cards to "rebuild from frames" can destroy history whose source
+    frames are already gone (it did, once). So:
+
+    - HARD GUARD: if there are no observations to rebuild from, do nothing. Cards
+      stay put. (This is the check that would have prevented wiping the timeline.)
+    - Otherwise only re-synthesize the span COVERED BY EXISTING OBSERVATIONS:
+      clear cards from the first surviving observation onward and rewind the
+      synthesis cursor so they re-group under the current prompts. Older cards,
+      whose frames + observations are long pruned, are left untouched.
+    - Never resets the transcription cursor — we don't try to re-read frames that
+      may no longer exist."""
     conn = _connect()
     try:
         obs = conn.execute("SELECT COUNT(*) FROM timeline_observations").fetchone()[0]
         cards = conn.execute("SELECT COUNT(*) FROM timeline_events").fetchone()[0]
-        frames = conn.execute("SELECT COUNT(*) FROM frames").fetchone()[0]
-        conn.execute("DELETE FROM timeline_observations")
-        conn.execute("DELETE FROM timeline_events")
-        _state_set(conn, "transcribed_through_ts", 0.0)
+        if obs == 0:
+            # Nothing to rebuild FROM. Refuse to touch the cards — they may be the
+            # only surviving record (frames pruned). Fail loud, change nothing.
+            log.warning("timeline reprocess refused: no observations to rebuild from",
+                        cards=cards)
+            return {"ok": False, "skipped": True,
+                    "reason": "No observations to rebuild from — cards left untouched "
+                              "to avoid destroying history whose frames are already pruned.",
+                    "cards": cards}
+        first_obs = conn.execute(
+            "SELECT MIN(start_ts) FROM timeline_observations").fetchone()[0]
+        # Re-synthesize only the observation-covered span; preserve older cards.
+        conn.execute("DELETE FROM timeline_events WHERE end_ts >= ?", (first_obs,))
         _state_set(conn, "cards_frozen_through_ts", 0.0)
-        # Clear any stale failure marker so the UI shows a clean rebuild, not an
-        # old error, while the fresh pass runs.
         _state_set(conn, "last_error", "")
         _state_set(conn, "last_error_at", 0.0)
         conn.commit()
-        log.info("timeline reprocess: cleared derived data",
-                 cleared_observations=obs, cleared_cards=cards, frames=frames)
-        return {"ok": True, "cleared_observations": obs, "cleared_cards": cards,
-                "frames": frames, "pending_frames": _pending_frames_count()}
+        log.info("timeline reprocess: re-synthesizing from existing observations",
+                 observations=obs, cleared_cards_from=first_obs, kept_older_cards=True)
+        return {"ok": True, "observations": obs, "resynthesize_from": first_obs}
     finally:
         conn.close()
 
