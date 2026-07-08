@@ -104,7 +104,7 @@ async function loadRange(m, opts = {}) {
     if (data.error) return showState(data.error);
     events = (data.events || []).slice().sort((a, b) => a.start_ts - b.start_ts);
     if (!events.length) return silent ? undefined : showEmpty();
-    if (m === 'week') renderWeek(events, win); else renderDay(events, win);
+    if (m === 'week') renderWeek(events, win, silent); else renderDay(events, win, silent);
     if (!silent) startSummaryPolling();
   } catch (err) {
     console.warn('timeline load failed', err);
@@ -173,16 +173,18 @@ async function startSummaryPolling() {
 // ─── proportional calendar rendering ─────────────────────────────────────
 
 // One activity block, positioned + sized by time. `originTs` is the 4 AM anchor
-// of its column; `hourPx` is the vertical scale. Returns {el, top} or null when
-// the event falls outside the window.
-function calCard(ev, originTs, hourPx, minPx = MIN_CARD_PX) {
+// of its column; `hourPx` is the vertical scale. `maxHeightPx` caps the height so
+// a floored short card can't bleed into the next one (the week-overlap bug).
+// Returns {el, top} or null when the event falls outside the window.
+function calCard(ev, originTs, hourPx, minPx = MIN_CARD_PX, maxHeightPx = Infinity) {
   const ppm = hourPx / 60;
   let startMin = (ev.start_ts - originTs) / 60;
   const durMin = Math.max(0, (ev.end_ts - ev.start_ts) / 60);
   if (startMin > HOURS * 60) return null;
   if (startMin < 0) startMin = 0;
   const top = startMin * ppm + 1;
-  const height = Math.max(minPx, durMin * ppm - 2);
+  let height = Math.max(minPx, durMin * ppm - 2);
+  if (height > maxHeightPx) height = Math.max(8, maxHeightPx);   // never overlap the next card
   const compact = height < 34 || durMin < COMPACT_MIN;
 
   const card = document.createElement('button');
@@ -231,23 +233,49 @@ function hourLines(hourPx, into, inset) {
   }
 }
 
-function renderDay(list, win) {
+// px position of the "now" line within a column anchored at originTs — or null
+// when now falls outside this column's 24h window (e.g. viewing yesterday).
+function nowLineTop(originTs, hourPx) {
+  const min = (Date.now() / 1000 - originTs) / 60;
+  if (min < 0 || min > HOURS * 60) return null;
+  return min * (hourPx / 60);
+}
+function makeNowLine(topPx, full) {
+  const el = document.createElement('div');
+  el.className = 'tl-now' + (full ? ' full' : '');
+  el.style.top = topPx + 'px';
+  return el;
+}
+
+function renderDay(list, win, silent = false) {
   els.empty.hidden = true; els.main.hidden = false;
-  const main = els.main; main.innerHTML = '';
+  const main = els.main;
+  const prevScroll = main.scrollTop;
+  main.innerHTML = '';
   const cal = document.createElement('div');
   cal.className = 'tl-cal';
   cal.style.height = (HOURS * HOUR_PX) + 'px';
   hourLabels(HOUR_PX, cal);
   hourLines(HOUR_PX, cal);
+  const ppm = HOUR_PX / 60;
   let firstTop = Infinity;
-  for (const ev of list) {
-    const block = calCard(ev, win.origin, HOUR_PX);
+  for (let i = 0; i < list.length; i++) {
+    const ev = list[i];
+    // Cap height at the gap to the next card's START so a floored short card
+    // can't render over the next one.
+    const gap = (i + 1 < list.length) ? ((list[i + 1].start_ts - ev.start_ts) / 60) * ppm - 1 : Infinity;
+    const block = calCard(ev, win.origin, HOUR_PX, MIN_CARD_PX, gap);
     if (block) { cal.appendChild(block.el); firstTop = Math.min(firstTop, block.top); }
   }
+  const nowTop = nowLineTop(win.origin, HOUR_PX);
+  if (nowTop != null) cal.appendChild(makeNowLine(nowTop, false));
   main.appendChild(cal);
-  if (firstTop < Infinity) main.scrollTop = Math.max(0, firstTop - 56);
-  // Intention layer: paint timeblocks as translucent bands behind the cards.
   paintBlocks(cal, win.origin, win.origin + HOURS * 3600, HOUR_PX);
+  if (silent) { main.scrollTop = prevScroll; return; }   // don't yank scroll on background refresh
+  // Open on "now" when this day includes it, else the first card, else ~8 AM.
+  const target = nowTop != null ? nowTop - main.clientHeight * 0.4
+    : (firstTop < Infinity ? firstTop - 56 : (8 - DAY_START_HOUR) * HOUR_PX);
+  main.scrollTop = Math.max(0, target);
 }
 
 // Timeblocks rendered as translucent bands positioned by time — the "intention"
@@ -327,9 +355,11 @@ function openBlockDetail(b) {
   d.appendChild(actions);
 }
 
-function renderWeek(list, win) {
+function renderWeek(list, win, silent = false) {
   els.empty.hidden = true; els.main.hidden = false;
-  const main = els.main; main.innerHTML = '';
+  const main = els.main;
+  const prevScroll = main.scrollTop;
+  main.innerHTML = '';
   const week = document.createElement('div');
   week.className = 'tl-week';
 
@@ -365,14 +395,32 @@ function renderWeek(list, win) {
   body.appendChild(grid);
   week.appendChild(body);
 
+  // Bucket events into day columns, then lay out each column with the same
+  // gap-clamp as the day view so cards can't overlap within a lane.
+  const ppm = WEEK_HOUR_PX / 60;
+  const byCol = [[], [], [], [], [], [], []];
   for (const ev of list) {
     const i = Math.floor((ev.start_ts - win.origin) / 86400);
-    if (i < 0 || i > 6) continue;
-    const block = calCard(ev, lanes[i].origin, WEEK_HOUR_PX, WEEK_MIN_CARD_PX);
-    if (block) lanes[i].lane.appendChild(block.el);
+    if (i >= 0 && i <= 6) byCol[i].push(ev);
   }
+  for (let i = 0; i < 7; i++) {
+    const col = byCol[i];
+    for (let j = 0; j < col.length; j++) {
+      const ev = col[j];
+      const gap = (j + 1 < col.length) ? ((col[j + 1].start_ts - ev.start_ts) / 60) * ppm - 1 : Infinity;
+      const block = calCard(ev, lanes[i].origin, WEEK_HOUR_PX, WEEK_MIN_CARD_PX, gap);
+      if (block) lanes[i].lane.appendChild(block.el);
+    }
+  }
+  // "Now" line across the grid at today's current time (dot on the today column).
+  const todayOrigin = win.origin + 6 * 86400;   // last column is today (4 AM anchor)
+  const nowTop = nowLineTop(todayOrigin, WEEK_HOUR_PX);
+  if (nowTop != null) grid.appendChild(makeNowLine(nowTop, true));
+
   main.appendChild(week);
-  main.scrollTop = Math.max(0, (8 - DAY_START_HOUR) * WEEK_HOUR_PX);   // ~8 AM into view
+  if (silent) { main.scrollTop = prevScroll; return; }
+  main.scrollTop = Math.max(0, nowTop != null ? nowTop - main.clientHeight * 0.4
+    : (8 - DAY_START_HOUR) * WEEK_HOUR_PX);
 }
 
 // Search spans arbitrary time, so it stays a compact list rather than a calendar.
