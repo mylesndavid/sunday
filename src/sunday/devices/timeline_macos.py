@@ -167,6 +167,20 @@ def _connect() -> sqlite3.Connection:
             key   TEXT PRIMARY KEY,
             value TEXT
         );
+        CREATE TABLE IF NOT EXISTS timeline_blocks (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            start_ts      REAL NOT NULL,
+            end_ts        REAL NOT NULL,
+            label         TEXT NOT NULL,
+            intent        TEXT,               -- optional: what/why, for the drift check
+            gcal_mode     TEXT DEFAULT 'none',-- none | busy | event
+            gcal_event_id TEXT,               -- set when synced to Google Calendar
+            status        TEXT DEFAULT 'planned', -- planned | done | skipped
+            created_at    REAL NOT NULL,
+            updated_at    REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tl_blocks_start ON timeline_blocks(start_ts);
+        CREATE INDEX IF NOT EXISTS idx_tl_blocks_end   ON timeline_blocks(end_ts);
         """
     )
     rewind_macos._ensure_frame_columns(conn)
@@ -979,6 +993,115 @@ def search(q: str, from_ts: float | None = None, to_ts: float | None = None,
     if not (q or "").strip():
         return []
     return events(from_ts=from_ts, to_ts=to_ts, limit=limit, q=q.strip())
+
+
+# ─── timeblocks: intentions (vs cards, which are reality) ──────────────────
+# A block is a commitment to YOURSELF — "2–4: Gravity deep work". Private/local by
+# default (gcal_mode='none'); optionally mirrored to Google Calendar as busy or a
+# full event. The menu bar shows the current block as a live contract, and later
+# the drift check compares a block's intent against the observed cards/observations.
+
+_BLOCK_COLS = ["id", "start_ts", "end_ts", "label", "intent", "gcal_mode",
+               "gcal_event_id", "status", "created_at", "updated_at"]
+_BLOCK_MODES = ("none", "busy", "event")
+
+
+def _block_row(conn: sqlite3.Connection, block_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        f"SELECT {', '.join(_BLOCK_COLS)} FROM timeline_blocks WHERE id = ?", (int(block_id),)
+    ).fetchone()
+    return dict(zip(_BLOCK_COLS, row)) if row else None
+
+
+def block_set(start_ts: float, end_ts: float, label: str, intent: str | None = None,
+              gcal_mode: str = "none", block_id: int | None = None) -> dict[str, Any]:
+    """Create or (if block_id given) update a timeblock. Returns {"block": {...}}."""
+    label = (label or "").strip()
+    if not label:
+        return {"error": "'label' is required"}
+    try:
+        start_ts, end_ts = float(start_ts), float(end_ts)
+    except (TypeError, ValueError):
+        return {"error": "start_ts/end_ts must be unix seconds"}
+    if end_ts <= start_ts:
+        return {"error": "end_ts must be after start_ts"}
+    gcal_mode = gcal_mode if gcal_mode in _BLOCK_MODES else "none"
+    intent = (intent or "").strip() or None
+    now = time.time()
+    conn = _connect()
+    try:
+        if block_id:
+            if not _block_row(conn, block_id):
+                return {"error": f"no block #{block_id}"}
+            conn.execute(
+                "UPDATE timeline_blocks SET start_ts=?, end_ts=?, label=?, intent=?, "
+                "gcal_mode=?, updated_at=? WHERE id=?",
+                (start_ts, end_ts, label, intent, gcal_mode, now, int(block_id)),
+            )
+            conn.commit()
+            return {"block": _block_row(conn, block_id)}
+        cur = conn.execute(
+            "INSERT INTO timeline_blocks (start_ts, end_ts, label, intent, gcal_mode, "
+            "status, created_at, updated_at) VALUES (?,?,?,?,?, 'planned', ?, ?)",
+            (start_ts, end_ts, label, intent, gcal_mode, now, now),
+        )
+        conn.commit()
+        return {"block": _block_row(conn, cur.lastrowid)}
+    finally:
+        conn.close()
+
+
+def blocks(from_ts: float, to_ts: float) -> dict[str, Any]:
+    """All blocks overlapping [from_ts, to_ts), oldest first."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            f"SELECT {', '.join(_BLOCK_COLS)} FROM timeline_blocks "
+            "WHERE end_ts > ? AND start_ts < ? ORDER BY start_ts ASC",
+            (float(from_ts), float(to_ts)),
+        ).fetchall()
+        return {"blocks": [dict(zip(_BLOCK_COLS, r)) for r in rows]}
+    finally:
+        conn.close()
+
+
+def block_clear(block_id: int) -> dict[str, Any]:
+    """Delete a block (and its calendar mirror is the caller's concern)."""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM timeline_blocks WHERE id = ?", (int(block_id),))
+        conn.commit()
+        return {"ok": True, "id": int(block_id)}
+    finally:
+        conn.close()
+
+
+def current_block() -> dict[str, Any]:
+    """The block covering now (if any) + the next upcoming block — the menu bar's
+    live contract. Includes seconds remaining / until for the countdown."""
+    now = time.time()
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            f"SELECT {', '.join(_BLOCK_COLS)} FROM timeline_blocks "
+            "WHERE start_ts <= ? AND end_ts > ? ORDER BY start_ts DESC LIMIT 1",
+            (now, now),
+        ).fetchone()
+        nxt = conn.execute(
+            f"SELECT {', '.join(_BLOCK_COLS)} FROM timeline_blocks "
+            "WHERE start_ts > ? ORDER BY start_ts ASC LIMIT 1", (now,),
+        ).fetchone()
+        current = dict(zip(_BLOCK_COLS, cur)) if cur else None
+        nextb = dict(zip(_BLOCK_COLS, nxt)) if nxt else None
+        return {
+            "now": now,
+            "current": current,
+            "next": nextb,
+            "ends_in_s": (current["end_ts"] - now) if current else None,
+            "next_in_s": (nextb["start_ts"] - now) if nextb else None,
+        }
+    finally:
+        conn.close()
 
 
 def event_frames(event_id: int) -> dict[str, Any]:

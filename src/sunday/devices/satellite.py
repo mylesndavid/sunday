@@ -374,6 +374,26 @@ async def _h_timeline_reprocess(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.reprocess()
 
 
+async def _h_timeline_block_set(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.block_set(
+        params.get("start_ts"), params.get("end_ts"), params.get("label"),
+        intent=params.get("intent"), gcal_mode=params.get("gcal_mode") or "none",
+        block_id=params.get("block_id"),
+    )
+
+
+async def _h_timeline_blocks(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.blocks(params.get("from_ts") or 0, params.get("to_ts") or 0)
+
+
+async def _h_timeline_block_clear(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.block_clear(params.get("block_id") or 0)
+
+
+async def _h_timeline_current_block(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.current_block()
+
+
 async def _h_timeline_period_stats(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.period_stats(
         float(params.get("period_start") or 0), float(params.get("period_end") or 0),
@@ -457,6 +477,10 @@ HANDLERS = {
     "timeline_start":         _h_timeline_start,
     "timeline_stop":          _h_timeline_stop,
     "timeline_reprocess":     _h_timeline_reprocess,
+    "timeline_block_set":     _h_timeline_block_set,
+    "timeline_blocks":        _h_timeline_blocks,
+    "timeline_block_clear":   _h_timeline_block_clear,
+    "timeline_current_block": _h_timeline_current_block,
     "timeline_period_stats":  _h_timeline_period_stats,
     "timeline_apply_wrapped": _h_timeline_apply_wrapped,
     "timeline_get_wrapped":   _h_timeline_get_wrapped,
