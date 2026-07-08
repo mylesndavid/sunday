@@ -598,13 +598,13 @@ _SYNTH_PROMPT = (
 MIN_CARD_SECONDS = 10 * 60
 
 
-def _merge_short_cards(cards: list, obs: list) -> list:
+def _merge_short_cards(cards: list, obs: list, exempt_last: bool = True) -> list:
     """Deterministically enforce the 10-minute floor: fold any card shorter than
     MIN_CARD_SECONDS into an adjacent card (previous by default, so it reads as a
-    continuation), repeating until none remain. The LAST card is exempt — it may
-    still be in progress. Returns an ordered list of [start_index, end_index, data]
-    referencing `obs`. This is what stops sub-10-min slivers regardless of what the
-    model returns."""
+    continuation), repeating until none remain. `exempt_last` leaves the final card
+    alone — right for the live tail (still in progress), wrong for a settled
+    historical window (every card there should meet the floor). Returns an ordered
+    list of [start_index, end_index, data] referencing `obs`."""
     norm: list = []
     for c in cards:
         try:
@@ -623,7 +623,9 @@ def _merge_short_cards(cards: list, obs: list) -> list:
     changed = True
     while changed and len(norm) > 1:
         changed = False
-        for idx in range(len(norm) - 1):   # never fold the final (in-progress) card
+        for idx in range(len(norm)):
+            if exempt_last and idx == len(norm) - 1:
+                continue                   # keep the in-progress tail card as-is
             if _dur(norm[idx]) >= MIN_CARD_SECONDS:
                 continue
             if idx > 0:                    # fold into the previous card
@@ -636,47 +638,55 @@ def _merge_short_cards(cards: list, obs: list) -> list:
     return norm
 
 
-async def synthesize_recent(tool: str | None = None, model: str | None = None,
-                            timeout: float = 120.0) -> dict[str, Any]:
-    """Stage 2: (re)group the rolling window of recent observations into cards.
-    Idempotent for the mutable tail — deletes the window's cards and rebuilds — so
-    a session spanning several transcription batches lands as ONE merged card."""
-    detected = await resolve_summarizer()
+def _set_state_val(key: str, value: float) -> None:
     conn = _connect()
     try:
-        if not detected:
-            return {"available": False, "cards": 0}
-        floor = time.time() - SYNTH_WINDOW_SECONDS
-        frozen = _state_get(conn, "cards_frozen_through_ts", 0.0)
-        lo = max(floor, frozen)
+        _state_set(conn, key, value)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def _synthesize_one_window(win_start: float, win_end: float, backend: str,
+                                 freeze: bool, timeout: float) -> int:
+    """Group the observations in [win_start, win_end) into cards. `freeze` means
+    this is a settled historical window: advance the cursor past it and don't
+    exempt its last card. The model call happens without a DB handle held open."""
+    conn = _connect()
+    try:
         rows = conn.execute(
             "SELECT start_ts, end_ts, observation FROM timeline_observations "
-            "WHERE end_ts > ? ORDER BY start_ts ASC", (lo,),
+            "WHERE end_ts > ? AND start_ts < ? ORDER BY start_ts ASC",
+            (win_start, win_end),
         ).fetchall()
-        if not rows:
-            return {"available": True, "cards": 0}
-        obs = [{"start_ts": r[0], "end_ts": r[1], "text": r[2]} for r in rows]
-        clocks = ", ".join(f"{i}:{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}"
-                           for i, o in enumerate(obs))
-        obs_txt = "\n".join(
-            f"{i}. [{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}] {o['text']}"
-            for i, o in enumerate(obs)
-        )
-        prompt = _SYNTH_PROMPT.format(last=len(obs) - 1, clocks=clocks, obs=obs_txt)
-        res = await _summarize_run(prompt, backend=detected, timeout=timeout)
-        if not res.get("ok"):
-            log.warning("timeline synthesize failed", error=res.get("error"))
-            return {"available": True, "cards": 0, "error": res.get("error")}
-        cards = _parse_json(res.get("text") or "")
-        if not isinstance(cards, list) or not cards:
-            return {"available": True, "cards": 0}
-        # Fold sub-10-min cards into neighbors so nothing renders as a sliver.
-        merged = _merge_short_cards(cards, obs)
-        if not merged:
-            return {"available": True, "cards": 0}
+    finally:
+        conn.close()
+    if not rows:
+        if freeze:
+            _set_state_val("cards_frozen_through_ts", win_end)   # skip an empty settled gap
+        return 0
 
-        window_start = obs[0]["start_ts"]
-        conn.execute("DELETE FROM timeline_events WHERE end_ts >= ?", (window_start,))
+    obs = [{"start_ts": r[0], "end_ts": r[1], "text": r[2]} for r in rows]
+    clocks = ", ".join(f"{i}:{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}"
+                       for i, o in enumerate(obs))
+    obs_txt = "\n".join(
+        f"{i}. [{time.strftime('%-I:%M %p', time.localtime(o['start_ts']))}] {o['text']}"
+        for i, o in enumerate(obs)
+    )
+    prompt = _SYNTH_PROMPT.format(last=len(obs) - 1, clocks=clocks, obs=obs_txt)
+    res = await _summarize_run(prompt, backend=backend, timeout=timeout)
+    if not res.get("ok"):
+        # Transient (timeout / API). Do NOT freeze — retry this window next pass.
+        log.warning("timeline synthesize failed", error=res.get("error"), win_start=int(win_start))
+        return 0
+    cards = _parse_json(res.get("text") or "")
+    merged = _merge_short_cards(cards, obs, exempt_last=not freeze) if isinstance(cards, list) else []
+
+    conn = _connect()
+    try:
+        # Only clear cards that START inside this window — never disturb prior windows'.
+        conn.execute("DELETE FROM timeline_events WHERE start_ts >= ? AND start_ts < ?",
+                     (win_start, win_end))
         made = 0
         now = time.time()
         for si, ei, c in merged:
@@ -705,12 +715,71 @@ async def synthesize_recent(tool: str | None = None, model: str | None = None,
                  primary or "", _importance(cat, end_ts - start_ts), 1, now, now),
             )
             made += 1
-        _state_set(conn, "cards_frozen_through_ts", max(frozen, floor))
+        # Freeze on model SUCCESS even if it yielded no cards, so a content-empty
+        # window can't block history drainage forever (only transient failures retry).
+        if freeze:
+            _state_set(conn, "cards_frozen_through_ts", win_end)
         conn.commit()
-        log.info("timeline synthesized", cards=made, from_obs=len(obs))
-        return {"available": True, "cards": made}
     finally:
         conn.close()
+    if made:
+        log.info("timeline synthesized window", cards=made, obs=len(obs),
+                 win_start=int(win_start), frozen=freeze)
+    return made
+
+
+async def synthesize_recent(tool: str | None = None, model: str | None = None,
+                            timeout: float = 120.0) -> dict[str, Any]:
+    """Stage 2: group observations into cards, draining ALL un-synthesized history
+    window by window — not just the last hour (the bug that left big backlogs at a
+    handful of cards). Settled windows are frozen as they complete so the cursor
+    rolls forward; the live tail stays re-groupable so a session spanning several
+    transcription batches still lands as one merged card."""
+    detected = await resolve_summarizer()
+    if not detected:
+        return {"available": False, "cards": 0}
+    started = time.time()
+    made_total = 0
+    windows = 0
+    MAX_WINDOWS = 40   # backstop: bound work per call, the loop drains over calls
+    while time.time() - started < timeout and windows < MAX_WINDOWS:
+        conn = _connect()
+        try:
+            cursor = _state_get(conn, "cards_frozen_through_ts", 0.0)
+            first = conn.execute(
+                "SELECT MIN(start_ts) FROM timeline_observations WHERE end_ts > ?", (cursor,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if first is None:
+            break                          # all observations accounted for
+        now = time.time()
+        win_start = max(cursor, first)
+        if win_start + SYNTH_WINDOW_SECONDS <= now - BATCH_SETTLE_SECONDS:
+            win_end = win_start + SYNTH_WINDOW_SECONDS   # settled historical window
+            freeze = True
+        else:
+            win_end = now                                 # the live, still-growing tail
+            freeze = False
+        remaining = timeout - (time.time() - started)
+        made = await _synthesize_one_window(
+            win_start, win_end, detected, freeze,
+            timeout=max(20.0, min(chat_cli.TIMEOUT_SECONDS, remaining)),
+        )
+        made_total += made
+        windows += 1
+        if not freeze:
+            break                          # reached the live tail; nothing settled left
+        # If a settled window didn't advance the cursor, it hit a transient failure
+        # — stop this pass rather than hammering the same window; retry next call.
+        conn = _connect()
+        try:
+            moved = _state_get(conn, "cards_frozen_through_ts", 0.0) > cursor
+        finally:
+            conn.close()
+        if not moved:
+            break
+    return {"available": True, "cards": made_total, "windows": windows}
 
 
 def _pending_frames_count() -> int:
