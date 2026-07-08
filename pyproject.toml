@@ -19,6 +19,9 @@ dependencies = [
   "structlog>=24.1",
   "pyyaml>=6.0",
   "sqlite-vec>=0.1",
+  # Bundles a static ffmpeg binary so per-card timelapse encoding works on any
+  # user's Mac without a system install (falls back to PATH ffmpeg if present).
+  "imageio-ffmpeg>=0.4",
 ]
 
 [project.optional-dependencies]

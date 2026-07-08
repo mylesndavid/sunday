@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('sunday', {
   updateRestart: () => ipcRenderer.invoke('sunday:update-restart'),
   onUpdateState: (h) => ipcRenderer.on('sunday:update-state', (_evt, s) => h(s)),
   rewindImage: (p) => ipcRenderer.invoke('sunday:rewind-image', p),
+  timelineVideo: (p) => ipcRenderer.invoke('sunday:timeline-video', p),
   openExternal: (url) => ipcRenderer.invoke('sunday:open-external', url),
   revealExtension: () => ipcRenderer.invoke('sunday:reveal-extension'),
   openChromeExtensions: () => ipcRenderer.invoke('sunday:open-chrome-extensions'),
