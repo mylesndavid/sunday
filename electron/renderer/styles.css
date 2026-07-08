@@ -380,7 +380,13 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-hourlabel { position: absolute; left: 0; width: 48px; text-align: right; transform: translateY(-6px); font-size: 10.5px; color: var(--text-3); pointer-events: none; }
 .tl-cal-card { position: absolute; left: 66px; right: 8px; z-index: 1; display: flex; flex-direction: column; justify-content: center; gap: 1px; overflow: hidden; text-align: left; padding: 4px 12px; background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--cat, var(--accent)); border-radius: 6px; cursor: pointer; transition: box-shadow .12s ease, transform .1s ease; }
 /* Timeblock band — the intention layer behind the activity cards. */
-.tl-block-band { position: absolute; left: 60px; right: 4px; z-index: 0; pointer-events: none; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--accent) 9%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent); }
+.tl-block-band { position: absolute; left: 60px; right: 4px; z-index: 0; cursor: pointer; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--accent) 9%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent); transition: background .12s ease, border-color .12s ease; }
+.tl-block-band:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+.tl-d-actions { margin-top: 20px; display: flex; gap: 8px; }
+.tl-d-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); font: 500 13px/1 inherit; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
+.tl-d-btn:hover { background: var(--surface-2); }
+.tl-d-btn.danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 40%, transparent); }
+.tl-d-btn.danger:hover { background: color-mix(in srgb, var(--error) 12%, transparent); }
 .tl-block-label { position: absolute; top: 3px; left: 9px; font: 600 10px/1 var(--font-mono, ui-monospace, monospace); letter-spacing: .05em; text-transform: uppercase; color: color-mix(in srgb, var(--accent) 85%, var(--text)); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 18px); }
 .tl-cal-card.compact { flex-direction: row; align-items: center; gap: 8px; padding: 0 12px; }
 .tl-cal-card:hover { box-shadow: var(--shadow-2); transform: scale(1.004); z-index: 3; }
