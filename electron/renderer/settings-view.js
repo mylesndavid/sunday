@@ -1794,24 +1794,24 @@ async function timelineCatchup() {
   catchupRunning = false; if (btn) btn.textContent = 'Catch up now';
   loadTimeline();
 }
-// Nuke-and-repave: wipe derived observations + cards, rewind the cursors, and let
-// the satellite's background processor re-read every frame under the current
-// prompts. Rebuilds ALL days (fixes short/smushed cards from before the 10-min
-// rule, and un-strands frames an earlier pipeline bug dropped). Destructive to the
-// interpretation only — screenshots are untouched — so it's an explicit action.
+// Re-derive cards from what still exists. This is NON-destructive: the daemon
+// refuses to touch cards when there's nothing (no observations) to rebuild them
+// from — cards are the permanent record, frames prune after a few days. So this
+// re-groups surviving observations under the current prompts (e.g. the 10-min
+// rule); it can't resurrect days whose frames are already pruned.
 async function timelineRebuild() {
   const btn = $('#set-timeline-rebuild');
   const note = $('#set-timeline-rebuild-note');
   const ok = window.confirm(
-    'Rebuild your entire timeline?\n\n'
-    + 'Sunday will re-read every captured frame and regroup ALL your activity '
-    + 'cards under the latest rules (including the 10-minute minimum, so cards '
-    + 'aren’t tiny). Your screenshots are kept — only the cards are rebuilt. '
-    + 'This covers every day and can take a few minutes.'
+    'Rebuild your timeline cards?\n\n'
+    + 'Sunday re-groups your activity from the observations it still has, under '
+    + 'the latest rules (including the 10-minute minimum, so cards aren’t tiny). '
+    + 'Your screenshots are kept. Note: it can only rebuild recent activity — days '
+    + 'whose frames have already been pruned can’t be brought back.'
   );
   if (!ok) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
-  if (note) note.textContent = 'Clearing old cards…';
+  if (note) note.textContent = 'Rebuilding…';
   let s;
   try {
     s = await (await fetch(`${DAEMON_HTTP}/v1/timeline/reprocess`, { method: 'POST' })).json();
@@ -1821,14 +1821,20 @@ async function timelineRebuild() {
     if (btn) { btn.disabled = false; btn.textContent = 'Rebuild timeline'; }
     return;
   }
-  const frames = s.frames || 0;
-  if (note) {
-    note.textContent = `Cleared ${s.cleared_cards || 0} old card${(s.cleared_cards || 0) !== 1 ? 's' : ''}. `
-      + `Re-reading ${frames} frame${frames !== 1 ? 's' : ''} — cards refill as it goes.`;
-  }
   if (btn) { btn.disabled = false; btn.textContent = 'Rebuild timeline'; }
+  if (s.skipped) {
+    // Guard fired: nothing to rebuild from. Be honest rather than showing "0".
+    if (note) note.textContent = s.reason
+      || 'Nothing to rebuild — no observations yet. New activity will build fresh from here.';
+    loadTimeline();
+    return;
+  }
+  const obs = s.observations || 0;
+  if (note) {
+    note.textContent = `Re-grouping ${obs} observation${obs !== 1 ? 's' : ''} into cards — refills as it goes.`;
+  }
   loadTimeline();          // refresh status + reveal the catch-up row so they can push it
-  timelineCatchup();       // actively drain the backlog now (else the background loop does it slowly)
+  timelineCatchup();       // actively drain now (else the background loop does it slowly)
 }
 function timelineStatusText(s) {
   const frames = s.total || 0, cards = s.cards || 0;
