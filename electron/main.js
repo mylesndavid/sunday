@@ -700,6 +700,21 @@ ipcMain.handle('sunday:rewind-image', async (_evt, p) => {
   }
 });
 
+// Read a card's baked timelapse MP4 and hand it back as a data URL for the
+// detail-pane <video>. Same rewind-dir sandbox as frame images; the clips live
+// under ~/.sunday/rewind/evidence and persist after their source frames prune.
+ipcMain.handle('sunday:timeline-video', async (_evt, p) => {
+  try {
+    const dir = path.join(require('node:os').homedir(), '.sunday', 'rewind');
+    const resolved = path.resolve(String(p || ''));
+    if (!resolved.startsWith(dir) || !resolved.endsWith('.mp4')) return null;
+    const buf = fs.readFileSync(resolved);
+    return `data:video/mp4;base64,${buf.toString('base64')}`;
+  } catch {
+    return null;
+  }
+});
+
 // Open the Accessibility pane. Calling isTrustedAccessibilityClient(true)
 // also asks macOS to register Sunday in the list with the system prompt.
 // Status is read separately via sunday:permissions-status — never inferred

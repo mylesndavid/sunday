@@ -390,19 +390,36 @@ async function openDetail(ev) {
     d.appendChild(ul);
   }
 
-  // Evidence: the raw frames, scrubbable (demoted from the old main view).
+  // Evidence: prefer the card's baked timelapse clip — it's permanent and
+  // survives frame pruning. Fall back to the live frame scrubber for older cards
+  // (or ones still being baked) that don't have a clip yet.
   const eh = document.createElement('h3'); eh.className = 'tl-d-h'; eh.textContent = 'Evidence';
   d.appendChild(eh);
   const stage = document.createElement('div');
   stage.className = 'tl-evidence';
-  stage.innerHTML = `
-    <img class="tl-ev-img" id="tl-ev-img" alt="screenshot" hidden>
-    <div class="tl-ev-controls">
-      <input type="range" class="tl-ev-slider" id="tl-ev-slider" min="0" max="0" value="0">
-      <span class="tl-ev-time mono" id="tl-ev-time">—</span>
-    </div>`;
-  d.appendChild(stage);
-  loadEvidence(ev.id, stage);
+  if (ev.evidence_path) {
+    stage.innerHTML = `<video class="tl-ev-video" id="tl-ev-video" controls loop muted playsinline preload="metadata"></video>`;
+    d.appendChild(stage);
+    loadClip(ev.evidence_path, stage);
+  } else {
+    stage.innerHTML = `
+      <img class="tl-ev-img" id="tl-ev-img" alt="screenshot" hidden>
+      <div class="tl-ev-controls">
+        <input type="range" class="tl-ev-slider" id="tl-ev-slider" min="0" max="0" value="0">
+        <span class="tl-ev-time mono" id="tl-ev-time">—</span>
+      </div>`;
+    d.appendChild(stage);
+    loadEvidence(ev.id, stage);
+  }
+}
+
+async function loadClip(evidencePath, stage) {
+  try {
+    const url = await window.sunday?.timelineVideo(evidencePath);
+    const vid = stage.querySelector('#tl-ev-video');
+    if (!url || !vid) { stage.hidden = true; return; }
+    vid.src = url;
+  } catch { stage.hidden = true; }
 }
 
 async function loadPlayByPlay(ev, wrap) {

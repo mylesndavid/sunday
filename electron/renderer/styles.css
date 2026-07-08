@@ -453,6 +453,7 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-evidence { margin-top: 4px; }
 .tl-ev-img { width: 100%; border-radius: var(--r-md); border: 1px solid var(--line); box-shadow: var(--shadow-1); display: block; }
 .tl-ev-img[hidden] { display: none; }
+.tl-ev-video { width: 100%; border-radius: var(--r-md); border: 1px solid var(--line); box-shadow: var(--shadow-1); display: block; background: #000; }
 .tl-ev-controls { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
 .tl-ev-slider { -webkit-appearance: none; appearance: none; flex: 1; height: 4px; border-radius: var(--r-pill); background: var(--surface-3); cursor: pointer; }
 .tl-ev-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--cat, var(--accent)); border: 2px solid var(--surface); box-shadow: var(--shadow-1); cursor: grab; }

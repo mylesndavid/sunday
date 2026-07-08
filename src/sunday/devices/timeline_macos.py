@@ -35,10 +35,15 @@ from typing import Any
 
 import structlog
 
-from sunday.devices import chat_cli, rewind_macos
+from sunday.devices import chat_cli, rewind_macos, timeline_video
 from sunday.paths import sunday_home
 
 log = structlog.get_logger("sunday.devices.timeline")
+
+# Per-card timelapse clips live here — under the rewind dir (so the app's image
+# IPC can read them) but as .mp4, which the frame pruner ignores (it only counts
+# and deletes *.jpg). So they persist after the source frames are pruned.
+EVIDENCE_DIR = rewind_macos.REWIND_DIR / "evidence"
 
 # How many screenshots we hand the vision CLI per event. Dayflow samples ~15;
 # we keep it lean since a session is usually one coherent thing.
@@ -179,6 +184,10 @@ _CARD_EXTRA_COLUMNS = {
     "distractions_json": "TEXT",
     "app_primary":      "TEXT",
     "app_secondary":    "TEXT",
+    # Path to the card's baked H.264 timelapse (permanent visual evidence that
+    # survives frame pruning). '' = not baked yet; 'none' = baked attempted but the
+    # source frames were already gone (don't retry).
+    "evidence_path":    "TEXT",
 }
 
 
@@ -727,8 +736,68 @@ async def process_pending(tool: str | None = None, model: str | None = None,
         return {"available": False, "transcribed": 0, "cards": 0,
                 "remaining": _pending_frames_count()}
     s = await synthesize_recent(tool=tool, model=model, timeout=max(30.0, time_budget_s * 0.4))
+    # Bake per-card timelapses while the source frames still exist. Cheap and
+    # bounded; runs after synthesis so new cards get their permanent clip promptly.
+    baked = await bake_pending_evidence(time_budget_s=min(30.0, time_budget_s * 0.25))
     return {"available": True, "transcribed": t.get("transcribed", 0),
-            "cards": s.get("cards", 0), "remaining": _pending_frames_count()}
+            "cards": s.get("cards", 0), "baked": baked.get("baked", 0),
+            "remaining": _pending_frames_count()}
+
+
+async def bake_pending_evidence(time_budget_s: float = 30.0, max_cards: int = 20) -> dict[str, Any]:
+    """Encode a timelapse MP4 for cards that don't have one yet, newest-first (most
+    likely to still have their frames). Stores it on the card so the evidence
+    survives frame pruning. Idempotent and bounded: skips cards already baked or
+    marked 'none' (frames gone), stops at the time budget. Best-effort — a failed
+    encode just leaves the card unbaked for a later pass."""
+    if timeline_video.ffmpeg_exe() is None:
+        return {"baked": 0, "no_ffmpeg": True}   # nothing to do; retry when it's available
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT id, start_ts, end_ts FROM timeline_events "
+            "WHERE (evidence_path IS NULL OR evidence_path = '') "
+            "ORDER BY start_ts DESC LIMIT ?", (max_cards,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return {"baked": 0}
+    started = time.time()
+    baked = 0
+    for eid, start_ts, end_ts in rows:
+        if time.time() - started > time_budget_s:
+            break
+        conn = _connect()
+        try:
+            frows = conn.execute(
+                "SELECT ts, image_path FROM frames WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+                (start_ts, end_ts),
+            ).fetchall()
+        finally:
+            conn.close()
+        frames = [{"ts": r[0], "image_path": r[1]} for r in frows]
+        paths = timeline_video.sample_frames(frames)
+        if not paths:
+            # Frames already pruned — mark so we don't retry this card forever.
+            _set_evidence(eid, "none")
+            continue
+        out = str(EVIDENCE_DIR / f"card_{eid}.mp4")
+        ok = await timeline_video.encode_timelapse(paths, out)
+        if ok:
+            _set_evidence(eid, out)
+            baked += 1
+        # If encode failed transiently, leave evidence_path='' to retry next pass.
+    return {"baked": baked}
+
+
+def _set_evidence(event_id: int, path: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute("UPDATE timeline_events SET evidence_path = ? WHERE id = ?", (path, int(event_id)))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def observations(from_ts: float, to_ts: float) -> dict[str, Any]:
@@ -761,6 +830,10 @@ def _event_dict(row: sqlite3.Row | tuple, cols: list[str]) -> dict[str, Any]:
             d[jkey[:-5]] = json.loads(raw) if raw else []
         except (TypeError, json.JSONDecodeError):
             d[jkey[:-5]] = []
+    # Only expose a real clip path; '' (not baked yet) and 'none' (frames were
+    # already gone) both mean "no clip" to the UI.
+    ev = (d.get("evidence_path") or "").strip()
+    d["evidence_path"] = ev if ev and ev != "none" else None
     return d
 
 
@@ -768,12 +841,13 @@ _EVENT_COLS = [
     "id", "start_ts", "end_ts", "type", "category", "subcategory", "title",
     "summary", "detailed_summary", "distractions_json", "app_primary",
     "app_secondary", "apps_json", "urls_json", "people_json", "projects_json",
-    "dominant_app", "importance", "summarized",
+    "dominant_app", "importance", "summarized", "evidence_path",
 ]
 _EVENT_SELECT = (
     "SELECT id, start_ts, end_ts, type, category, subcategory, title, summary, "
     "detailed_summary, distractions_json, app_primary, app_secondary, apps_json, "
-    "urls_json, people_json, projects_json, dominant_app, importance, summarized "
+    "urls_json, people_json, projects_json, dominant_app, importance, summarized, "
+    "evidence_path "
     "FROM timeline_events"
 )
 
