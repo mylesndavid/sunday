@@ -1246,6 +1246,42 @@ async def state() -> dict[str, Any]:
 # ─── capture toggle (delegates to rewind) ────────────────────────────────
 
 
+def storage_usage() -> dict[str, Any]:
+    """How much disk Sunday's data uses, broken down. Measures ~/.sunday on THIS
+    machine (the satellite that owns the data). frames = capturable screenshots
+    (hard-capped by rewind_macos), clips = permanent per-card timelapses (currently
+    UNCAPPED), db = the sqlite files, other = everything else under ~/.sunday."""
+    home = sunday_home()
+
+    def _sum(paths) -> int:
+        t = 0
+        for p in paths:
+            try:
+                if p.is_file():
+                    t += p.stat().st_size
+            except OSError:
+                pass
+        return t
+
+    total = _sum(home.rglob("*")) if home.exists() else 0
+    frames = _sum(rewind_macos.REWIND_DIR.rglob("*.jpg")) if rewind_macos.REWIND_DIR.exists() else 0
+    clips = _sum(EVIDENCE_DIR.rglob("*.mp4")) if EVIDENCE_DIR.exists() else 0
+    dbs = 0
+    if home.exists():
+        dbs = _sum(home.glob("*.db")) + _sum(home.glob("*.db-*"))
+    other = max(0, total - frames - clips - dbs)
+    return {
+        "total_bytes": total,
+        "frames_bytes": frames,
+        "clips_bytes": clips,
+        "db_bytes": dbs,
+        "other_bytes": other,
+        "frames_cap_mb": rewind_macos.MAX_TOTAL_MB,     # frames are hard-capped at this
+        "frames_retention_days": rewind_macos.RETENTION_DAYS,
+        "clips_capped": False,                          # honest: clips currently grow unbounded
+    }
+
+
 def start(interval: float | None = None) -> dict[str, Any]:
     kwargs = {"interval": interval} if interval else {}
     return rewind_macos.start(**kwargs)
