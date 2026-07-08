@@ -409,11 +409,16 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-week-head { flex: 1 1 0; text-align: center; padding: 8px 0; font: 600 11px/1 inherit; color: var(--text-2); }
 .tl-week-body { display: flex; }
 .tl-week-axis { position: relative; flex: 0 0 50px; }
-.tl-week-grid { flex: 1 1 auto; display: flex; }
+.tl-week-grid { flex: 1 1 auto; display: flex; position: relative; }
 .tl-week-col { flex: 1 1 0; min-width: 0; }
 .tl-week-lane { position: relative; border-left: 1px solid var(--line); }
 .tl-week .tl-cal-card { left: 3px; right: 3px; padding: 1px 6px; border-left-width: 4px; border-radius: 4px; gap: 0; }
 .tl-week .tl-cc-title { font-size: 11px; font-weight: 500; }
+
+/* "Now" line — where you are in the day, like a calendar's current-time marker. */
+.tl-now { position: absolute; left: 58px; right: 4px; height: 0; border-top: 2px solid var(--now, #e5484d); z-index: 5; pointer-events: none; }
+.tl-now::before { content: ''; position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--now, #e5484d); }
+.tl-now.full { left: 0; right: 0; }
 
 /* search results — a plain list (search spans time, not one day) */
 .tl-list { display: flex; flex-direction: column; gap: 7px; max-width: 660px; }
