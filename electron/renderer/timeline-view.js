@@ -246,6 +246,36 @@ function renderDay(list, win) {
   }
   main.appendChild(cal);
   if (firstTop < Infinity) main.scrollTop = Math.max(0, firstTop - 56);
+  // Intention layer: paint timeblocks as translucent bands behind the cards.
+  paintBlocks(cal, win.origin, win.origin + HOURS * 3600, HOUR_PX);
+}
+
+// Timeblocks rendered as translucent bands positioned by time — the "intention"
+// layer sitting behind the "reality" (activity cards). Fetched async so cards
+// aren't delayed; bands sit below cards via z-index.
+async function paintBlocks(container, fromTs, toTs, hourPx) {
+  let blocks = [];
+  try {
+    const r = await fetch(`${cfg.daemonHttp}/v1/timeline/blocks?from_ts=${fromTs}&to_ts=${toTs}`);
+    blocks = (await r.json()).blocks || [];
+  } catch { return; }
+  container.querySelectorAll('.tl-block-band').forEach((e) => e.remove());
+  const ppm = hourPx / 60;
+  for (const b of blocks) {
+    let startMin = (b.start_ts - fromTs) / 60;
+    const durMin = Math.max(0, (b.end_ts - b.start_ts) / 60);
+    if (startMin > HOURS * 60 || startMin + durMin < 0) continue;
+    if (startMin < 0) startMin = 0;
+    const band = document.createElement('div');
+    band.className = 'tl-block-band';
+    band.style.top = (startMin * ppm) + 'px';
+    band.style.height = Math.max(16, durMin * ppm) + 'px';
+    const lbl = document.createElement('span');
+    lbl.className = 'tl-block-label';
+    lbl.textContent = b.label;
+    band.appendChild(lbl);
+    container.appendChild(band);
+  }
 }
 
 function renderWeek(list, win) {
