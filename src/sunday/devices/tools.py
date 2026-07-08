@@ -686,6 +686,70 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
         on = True if on is None else bool(on)
         return await _timeline_proxy("timeline_start" if on else "timeline_stop", {}, ctx, args.get("device_id"))
 
+    def _resolve_block_time(val):
+        """Accept a clock time ('14:00', '2pm', '2:30pm') → today's unix seconds, or
+        a raw unix value passed straight through. None if unparseable."""
+        import re
+        import time as _time
+        if val is None:
+            return None
+        try:
+            f = float(val)
+            if f > 1_000_000:      # already unix seconds
+                return f
+        except (TypeError, ValueError):
+            pass
+        s = str(val).strip().lower().replace(" ", "")
+        m = re.match(r"^(\d{1,2})(?::(\d{2}))?(am|pm)?$", s)
+        if not m:
+            return None
+        hh, mm, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+        if ap == "pm" and hh != 12:
+            hh += 12
+        if ap == "am" and hh == 12:
+            hh = 0
+        if hh > 23 or mm > 59:
+            return None
+        lt = _time.localtime()
+        return _time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+
+    async def _t_timeline_block_set(args, ctx):
+        label = (args.get("label") or "").strip()
+        if not label:
+            return {"error": "'label' is required"}
+        start = _resolve_block_time(args.get("start"))
+        end = _resolve_block_time(args.get("end"))
+        if start is None or end is None:
+            return {"error": "start/end must be a clock time like '14:00' or '2pm', or unix seconds"}
+        if end <= start:
+            end += 24 * 3600      # crosses midnight, e.g. '11pm to 1am'
+        params = {"start_ts": start, "end_ts": end, "label": label,
+                  "intent": args.get("intent"), "gcal_mode": (args.get("gcal_mode") or "none")}
+        if args.get("block_id"):
+            params["block_id"] = int(args["block_id"])
+        return await _timeline_proxy("timeline_block_set", params, ctx, args.get("device_id"))
+
+    async def _t_timeline_blocks(args, ctx):
+        import time as _time
+        if (args.get("date") or "").strip():
+            try:
+                y, mo, d = (int(x) for x in args["date"].strip().split("-"))
+                start = _time.mktime((y, mo, d, 0, 0, 0, 0, 0, -1))
+                end = start + 86400
+            except Exception:  # noqa: BLE001
+                return {"error": "date must be YYYY-MM-DD"}
+        else:
+            now = _time.time()
+            start = now - 3600
+            end = now + float(args.get("hours") or 24) * 3600
+        return await _timeline_proxy("timeline_blocks", {"from_ts": start, "to_ts": end}, ctx, args.get("device_id"))
+
+    async def _t_timeline_block_clear(args, ctx):
+        bid = args.get("block_id")
+        if not bid:
+            return {"error": "'block_id' is required"}
+        return await _timeline_proxy("timeline_block_clear", {"block_id": int(bid)}, ctx, args.get("device_id"))
+
     registry.register(Tool(
         name="timeline_search",
         description=(
@@ -756,6 +820,52 @@ def register(registry: ToolRegistry, config: SundayConfig) -> None:
             "device_id": {"type": "string"},
         }},
         run=_t_timeline_capture,
+    ))
+    registry.register(Tool(
+        name="timeline_block_set",
+        description=(
+            "Create (or update) a TIMEBLOCK — the user's intention for a stretch of "
+            "time, like 'now until 2: Gravity deep work' or 'tonight: off computer'. "
+            "Blocks are private/local by default (not on their calendar) and show in "
+            "the menu bar as a live contract. USE THIS when the user wants to plan or "
+            "protect time without making a calendar event. Set gcal_mode to mirror it "
+            "to Google Calendar: 'none' (private, default), 'busy' (opaque busy block), "
+            "or 'event' (full titled event)."
+        ),
+        parameters={"type": "object", "properties": {
+            "label": {"type": "string", "description": "Short name, e.g. 'Gravity deep work'."},
+            "start": {"type": "string", "description": "Clock time like '14:00' or '2pm' (today), or unix seconds."},
+            "end": {"type": "string", "description": "Clock time like '16:00' or '4pm', or unix seconds."},
+            "intent": {"type": "string", "description": "Optional: what/why — used later to check if actual activity matches."},
+            "gcal_mode": {"type": "string", "enum": ["none", "busy", "event"], "description": "Calendar mirroring (default none = private)."},
+            "block_id": {"type": "integer", "description": "Pass to edit an existing block instead of creating one."},
+            "device_id": {"type": "string"},
+        }, "required": ["label", "start", "end"]},
+        run=_t_timeline_block_set,
+    ))
+    registry.register(Tool(
+        name="timeline_blocks",
+        description=(
+            "List the user's timeblocks (their planned intentions) for today or a "
+            "window. Use for 'what's my plan', 'what am I supposed to be doing', "
+            "'what's my next block'. Pass `date` (YYYY-MM-DD) for a day, else it "
+            "returns from an hour ago through the next `hours` (default 24)."
+        ),
+        parameters={"type": "object", "properties": {
+            "date": {"type": "string", "description": "A local day (YYYY-MM-DD). Omit for the upcoming window."},
+            "hours": {"type": "number", "description": "Look ahead this many hours (default 24). Ignored if `date` set."},
+            "device_id": {"type": "string"},
+        }},
+        run=_t_timeline_blocks,
+    ))
+    registry.register(Tool(
+        name="timeline_block_clear",
+        description="Delete a timeblock by its id (get ids from timeline_blocks).",
+        parameters={"type": "object", "properties": {
+            "block_id": {"type": "integer", "description": "The block's id."},
+            "device_id": {"type": "string"},
+        }, "required": ["block_id"]},
+        run=_t_timeline_block_clear,
     ))
     registry.register(Tool(
         name="device_run_command",

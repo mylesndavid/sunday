@@ -812,18 +812,41 @@ function createTray() {
 // reliable home for ambient status — the notch overlay can't read the real
 // notch geometry from Electron, so the menu bar carries the live count.
 let _trayStatusTimer = null;
+function _fmtMins(s) { const m = Math.max(0, Math.round(s / 60)); return m >= 60 ? `${Math.floor(m / 60)}h${(m % 60) ? (m % 60) + 'm' : ''}` : `${m}m`; }
+function _clockOf(ts) { try { return new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch { return ''; } }
 function startTrayStatus() {
   const tick = async () => {
     if (!tray || tray.isDestroyed?.()) return;
+    const { daemonHttp } = resolveDaemon();
+    let n = 0, block = null;
     try {
-      const { daemonHttp } = resolveDaemon();
       const res = await fetch(`${daemonHttp}/v1/status`, { signal: AbortSignal.timeout(2500), headers: { ..._bearer() } });
-      if (!res.ok) return;
-      const d = await res.json();
-      const n = Array.isArray(d.agents) ? d.agents.length : 0;
+      if (res.ok) { const d = await res.json(); n = Array.isArray(d.agents) ? d.agents.length : 0; }
+    } catch { return; /* daemon down — leave title as-is */ }
+    // The timeblock is the "live contract" — it takes priority in the menu bar.
+    try {
+      const r = await fetch(`${daemonHttp}/v1/timeline/current-block`, { signal: AbortSignal.timeout(2500), headers: { ..._bearer() } });
+      if (r.ok) block = await r.json();
+    } catch { /* blocks unavailable — fall back to agent count */ }
+
+    const cur = block && block.current;
+    const nxt = block && block.next;
+    if (cur) {
+      const left = _fmtMins(block.ends_in_s || 0);
+      const short = (cur.label || 'Block').slice(0, 22);
+      tray.setTitle(` ◉ ${short} ${left}`);
+      tray.setToolTip(
+        `Now: ${cur.label} · ${left} left`
+        + (nxt ? `\nNext: ${nxt.label} at ${_clockOf(nxt.start_ts)}` : '')
+        + (n > 0 ? `\n${n} agent${n > 1 ? 's' : ''} working` : '')
+      );
+    } else if (nxt && (block.next_in_s || 0) <= 45 * 60) {
+      tray.setTitle(` ○ ${(nxt.label || 'Block').slice(0, 18)} in ${_fmtMins(block.next_in_s)}`);
+      tray.setToolTip(`Next: ${nxt.label} at ${_clockOf(nxt.start_ts)}`);
+    } else {
       tray.setTitle(n > 0 ? ` ${n}` : '');
       tray.setToolTip(n > 0 ? `Sunday — ${n} agent${n > 1 ? 's' : ''} working` : 'Sunday');
-    } catch { /* daemon not up / offline — leave the title as-is */ }
+    }
   };
   tick();
   _trayStatusTimer = setInterval(tick, 2000);

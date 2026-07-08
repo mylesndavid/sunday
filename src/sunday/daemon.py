@@ -3410,6 +3410,29 @@ class Daemon:
         processor drains the backlog afterward; the UI polls state for progress."""
         return web.json_response(await self._timeline_call("timeline_reprocess", {}))
 
+    async def _http_timeline_blocks(self, request: web.Request) -> web.Response:
+        """GET /v1/timeline/blocks?from_ts=&to_ts= — timeblocks in a range."""
+        try:
+            from_ts = float(request.query.get("from_ts") or 0)
+            to_ts = float(request.query.get("to_ts") or 0)
+        except ValueError:
+            return web.json_response({"error": "bad from_ts/to_ts"}, status=400)
+        return web.json_response(await self._timeline_call("timeline_blocks", {"from_ts": from_ts, "to_ts": to_ts}))
+
+    async def _http_timeline_current_block(self, request: web.Request) -> web.Response:
+        """GET /v1/timeline/current-block — the live block + next (menu-bar contract)."""
+        return web.json_response(await self._timeline_call("timeline_current_block", {}))
+
+    async def _http_timeline_block_set(self, request: web.Request) -> web.Response:
+        """POST /v1/timeline/block {start_ts,end_ts,label,intent?,gcal_mode?,block_id?}."""
+        body = await request.json()
+        return web.json_response(await self._timeline_call("timeline_block_set", body))
+
+    async def _http_timeline_block_clear(self, request: web.Request) -> web.Response:
+        """POST /v1/timeline/block-clear {block_id}."""
+        body = await request.json()
+        return web.json_response(await self._timeline_call("timeline_block_clear", {"block_id": body.get("block_id")}))
+
     async def _http_timeline_segment(self, request: web.Request) -> web.Response:
         # Compat alias — advances the pipeline one round.
         return web.json_response(
@@ -3987,6 +4010,10 @@ class Daemon:
         app.router.add_post("/v1/timeline/test", self._http_timeline_test)
         app.router.add_post("/v1/timeline/toggle", self._http_timeline_toggle)
         app.router.add_post("/v1/timeline/reprocess", self._http_timeline_reprocess)
+        app.router.add_get("/v1/timeline/blocks", self._http_timeline_blocks)
+        app.router.add_get("/v1/timeline/current-block", self._http_timeline_current_block)
+        app.router.add_post("/v1/timeline/block", self._http_timeline_block_set)
+        app.router.add_post("/v1/timeline/block-clear", self._http_timeline_block_clear)
         app.router.add_post("/v1/timeline/segment", self._http_timeline_segment)
         app.router.add_post("/v1/timeline/summarize", self._http_timeline_summarize)
         app.router.add_get("/v1/timeline/wrapped", self._http_timeline_wrapped)
