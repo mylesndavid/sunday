@@ -270,12 +270,61 @@ async function paintBlocks(container, fromTs, toTs, hourPx) {
     band.className = 'tl-block-band';
     band.style.top = (startMin * ppm) + 'px';
     band.style.height = Math.max(16, durMin * ppm) + 'px';
+    band.title = `${b.label}\n${clock(b.start_ts)} – ${clock(b.end_ts)}`
+      + (b.intent ? `\n${b.intent}` : '')
+      + (b.gcal_mode && b.gcal_mode !== 'none' ? `\n📅 ${b.gcal_mode}` : '');
+    band.addEventListener('click', (e) => { e.stopPropagation(); openBlockDetail(b); });
     const lbl = document.createElement('span');
     lbl.className = 'tl-block-label';
     lbl.textContent = b.label;
     band.appendChild(lbl);
     container.appendChild(band);
   }
+}
+
+function openBlockDetail(b) {
+  selected = null;
+  els.main.querySelectorAll('.tl-card').forEach((c) => c.classList.remove('sel'));
+  const d = els.detail;
+  d.hidden = false;
+  d.style.setProperty('--cat', 'var(--accent)');
+  d.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'tl-d-head';
+  head.innerHTML = `
+    <button class="tl-d-close" id="tl-d-close" title="Close">✕</button>
+    <div class="tl-d-kicker mono">TIMEBLOCK · ${clock(b.start_ts)} – ${clock(b.end_ts)}</div>
+    <h2 class="tl-d-title-row"><span class="tl-d-title"></span></h2>`;
+  head.querySelector('.tl-d-title').textContent = b.label;
+  head.querySelector('#tl-d-close').addEventListener('click', closeDetail);
+  d.appendChild(head);
+
+  if (b.intent) {
+    const p = document.createElement('p'); p.className = 'tl-d-summary'; p.textContent = b.intent;
+    d.appendChild(p);
+  }
+  const mins = Math.max(1, Math.round((b.end_ts - b.start_ts) / 60));
+  const chips = [`${mins} min`, (b.gcal_mode && b.gcal_mode !== 'none') ? `calendar: ${b.gcal_mode}` : 'private'];
+  const wrap = document.createElement('div'); wrap.className = 'tl-chips';
+  chips.forEach((c) => { const s = document.createElement('span'); s.className = 'tl-chip'; s.textContent = c; wrap.appendChild(s); });
+  d.appendChild(wrap);
+
+  const actions = document.createElement('div'); actions.className = 'tl-d-actions';
+  const del = document.createElement('button'); del.className = 'tl-d-btn danger'; del.textContent = 'Delete block';
+  del.addEventListener('click', async () => {
+    del.disabled = true; del.textContent = 'Deleting…';
+    try {
+      await fetch(`${cfg.daemonHttp}/v1/timeline/block-clear`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ block_id: b.id }),
+      });
+    } catch { /* leave it; reload will reflect reality */ }
+    closeDetail();
+    setMode(mode, true);   // reload the range so the band disappears
+  });
+  actions.appendChild(del);
+  d.appendChild(actions);
 }
 
 function renderWeek(list, win) {
