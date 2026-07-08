@@ -1758,6 +1758,7 @@ async function loadStorage() {
   const rows = [
     ['Screenshots', s.frames_bytes, `capped ~${s.frames_cap_mb} MB · ${s.frames_retention_days}-day`],
     ['Timelapse clips', s.clips_bytes, s.clips_capped ? '' : 'no cap yet'],
+    ['Browser profiles', s.browser_bytes, 'one-off task logins'],
     ['Database', s.db_bytes, ''],
     ['Other', s.other_bytes, ''],
   ];
@@ -1766,7 +1767,28 @@ async function loadStorage() {
     + rows.map(([k, v, note]) =>
         `<div class="set-storage-row"><span class="k">${k}</span><span class="v mono">${fmtBytes(v)}</span>`
         + `${note ? `<span class="n">${note}</span>` : ''}</div>`
-      ).join('');
+      ).join('')
+    + ((s.browser_bytes || 0) > 50e6
+        ? `<div class="set-actions"><span class="set-verify" id="set-browser-clean-note"></span>`
+          + `<button type="button" class="btn" id="set-browser-clean">Clean up browser profiles</button></div>`
+        : '');
+  const clean = el.querySelector('#set-browser-clean');
+  if (clean) clean.addEventListener('click', cleanBrowserProfiles);
+}
+
+async function cleanBrowserProfiles() {
+  const btn = $('#set-browser-clean');
+  const note = $('#set-browser-clean-note');
+  if (btn) { btn.disabled = true; btn.textContent = 'Cleaning…'; }
+  let r;
+  try { r = await (await fetch(`${DAEMON_HTTP}/v1/browser/cleanup`, { method: 'POST' })).json(); }
+  catch {
+    if (note) note.textContent = 'Cleanup failed — is your Mac connected?';
+    if (btn) { btn.disabled = false; btn.textContent = 'Clean up browser profiles'; }
+    return;
+  }
+  if (note) note.textContent = `Freed ${fmtBytes(r.freed_bytes)} · ${r.removed} profile${r.removed !== 1 ? 's' : ''} removed.`;
+  setTimeout(loadStorage, 1600);   // let them read the result, then refresh the numbers
 }
 
 // Health line: is the summarizer actually working, and if not, the real reason.

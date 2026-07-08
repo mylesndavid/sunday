@@ -3427,6 +3427,10 @@ class Daemon:
         """GET /v1/timeline/storage — disk usage of Sunday's data, broken down."""
         return web.json_response(await self._timeline_call("timeline_storage", {}))
 
+    async def _http_browser_cleanup(self, request: web.Request) -> web.Response:
+        """POST /v1/browser/cleanup — delete stale one-off task browser profiles."""
+        return web.json_response(await self._timeline_call("browser_cleanup", {}))
+
     async def _http_timeline_block_set(self, request: web.Request) -> web.Response:
         """POST /v1/timeline/block {start_ts,end_ts,label,intent?,gcal_mode?,block_id?}."""
         body = await request.json()
@@ -4017,6 +4021,7 @@ class Daemon:
         app.router.add_get("/v1/timeline/blocks", self._http_timeline_blocks)
         app.router.add_get("/v1/timeline/current-block", self._http_timeline_current_block)
         app.router.add_get("/v1/timeline/storage", self._http_timeline_storage)
+        app.router.add_post("/v1/browser/cleanup", self._http_browser_cleanup)
         app.router.add_post("/v1/timeline/block", self._http_timeline_block_set)
         app.router.add_post("/v1/timeline/block-clear", self._http_timeline_block_clear)
         app.router.add_post("/v1/timeline/segment", self._http_timeline_segment)

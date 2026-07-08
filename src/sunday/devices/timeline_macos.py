@@ -1266,14 +1266,17 @@ def storage_usage() -> dict[str, Any]:
     total = _sum(home.rglob("*")) if home.exists() else 0
     frames = _sum(rewind_macos.REWIND_DIR.rglob("*.jpg")) if rewind_macos.REWIND_DIR.exists() else 0
     clips = _sum(EVIDENCE_DIR.rglob("*.mp4")) if EVIDENCE_DIR.exists() else 0
+    chrome_dir = home / "chrome"
+    browser = _sum(chrome_dir.rglob("*")) if chrome_dir.exists() else 0
     dbs = 0
     if home.exists():
         dbs = _sum(home.glob("*.db")) + _sum(home.glob("*.db-*"))
-    other = max(0, total - frames - clips - dbs)
+    other = max(0, total - frames - clips - browser - dbs)
     return {
         "total_bytes": total,
         "frames_bytes": frames,
         "clips_bytes": clips,
+        "browser_bytes": browser,                       # per-task Chrome profiles — cleanable cruft
         "db_bytes": dbs,
         "other_bytes": other,
         "frames_cap_mb": rewind_macos.MAX_TOTAL_MB,     # frames are hard-capped at this
