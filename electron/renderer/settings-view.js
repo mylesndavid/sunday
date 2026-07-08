@@ -1738,6 +1738,35 @@ async function loadTimeline() {
     const bnote = $('#set-timeline-backend-note');
     if (bnote && !bnote.dataset.busy) bnote.textContent = summarizerHealth(s);
   } catch { if (status) status.textContent = ''; }
+  loadStorage();
+}
+
+function fmtBytes(b) {
+  b = b || 0;
+  if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+  if (b >= 1e6) return (b / 1e6).toFixed(0) + ' MB';
+  if (b >= 1e3) return (b / 1e3).toFixed(0) + ' KB';
+  return b + ' B';
+}
+async function loadStorage() {
+  const el = $('#set-timeline-storage');
+  if (!el) return;
+  let s;
+  try { s = await (await fetch(`${DAEMON_HTTP}/v1/timeline/storage`)).json(); }
+  catch { el.textContent = 'Storage unavailable — is your Mac connected?'; return; }
+  if (!s || s.error) { el.textContent = 'Storage unavailable — is your Mac connected?'; return; }
+  const rows = [
+    ['Screenshots', s.frames_bytes, `capped ~${s.frames_cap_mb} MB · ${s.frames_retention_days}-day`],
+    ['Timelapse clips', s.clips_bytes, s.clips_capped ? '' : 'no cap yet'],
+    ['Database', s.db_bytes, ''],
+    ['Other', s.other_bytes, ''],
+  ];
+  el.innerHTML =
+    `<div class="set-storage-total">${fmtBytes(s.total_bytes)}<span> total on this Mac</span></div>`
+    + rows.map(([k, v, note]) =>
+        `<div class="set-storage-row"><span class="k">${k}</span><span class="v mono">${fmtBytes(v)}</span>`
+        + `${note ? `<span class="n">${note}</span>` : ''}</div>`
+      ).join('');
 }
 
 // Health line: is the summarizer actually working, and if not, the real reason.

@@ -420,6 +420,15 @@ textarea#composer::placeholder { color: var(--text-3); }
 .tl-now::before { content: ''; position: absolute; left: -4px; top: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--now, #e5484d); }
 .tl-now.full { left: 0; right: 0; }
 
+/* Settings › Timeline — storage readout */
+.set-storage { margin-top: 6px; }
+.set-storage-total { font-size: 22px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+.set-storage-total span { font-size: 13px; font-weight: 400; color: var(--text-3); }
+.set-storage-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.set-storage-row .k { flex: 0 0 130px; color: var(--text-2); }
+.set-storage-row .v { flex: 0 0 70px; color: var(--text); }
+.set-storage-row .n { color: var(--text-3); font-size: 12px; }
+
 /* search results — a plain list (search spans time, not one day) */
 .tl-list { display: flex; flex-direction: column; gap: 7px; max-width: 660px; }
 .tl-list-card { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 10px 13px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--cat, var(--accent)); border-radius: var(--r-md); cursor: pointer; }

@@ -394,6 +394,10 @@ async def _h_timeline_current_block(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.current_block()
 
 
+async def _h_timeline_storage(params: dict[str, Any]) -> dict[str, Any]:
+    return timeline_macos.storage_usage()
+
+
 async def _h_timeline_period_stats(params: dict[str, Any]) -> dict[str, Any]:
     return timeline_macos.period_stats(
         float(params.get("period_start") or 0), float(params.get("period_end") or 0),
@@ -481,6 +485,7 @@ HANDLERS = {
     "timeline_blocks":        _h_timeline_blocks,
     "timeline_block_clear":   _h_timeline_block_clear,
     "timeline_current_block": _h_timeline_current_block,
+    "timeline_storage":       _h_timeline_storage,
     "timeline_period_stats":  _h_timeline_period_stats,
     "timeline_apply_wrapped": _h_timeline_apply_wrapped,
     "timeline_get_wrapped":   _h_timeline_get_wrapped,
