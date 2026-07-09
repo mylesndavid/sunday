@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('sunday', {
   daemonHealth: () => ipcRenderer.invoke('sunday:daemon-health'),
   readLogs: () => ipcRenderer.invoke('sunday:read-logs'),
   revealLogs: () => ipcRenderer.invoke('sunday:reveal-logs'),
+  debugPacket: () => ipcRenderer.invoke('sunday:debug-packet'),
   resetApp: () => ipcRenderer.invoke('sunday:reset'),
   // Funnel renderer errors into the same shareable ~/.sunday/logs/app.log.
   logError: (msg) => { try { ipcRenderer.send('sunday:renderer-log', String(msg)); } catch { /* never throw */ } },

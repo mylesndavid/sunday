@@ -575,6 +575,40 @@ ipcMain.handle('sunday:reveal-logs', () => {
   } catch { return false; }
 });
 
+// Debug packet: one click on the crash screen → a single shareable file with
+// everything we'd ask for (versions, daemon health, redacted prefs, app + daemon
+// logs). Saved to Downloads and revealed in Finder. Secrets are stripped.
+ipcMain.handle('sunday:debug-packet', async () => {
+  const tail = (p, n = 20000) => { try { return fs.readFileSync(p, 'utf-8').slice(-n); } catch { return '(not found)'; } };
+  const parts = [];
+  parts.push(`Sunday debug packet — ${new Date().toISOString()}`);
+  parts.push(`app version  : ${app.getVersion()}`);
+  parts.push(`platform     : ${process.platform} ${process.arch} · darwin ${os.release()}`);
+  parts.push(`electron     : ${process.versions.electron} · node ${process.versions.node}`);
+  const { daemonHttp } = resolveDaemon();
+  parts.push(`daemon url   : ${daemonHttp}`);
+  parts.push(`daemon binary: ${bundledDaemonBinary() || '(not found)'}`);
+  try {
+    const r = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
+    parts.push(`daemon health: HTTP ${r.status}`);
+  } catch (e) { parts.push(`daemon health: unreachable (${e && e.message})`); }
+  try {
+    const red = JSON.parse(JSON.stringify(loadPrefs()));
+    for (const k of Object.keys(red)) if (/token|key|secret|password/i.test(k)) red[k] = '<redacted>';
+    parts.push(`\n=== prefs.json (secrets redacted) ===\n${JSON.stringify(red, null, 2)}`);
+  } catch { parts.push('\n=== prefs.json === (unreadable)'); }
+  parts.push(`\n=== app.log (tail) ===\n${tail(APP_LOG())}`);
+  parts.push(`\n=== daemon-launchd.log (tail) ===\n${tail(DAEMON_LOG())}`);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const name = `sunday-debug-${stamp}.txt`;
+  const out = path.join(app.getPath('downloads'), name);
+  try {
+    fs.writeFileSync(out, parts.join('\n'));
+    shell.showItemInFolder(out);
+    return { ok: true, path: out, name };
+  } catch (e) { return { ok: false, error: e && e.message }; }
+});
+
 // Reset: works even when ~/.sunday already has files (the case where a reinstall
 // gave no chance to reconfigure). Flip onboarded off and drop back into the
 // wizard; the user keeps their data but gets a clean setup path.
