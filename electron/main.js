@@ -62,6 +62,8 @@ function logLine(msg) {
 }
 process.on('uncaughtException', (e) => logLine(`UNCAUGHT: ${(e && e.stack) || e}`));
 process.on('unhandledRejection', (e) => logLine(`UNHANDLED_REJECTION: ${(e && e.stack) || e}`));
+// Renderer-side errors funnel here (window.onerror / unhandledrejection in the UI).
+ipcMain.on('sunday:renderer-log', (_evt, msg) => logLine(`[renderer] ${msg}`));
 
 function resolveDaemon() {
   const prefs = loadPrefs();

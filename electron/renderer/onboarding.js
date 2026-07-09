@@ -7,6 +7,15 @@
 const $  = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 
+// Renderer error bridge — onboarding is exactly where a fresh install breaks, so
+// funnel its crashes into the shareable app.log too.
+window.addEventListener('error', (e) => {
+  window.sunday?.logError?.(`ONBOARDING_ERROR: ${(e.error && e.error.stack) || e.message || (e.filename + ':' + e.lineno)}`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.sunday?.logError?.(`ONBOARDING_REJECTION: ${(e.reason && e.reason.stack) || e.reason}`);
+});
+
 // The 'key' step is branched into from 'node' for local installs, so it isn't
 // a linear member of the order. We still want the pill to count it sensibly:
 // it sits between 'node' and 'mic', occupying the same slot a self-hosted user
