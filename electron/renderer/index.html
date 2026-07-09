@@ -8,6 +8,22 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Boot gate: shown until the local daemon is healthy, so the app never fires
+       requests into a dead socket on first launch. Becomes an actionable error
+       (retry / logs / reset) if the brain doesn't come up. -->
+  <div id="boot-overlay" class="boot-overlay">
+    <div class="boot-card">
+      <div class="boot-spinner" id="boot-spinner"></div>
+      <div class="boot-title" id="boot-title">Starting Sunday…</div>
+      <div class="boot-sub" id="boot-sub">Waking the local brain. First launch takes a few seconds.</div>
+      <div class="boot-actions" id="boot-actions" hidden>
+        <button class="btn btn-primary" id="boot-retry">Retry</button>
+        <button class="btn" id="boot-logs">View logs</button>
+        <button class="btn" id="boot-reset">Reset Sunday</button>
+      </div>
+      <pre class="boot-logsview" id="boot-logsview" hidden></pre>
+    </div>
+  </div>
   <header class="topbar">
     <nav class="tabs" id="tabs" role="tablist">
       <button class="tab active" data-view="chat" role="tab">Chat</button>

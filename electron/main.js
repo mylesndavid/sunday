@@ -50,6 +50,19 @@ function savePrefs(patch) {
   return next;
 }
 
+// ─── always-on error log — a broken first-run should leave a trail, not a blank
+// screen. Everything funnels to ~/.sunday/logs/app.log, viewable + shareable.
+const APP_LOG = () => path.join(os.homedir(), '.sunday', 'logs', 'app.log');
+function logLine(msg) {
+  try {
+    fs.mkdirSync(path.dirname(APP_LOG()), { recursive: true });
+    try { if (fs.statSync(APP_LOG()).size > 2_000_000) fs.writeFileSync(APP_LOG(), ''); } catch { /* first write */ }
+    fs.appendFileSync(APP_LOG(), `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* logging must never throw */ }
+}
+process.on('uncaughtException', (e) => logLine(`UNCAUGHT: ${(e && e.stack) || e}`));
+process.on('unhandledRejection', (e) => logLine(`UNHANDLED_REJECTION: ${(e && e.stack) || e}`));
+
 function resolveDaemon() {
   const prefs = loadPrefs();
   // Migrate fixed-port prefs saved before per-user ports existed: a secondary
@@ -506,6 +519,43 @@ ipcMain.handle('sunday:config', () => {
            localHttp: LOCAL_HTTP, localWs: LOCAL_WS };
 });
 
+// Boot health-gate support: the renderer asks main "is the daemon up yet?" so it
+// can show "Starting Sunday…" instead of firing requests into a dead socket.
+ipcMain.handle('sunday:daemon-health', async () => {
+  const { daemonHttp } = resolveDaemon();
+  try {
+    const res = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
+    return { healthy: res.ok, http: daemonHttp };
+  } catch { return { healthy: false, http: daemonHttp }; }
+});
+
+// Logs: the shareable trail. read-logs returns the tail for in-app viewing;
+// reveal-logs opens the file in Finder so it can be sent to us.
+ipcMain.handle('sunday:read-logs', () => {
+  try { return fs.readFileSync(APP_LOG(), 'utf-8').slice(-20000); }
+  catch { return ''; }
+});
+ipcMain.handle('sunday:reveal-logs', () => {
+  try {
+    const p = APP_LOG();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    if (!fs.existsSync(p)) fs.writeFileSync(p, '');
+    shell.showItemInFolder(p);
+    return true;
+  } catch { return false; }
+});
+
+// Reset: works even when ~/.sunday already has files (the case where a reinstall
+// gave no chance to reconfigure). Flip onboarded off and drop back into the
+// wizard; the user keeps their data but gets a clean setup path.
+ipcMain.handle('sunday:reset', () => {
+  logLine('user reset: clearing onboarding + relaunching into setup');
+  savePrefs({ onboarded: false });
+  try { if (mainWindow) mainWindow.close(); } catch { /* window gone */ }
+  if (!onboardingWindow) createOnboardingWindow();
+  return true;
+});
+
 // Save the OpenRouter key to ~/.sunday/credentials.env (the daemon's
 // credential store), then restart the embedded daemon so it loads it.
 // Local-only — same machine writing a 0600 file.
@@ -941,6 +991,14 @@ function rebuildTrayMenu() {
     { type: 'separator' },
     updateMenuItem(),
     { type: 'separator' },
+    { label: 'View logs…', click: () => {
+        try {
+          const p = APP_LOG();
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          if (!fs.existsSync(p)) fs.writeFileSync(p, '');
+          shell.showItemInFolder(p);
+        } catch { /* best effort */ }
+    }},
     { label: 'Reconfigure (re-run onboarding)…', click: () => {
         savePrefs({ onboarded: false });
         if (mainWindow) mainWindow.close();
@@ -953,6 +1011,7 @@ function rebuildTrayMenu() {
 }
 
 app.whenReady().then(() => {
+  logLine(`app ready — version ${app.getVersion()}`);
   // Meeting capture: hand getDisplayMedia a screen source + system-audio
   // loopback so the capture window records the other side of the call. This
   // is the whole fix — the audio is attributed to Sunday (which has Screen
@@ -985,7 +1044,9 @@ app.whenReady().then(() => {
   // Spawn the embedded daemon first thing (fire-and-forget) so it's coming
   // up while the UI loads. Local installs get the brain with no terminal;
   // remote daemons skip this.
-  startEmbeddedDaemon().catch(() => {});
+  startEmbeddedDaemon()
+    .then((ok) => logLine(`embedded daemon start: ${ok ? 'healthy' : 'did not become healthy'}`))
+    .catch((e) => logLine(`embedded daemon start threw: ${(e && e.stack) || e}`));
 
   const { onboarded } = resolveDaemon();
   if (!onboarded) {

@@ -68,6 +68,63 @@ async function boot() {
     DAEMON_WS    = cfg.daemonWs   || DAEMON_WS;
     DAEMON_TOKEN = cfg.daemonToken || '';
   }
+  wireBootGate();
+  await waitForDaemon();   // shows "Starting Sunday…", then runs startApp() once healthy
+}
+
+// Poll the local daemon's health before loading anything. This is the fix for
+// "nothing works on first launch": the UI used to fire requests while the daemon
+// was still booting (dead socket → errors everywhere). Now it waits, with a clear
+// failure path if the brain never comes up.
+async function waitForDaemon() {
+  const overlay = $('#boot-overlay');
+  if (overlay) { overlay.hidden = false; overlay.classList.remove('failed'); }
+  if ($('#boot-actions')) $('#boot-actions').hidden = true;
+  if ($('#boot-logsview')) $('#boot-logsview').hidden = true;
+  if ($('#boot-spinner')) $('#boot-spinner').hidden = false;
+  if ($('#boot-title')) $('#boot-title').textContent = 'Starting Sunday…';
+  if ($('#boot-sub')) $('#boot-sub').textContent = 'Waking the local brain. First launch takes a few seconds.';
+
+  const deadline = Date.now() + 60000;
+  const check = async () => {
+    let healthy = false;
+    try {
+      if (window.sunday?.daemonHealth) healthy = (await window.sunday.daemonHealth()).healthy;
+      else healthy = (await fetch(`${DAEMON_HTTP}/v1/health`)).ok;
+    } catch { healthy = false; }
+    if (healthy) { if (overlay) overlay.hidden = true; await startApp(); return; }
+    if (Date.now() > deadline) return showBootFailed();
+    setTimeout(check, 700);
+  };
+  check();
+}
+
+function showBootFailed() {
+  const o = $('#boot-overlay'); if (o) o.classList.add('failed');
+  if ($('#boot-spinner')) $('#boot-spinner').hidden = true;
+  if ($('#boot-title')) $('#boot-title').textContent = 'Sunday couldn’t start';
+  if ($('#boot-sub')) $('#boot-sub').textContent = 'The local brain didn’t come up. Retry, check the logs, or reset setup.';
+  if ($('#boot-actions')) $('#boot-actions').hidden = false;
+}
+
+function wireBootGate() {
+  $('#boot-retry')?.addEventListener('click', () => waitForDaemon());
+  $('#boot-reset')?.addEventListener('click', () => window.sunday?.resetApp?.());
+  $('#boot-logs')?.addEventListener('click', async () => {
+    const view = $('#boot-logsview');
+    if (!view) return;
+    if (!view.hidden) { window.sunday?.revealLogs?.(); return; }   // 2nd click reveals the file
+    const text = (await window.sunday?.readLogs?.()) || '';
+    view.textContent = text.trim() || 'No logs yet.';
+    view.hidden = false;
+    $('#boot-logs').textContent = 'Open log file';
+  });
+}
+
+let _appStarted = false;
+async function startApp() {
+  if (_appStarted) return;          // health check can fire twice; init once
+  _appStarted = true;
   memoryView.init({ daemonHttp: DAEMON_HTTP }, {});
   settingsView.init(DAEMON_HTTP);
   timelineView.init({ daemonHttp: DAEMON_HTTP }, {
