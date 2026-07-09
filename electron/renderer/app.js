@@ -94,7 +94,7 @@ async function waitForDaemon() {
   if ($('#boot-title')) $('#boot-title').textContent = 'Starting Sunday…';
   if ($('#boot-sub')) $('#boot-sub').textContent = 'Waking the local brain. First launch takes a few seconds.';
 
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 25000;
   const check = async () => {
     let healthy = false;
     try {

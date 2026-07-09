@@ -65,6 +65,20 @@ process.on('unhandledRejection', (e) => logLine(`UNHANDLED_REJECTION: ${(e && e.
 // Renderer-side errors funnel here (window.onerror / unhandledrejection in the UI).
 ipcMain.on('sunday:renderer-log', (_evt, msg) => logLine(`[renderer] ${msg}`));
 
+// The daemon's OWN output (Python tracebacks / crash) — captured here so a
+// "daemon never became healthy" leaves the actual reason in the shareable log,
+// not just the symptom. Both the launchd plist and the app-child spawn write here.
+const DAEMON_LOG = () => path.join(os.homedir(), '.sunday', 'logs', 'daemon-launchd.log');
+function foldDaemonLogTail(reason) {
+  try {
+    const tail = fs.readFileSync(DAEMON_LOG(), 'utf-8').slice(-4000).trim();
+    if (tail) logLine(`daemon unhealthy (${reason}). --- daemon log tail ---\n${tail}\n--- end daemon log tail ---`);
+    else logLine(`daemon unhealthy (${reason}) and its log is EMPTY — the binary was likely killed before writing (Gatekeeper/quarantine/code-signing), not a crash.`);
+  } catch {
+    logLine(`daemon unhealthy (${reason}); no daemon log at ${DAEMON_LOG()}`);
+  }
+}
+
 function resolveDaemon() {
   const prefs = loadPrefs();
   // Migrate fixed-port prefs saved before per-user ports existed: a secondary
@@ -218,10 +232,15 @@ async function startEmbeddedDaemon() {
     await new Promise((r) => setTimeout(r, 1000));
   }
   const bin = bundledDaemonBinary();
-  if (!bin) { console.warn('no bundled daemon binary'); return false; }
+  if (!bin) { console.warn('no bundled daemon binary'); logLine('no bundled daemon binary found — cannot start the brain'); return false; }
   console.log('spawning embedded daemon:', bin);
+  // Capture the daemon's stdout+stderr to its log (was 'ignore', which discarded
+  // the crash reason). This is how a fresh-install failure now leaves a trace.
+  let outFd = 'ignore';
+  try { fs.mkdirSync(path.dirname(DAEMON_LOG()), { recursive: true }); outFd = fs.openSync(DAEMON_LOG(), 'a'); } catch { /* fall back to ignore */ }
+  logLine(`spawning embedded daemon: ${bin}`);
   daemonChild = require('node:child_process').spawn(bin, [], {
-    stdio: 'ignore',
+    stdio: ['ignore', outFd, outFd],
     // app-owned token wins; app version lets us detect a stale daemon next launch;
     // SUNDAY_PORT binds this profile's own port (per-user, no cross-profile fights);
     // SUNDAY_ARGUS_URL (only when the Argus toggle is on) makes the brain ship traces.
@@ -230,8 +249,8 @@ async function startEmbeddedDaemon() {
            ...(loadPrefs().argus ? { SUNDAY_ARGUS_URL: ARGUS_URL } : {}) },
     detached: false,
   });
-  daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });
-  daemonChild.on('error', (e) => { console.warn('daemon spawn error', e?.message); daemonChild = null; });
+  daemonChild.on('exit', (code, sig) => { console.warn('daemon exited', code); logLine(`app-child daemon exited: code=${code} signal=${sig}`); daemonChild = null; });
+  daemonChild.on('error', (e) => { console.warn('daemon spawn error', e?.message); logLine(`app-child daemon spawn error: ${e?.message}`); daemonChild = null; });
   // Wait up to ~25s for it to come up AND accept our token. Poll tight (250ms) so
   // we detect readiness the instant the cold-started binary binds, instead of
   // sitting on a coarse interval after it's already up.
@@ -1056,8 +1075,11 @@ app.whenReady().then(() => {
   // up while the UI loads. Local installs get the brain with no terminal;
   // remote daemons skip this.
   startEmbeddedDaemon()
-    .then((ok) => logLine(`embedded daemon start: ${ok ? 'healthy' : 'did not become healthy'}`))
-    .catch((e) => logLine(`embedded daemon start threw: ${(e && e.stack) || e}`));
+    .then((ok) => {
+      logLine(`embedded daemon start: ${ok ? 'healthy' : 'did not become healthy'}`);
+      if (!ok) foldDaemonLogTail('startup');   // put the real reason in the shareable log
+    })
+    .catch((e) => { logLine(`embedded daemon start threw: ${(e && e.stack) || e}`); foldDaemonLogTail('threw'); });
 
   const { onboarded } = resolveDaemon();
   if (!onboarded) {
