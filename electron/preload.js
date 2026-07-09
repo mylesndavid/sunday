@@ -4,6 +4,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('sunday', {
   getConfig: () => ipcRenderer.invoke('sunday:config'),
+  daemonHealth: () => ipcRenderer.invoke('sunday:daemon-health'),
+  readLogs: () => ipcRenderer.invoke('sunday:read-logs'),
+  revealLogs: () => ipcRenderer.invoke('sunday:reveal-logs'),
+  resetApp: () => ipcRenderer.invoke('sunday:reset'),
   saveConnection: (cfg) => ipcRenderer.invoke('sunday:save-connection', cfg),
   runMode: () => ipcRenderer.invoke('sunday:run-mode'),
   setRunMode: (mode) => ipcRenderer.invoke('sunday:set-run-mode', mode),

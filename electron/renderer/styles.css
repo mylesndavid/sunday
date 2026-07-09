@@ -429,6 +429,20 @@ textarea#composer::placeholder { color: var(--text-3); }
 .set-storage-row .v { flex: 0 0 70px; color: var(--text); }
 .set-storage-row .n { color: var(--text-3); font-size: 12px; }
 
+/* Boot gate overlay — shown until the local daemon is healthy. */
+.boot-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: var(--bg, #16171b); }
+.boot-overlay[hidden] { display: none; }
+.boot-card { text-align: center; max-width: 460px; padding: 30px; }
+.boot-spinner { width: 30px; height: 30px; margin: 0 auto 18px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: boot-spin .8s linear infinite; }
+.boot-spinner[hidden] { display: none; }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.boot-sub { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.boot-actions { display: flex; gap: 8px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+.boot-actions[hidden] { display: none; }
+.boot-logsview { text-align: left; margin-top: 16px; max-height: 240px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font: 11px/1.5 var(--font-mono, ui-monospace, monospace); color: var(--text-2); white-space: pre-wrap; }
+.boot-logsview[hidden] { display: none; }
+
 /* search results — a plain list (search spans time, not one day) */
 .tl-list { display: flex; flex-direction: column; gap: 7px; max-width: 660px; }
 .tl-list-card { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 10px 13px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--cat, var(--accent)); border-radius: var(--r-md); cursor: pointer; }
