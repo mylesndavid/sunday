@@ -94,7 +94,7 @@ async function waitForDaemon() {
   if ($('#boot-title')) $('#boot-title').textContent = 'Starting Sunday…';
   if ($('#boot-sub')) $('#boot-sub').textContent = 'Waking the local brain. First launch takes a few seconds.';
 
-  const deadline = Date.now() + 25000;
+  const deadline = Date.now() + 30000;
   const check = async () => {
     let healthy = false;
     try {
@@ -127,6 +127,17 @@ function wireBootGate() {
     view.textContent = text.trim() || 'No logs yet.';
     view.hidden = false;
     $('#boot-logs').textContent = 'Open log file';
+  });
+  $('#boot-debug')?.addEventListener('click', async () => {
+    const btn = $('#boot-debug');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    const r = await window.sunday?.debugPacket?.();
+    if (btn) { btn.disabled = false; btn.textContent = 'Download debug packet'; }
+    if ($('#boot-sub')) {
+      $('#boot-sub').textContent = (r && r.ok)
+        ? `Saved to Downloads — send us “${r.name}”. (Revealed it in Finder.)`
+        : 'Couldn’t save the debug packet.';
+    }
   });
 }
 
