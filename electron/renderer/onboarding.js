@@ -57,9 +57,23 @@ let chosenToken = '';
 // This profile's own daemon address (per-macOS-user port) — fetched from the
 // main process at boot; falls back to the classic port if the IPC is slow.
 let localURLs = { http: 'http://127.0.0.1:8765', ws: 'ws://127.0.0.1:8765/v1/ws' };
-window.sunday.getConfig().then((c) => {
-  if (c && c.localHttp) localURLs = { http: c.localHttp, ws: c.localWs };
-}).catch(() => {});
+// Prefer daemonHttp (which follows ~/.sunday/daemon.port when the default port was
+// busy) over the raw localHttp default — otherwise onboarding POSTs to a port some
+// OTHER app is squatting and every step 404s (the "can't get past OpenRouter" bug).
+async function refreshDaemonUrl() {
+  try {
+    const c = await window.sunday.getConfig();
+    const http = c && (c.daemonHttp || c.localHttp);
+    if (http) {
+      const ws = (c.daemonWs || c.localWs || http.replace(/^http/, 'ws') + '/v1/ws');
+      localURLs = { http, ws };
+      // Keep the local (non-custom) selection pointed at the live daemon URL.
+      const node = document.querySelector('input[name="node"]:checked')?.value;
+      if (node !== 'custom') { chosenDaemonHttp = localURLs.http; chosenDaemonWs = localURLs.ws; }
+    }
+  } catch { /* keep the last-known URL */ }
+}
+refreshDaemonUrl();
 
 function resolveDaemonURLs() {
   const choice = document.querySelector('input[name="node"]:checked').value;
@@ -238,6 +252,7 @@ $('#onb-save-key')?.addEventListener('click', async () => {
   const btn = $('#onb-save-key');
   const choice = document.querySelector('input[name="brain"]:checked')?.value || 'codex';
   btn.disabled = true;
+  await refreshDaemonUrl();   // make sure we talk to the port the daemon ACTUALLY bound
   try {
     if (choice === 'codex') {
       await connectCodex(v);
