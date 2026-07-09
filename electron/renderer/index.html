@@ -424,35 +424,11 @@
           <h2>Model and data path</h2>
           <p class="set-help">Where Sunday runs, which model it thinks with, and what that means for your data.</p>
 
-          <!-- RUNTIME -->
+          <!-- RUNTIME — local only. Remote/hosted daemon removed: Sunday runs on
+               this Mac, full stop (avoids the "hosted" path that 404'd on setup). -->
           <div class="set-panel">
             <div class="brain-label" id="set-runtime-label">Runtime</div>
-            <div class="seg" id="set-runmode" role="group" aria-labelledby="set-runtime-label">
-              <button type="button" class="seg-btn" data-mode="local" aria-pressed="false">This Mac</button>
-              <button type="button" class="seg-btn" data-mode="cloud" aria-pressed="false">Remote daemon</button>
-            </div>
-            <p class="set-help set-help-tight" id="set-runtime-copy">The daemon, memory, and local tools run inside this app.</p>
-
-            <!-- Remote daemon form -->
-            <div class="set-remote" id="set-remote-form" hidden>
-              <label class="set-field">
-                <span class="set-field-l">HTTP URL</span>
-                <input type="text" id="set-http" class="field mono" placeholder="https://sunday.example.com" autocomplete="off" spellcheck="false">
-              </label>
-              <label class="set-field">
-                <span class="set-field-l">WebSocket URL</span>
-                <input type="text" id="set-ws" class="field mono" placeholder="wss://sunday.example.com/v1/ws" autocomplete="off" spellcheck="false">
-              </label>
-              <label class="set-field">
-                <span class="set-field-l">Auth token</span>
-                <input type="password" id="set-token" class="field mono" placeholder="optional bearer token" autocomplete="off" spellcheck="false">
-              </label>
-              <div class="set-actions">
-                <span class="set-verify" id="set-conn-verify" aria-live="polite"></span>
-                <button type="button" class="btn" id="set-conn-test">Test connection</button>
-                <button type="button" class="btn btn-primary" id="set-conn-save">Save connection</button>
-              </div>
-            </div>
+            <p class="set-help set-help-tight" id="set-runtime-copy">Sunday runs entirely on <strong>this Mac</strong> — the daemon, memory, and local tools all live inside this app. Nothing is hosted remotely.</p>
           </div>
 
           <!-- THINKING MODEL -->
