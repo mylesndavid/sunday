@@ -75,6 +75,15 @@ async function refreshDaemonUrl() {
 }
 refreshDaemonUrl();
 
+// Escape hatch if setup gets stuck: save a shareable debug packet from onboarding
+// (the crash screen isn't reachable here).
+$('#onb-debug')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const link = $('#onb-debug');
+  const r = await window.sunday?.debugPacket?.();
+  if (link) link.textContent = (r && r.ok) ? `Saved to Downloads: ${r.name}` : 'Couldn’t save debug packet';
+});
+
 function resolveDaemonURLs() {
   const choice = document.querySelector('input[name="node"]:checked').value;
   if (choice === 'local') {
