@@ -590,10 +590,11 @@ ipcMain.handle('sunday:reveal-logs', () => {
   } catch { return false; }
 });
 
-// Debug packet: one click on the crash screen → a single shareable file with
-// everything we'd ask for (versions, daemon health, redacted prefs, app + daemon
-// logs). Saved to Downloads and revealed in Finder. Secrets are stripped.
-ipcMain.handle('sunday:debug-packet', async () => {
+// Debug packet: a single shareable file with everything we'd ask for (versions,
+// daemon health, redacted prefs, app + daemon logs). Saved to Downloads + revealed
+// in Finder. Reachable from the crash screen, onboarding, AND the menu bar — so
+// it's always available no matter what screen setup is stuck on. Secrets stripped.
+async function buildDebugPacket() {
   const tail = (p, n = 20000) => { try { return fs.readFileSync(p, 'utf-8').slice(-n); } catch { return '(not found)'; } };
   const parts = [];
   parts.push(`Sunday debug packet — ${new Date().toISOString()}`);
@@ -607,6 +608,14 @@ ipcMain.handle('sunday:debug-packet', async () => {
     const r = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
     parts.push(`daemon health: HTTP ${r.status}`);
   } catch (e) { parts.push(`daemon health: unreachable (${e && e.message})`); }
+  // What's actually holding the port (the whole point of the recent bug).
+  try {
+    const url = new URL(daemonHttp);
+    const out = require('node:child_process').execSync(
+      `lsof -nP -iTCP:${url.port || 8765} -sTCP:LISTEN 2>/dev/null || true`,
+      { encoding: 'utf-8', timeout: 4000 });
+    parts.push(`\n=== who holds port ${url.port || 8765} (lsof) ===\n${out.trim() || '(nothing listening)'}`);
+  } catch { /* lsof unavailable */ }
   try {
     const red = JSON.parse(JSON.stringify(loadPrefs()));
     for (const k of Object.keys(red)) if (/token|key|secret|password/i.test(k)) red[k] = '<redacted>';
@@ -622,7 +631,8 @@ ipcMain.handle('sunday:debug-packet', async () => {
     shell.showItemInFolder(out);
     return { ok: true, path: out, name };
   } catch (e) { return { ok: false, error: e && e.message }; }
-});
+}
+ipcMain.handle('sunday:debug-packet', () => buildDebugPacket());
 
 // Reset: works even when ~/.sunday already has files (the case where a reinstall
 // gave no chance to reconfigure). Flip onboarded off and drop back into the
@@ -1070,6 +1080,7 @@ function rebuildTrayMenu() {
     { type: 'separator' },
     updateMenuItem(),
     { type: 'separator' },
+    { label: 'Save debug packet…', click: () => { buildDebugPacket().catch(() => {}); } },
     { label: 'View logs…', click: () => {
         try {
           const p = APP_LOG();
