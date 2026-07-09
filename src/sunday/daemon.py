@@ -4045,6 +4045,63 @@ class Daemon:
 
     # ─── lifecycle ───────────────────────────────────────────────────────
 
+    async def _sunday_already_serving(self, host: str, port: int) -> bool:
+        """Is the process on this port a healthy Sunday daemon (vs a foreign app)?"""
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"http://{host}:{port}/v1/health",
+                                 timeout=aiohttp.ClientTimeout(total=2)) as r:
+                    return r.status == 200
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _write_port_file(self, host: str, port: int) -> None:
+        """Record the ACTUAL bound URL so the app connects to the right place even
+        when we fell back off a busy default port. The app reads ~/.sunday/daemon.port."""
+        try:
+            from sunday.paths import sunday_home
+            p = sunday_home() / "daemon.port"
+            p.write_text(json.dumps({
+                "http": f"http://{host}:{port}",
+                "ws": f"ws://{host}:{port}/v1/ws",
+                "port": port,
+            }))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not write daemon.port", error=str(exc))
+
+    async def _diagnose_port_conflict(self, host: str, port: int, exc: OSError) -> None:
+        """The port is taken. Log a SINGLE clear line naming who holds it (Sunday
+        vs a foreign process) + the owning command, so the debug packet says
+        exactly what to do instead of dumping a bind traceback on every respawn."""
+        reason = "a process that isn't answering HTTP"
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"http://{host}:{port}/v1/health",
+                                 timeout=aiohttp.ClientTimeout(total=2)) as r:
+                    reason = ("another Sunday daemon is ALREADY serving this port (healthy)"
+                              if r.status == 200
+                              else f"a NON-Sunday process (GET /v1/health → HTTP {r.status})")
+        except Exception:  # noqa: BLE001 — port holder doesn't speak HTTP
+            pass
+        holder = ""
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True, text=True, timeout=3,
+            )
+            lines = [ln for ln in (out.stdout or "").splitlines() if ln and not ln.startswith("COMMAND")]
+            holder = lines[-1] if lines else ""
+        except Exception:  # noqa: BLE001
+            pass
+        log.error(
+            "PORT IN USE — cannot start. Free the port (or set SUNDAY_PORT) and reopen Sunday.",
+            host=host, port=port, held_by=reason, listener=holder,
+            errno=getattr(exc, "errno", None),
+        )
+
     async def run(self) -> None:
         # Unix socket. Record the inode we create so the shutdown handler
         # only unlinks our own socket — protects against stop/start races
@@ -4063,14 +4120,31 @@ class Daemon:
         app = self._build_http_app()
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, self.config.server.host, self.config.server.port)
-        await site.start()
+        host, port = self.config.server.host, self.config.server.port
+        try:
+            await web.TCPSite(runner, host, port).start()
+        except OSError as exc:
+            # Port already in use. If it's another HEALTHY Sunday daemon, we're
+            # redundant — exit cleanly (no crash-loop). If it's a FOREIGN process,
+            # don't fight it or kill it (it might be an app the user needs) — bind
+            # a free port instead and record it so the app can follow us there.
+            if await self._sunday_already_serving(host, port):
+                log.info("another Sunday daemon already serving this port — exiting cleanly", port=port)
+                raise SystemExit(0)
+            await self._diagnose_port_conflict(host, port, exc)
+            await web.TCPSite(runner, host, 0).start()   # 0 = OS picks a free port
+            try:
+                port = runner.addresses[0][1]
+            except Exception:  # noqa: BLE001
+                pass
+            log.warning("default port busy — bound a FALLBACK port; the app follows via daemon.port", port=port)
         self._http_runner = runner
+        self._write_port_file(host, port)
 
         log.info(
             "sunday up",
             socket=str(sock),
-            http=f"http://{self.config.server.host}:{self.config.server.port}",
+            http=f"http://{host}:{port}",
             model=f"{self.config.model.provider}/{self.config.model.name}",
             tools=self.registry.names(),
         )

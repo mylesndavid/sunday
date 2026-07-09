@@ -95,7 +95,20 @@ function resolveDaemon() {
   // work for both "local daemon on this Mac" and "remote daemon I pasted in
   // during onboarding".
   let daemonToken = prefs.daemonToken || process.env.SUNDAY_DAEMON_TOKEN || '';
-  const httpUrl = process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || `http://127.0.0.1:${LOCAL_PORT}`;
+  let httpUrl = process.env.SUNDAY_DAEMON_HTTP || prefs.daemonHttp || `http://127.0.0.1:${LOCAL_PORT}`;
+  let wsUrl = process.env.SUNDAY_DAEMON_WS || prefs.daemonWs || `ws://127.0.0.1:${LOCAL_PORT}/v1/ws`;
+  // Follow the daemon's ACTUAL bound port. If the default was taken by a foreign
+  // process, the daemon falls back to a free port and records it here — so a port
+  // conflict self-heals instead of dead-locking on a busy 8765.
+  if (!process.env.SUNDAY_DAEMON_HTTP && /^http:\/\/(127\.0\.0\.1|localhost)/.test(httpUrl)) {
+    try {
+      const pf = path.join(os.homedir(), '.sunday', 'daemon.port');
+      if (fs.existsSync(pf)) {
+        const info = JSON.parse(fs.readFileSync(pf, 'utf8'));
+        if (info && info.http) { httpUrl = info.http; wsUrl = info.ws || wsUrl; }
+      }
+    } catch {}
+  }
   if (!daemonToken && /^http:\/\/(127\.0\.0\.1|localhost)/.test(httpUrl)) {
     try {
       const p = path.join(os.homedir(), '.sunday', 'auth.token');
@@ -104,7 +117,7 @@ function resolveDaemon() {
   }
   return {
     daemonHttp: httpUrl,
-    daemonWs:   process.env.SUNDAY_DAEMON_WS   || prefs.daemonWs   || `ws://127.0.0.1:${LOCAL_PORT}/v1/ws`,
+    daemonWs:   wsUrl,
     daemonToken,
     // Onboarded once we have BOTH a usable token (from prefs, or the local
     // daemon's own file) AND the onboarding flag. The file-read covers a
@@ -555,8 +568,10 @@ ipcMain.handle('sunday:daemon-health', async () => {
   const { daemonHttp } = resolveDaemon();
   try {
     const res = await fetch(`${daemonHttp}/v1/health`, { signal: AbortSignal.timeout(1500) });
-    return { healthy: res.ok, http: daemonHttp };
-  } catch { return { healthy: false, http: daemonHttp }; }
+    // status != 0 with !ok means SOMETHING answers the port but it isn't our
+    // daemon (e.g. another app squatting 8765) — a distinct, actionable failure.
+    return { healthy: res.ok, status: res.status, http: daemonHttp };
+  } catch { return { healthy: false, status: 0, http: daemonHttp }; }
 });
 
 // Logs: the shareable trail. read-logs returns the tail for in-app viewing;
