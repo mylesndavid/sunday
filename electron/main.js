@@ -266,7 +266,11 @@ function serverDaemonInstalled() {
 // daemon — dev builds (no stable bundled-binary path, run from a venv) keep the
 // app-child flow, which also spares developer machines a surprise LaunchAgent.
 function wantsLaunchdDaemon() {
-  return app.isPackaged && resolveRole() === 'server' && isLocalDaemon() && !!bundledDaemonBinary();
+  // Any packaged LOCAL install keeps the daemon warm via launchd (RunAtLoad +
+  // KeepAlive): it survives app quit, so first launch pays the cold-start once and
+  // every launch after is instant (the alreadyGood fast-path). Remote daemons are
+  // gone, so "local" is every install — no role gating needed.
+  return app.isPackaged && isLocalDaemon() && !!bundledDaemonBinary();
 }
 
 function _xmlEscape(s) {
