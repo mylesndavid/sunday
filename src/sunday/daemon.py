@@ -4074,15 +4074,19 @@ class Daemon:
 
     def _write_port_file(self, host: str, port: int) -> None:
         """Record the ACTUAL bound URL so the app connects to the right place even
-        when we fell back off a busy default port. The app reads ~/.sunday/daemon.port."""
+        when we fell back off a busy default port. The app reads ~/.sunday/daemon.port.
+        Written atomically (temp + replace) so the app never reads a half file."""
         try:
             from sunday.paths import sunday_home
             p = sunday_home() / "daemon.port"
-            p.write_text(json.dumps({
+            tmp = p.with_suffix(".port.tmp")
+            tmp.write_text(json.dumps({
                 "http": f"http://{host}:{port}",
                 "ws": f"ws://{host}:{port}/v1/ws",
                 "port": port,
             }))
+            tmp.replace(p)
+            log.info("wrote daemon.port", port=port)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not write daemon.port", error=str(exc))
 
@@ -4148,11 +4152,26 @@ class Daemon:
                 log.info("another Sunday daemon already serving this port — exiting cleanly", port=port)
                 raise SystemExit(0)
             await self._diagnose_port_conflict(host, port, exc)
-            await web.TCPSite(runner, host, 0).start()   # 0 = OS picks a free port
+            fallback = web.TCPSite(runner, host, 0)      # 0 = OS picks a free port
+            await fallback.start()
+            # Read the port off the socket we JUST bound (robust — never the failed
+            # site or a stale address). Fall back to runner.addresses last.
+            got = None
             try:
-                port = runner.addresses[0][1]
+                for s in (fallback._server.sockets if fallback._server else []):
+                    p = s.getsockname()[1]
+                    if p:
+                        got = p
+                        break
             except Exception:  # noqa: BLE001
                 pass
+            if got is None:
+                try:
+                    got = next((a[1] for a in reversed(runner.addresses) if a[1]), None)
+                except Exception:  # noqa: BLE001
+                    got = None
+            if got:
+                port = got
             log.warning("default port busy — bound a FALLBACK port; the app follows via daemon.port", port=port)
         self._http_runner = runner
         self._write_port_file(host, port)
