@@ -7,6 +7,15 @@ import * as settingsView from './settings-view.js';
 import * as timelineView from './timeline-view.js';
 import * as inboxView from './inbox-view.js';
 
+// Renderer error bridge — funnel UI crashes into the shareable app.log so a
+// broken window leaves a trail (main-process errors already log; this covers here).
+window.addEventListener('error', (e) => {
+  window.sunday?.logError?.(`RENDERER_ERROR: ${(e.error && e.error.stack) || e.message || (e.filename + ':' + e.lineno)}`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.sunday?.logError?.(`RENDERER_REJECTION: ${(e.reason && e.reason.stack) || e.reason}`);
+});
+
 const $ = (s) => document.querySelector(s);
 const chatEl     = $('#chat');
 const composerEl = $('#composer');
@@ -1195,4 +1204,7 @@ document.addEventListener('dragleave', (e) => { if (e.target === document || e.t
 document.addEventListener('drop', async (e) => { e.preventDefault(); dropzoneEl.hidden = true; if (currentView === 'chat' && e.dataTransfer?.files?.length) await addFiles(e.dataTransfer.files); });
 
 updateSend();
-boot().catch((err) => console.error('boot failed', err));
+boot().catch((err) => {
+  console.error('boot failed', err);
+  window.sunday?.logError?.(`BOOT_FAILED: ${(err && err.stack) || err}`);
+});

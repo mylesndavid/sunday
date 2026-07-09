@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('sunday', {
   readLogs: () => ipcRenderer.invoke('sunday:read-logs'),
   revealLogs: () => ipcRenderer.invoke('sunday:reveal-logs'),
   resetApp: () => ipcRenderer.invoke('sunday:reset'),
+  // Funnel renderer errors into the same shareable ~/.sunday/logs/app.log.
+  logError: (msg) => { try { ipcRenderer.send('sunday:renderer-log', String(msg)); } catch { /* never throw */ } },
   saveConnection: (cfg) => ipcRenderer.invoke('sunday:save-connection', cfg),
   runMode: () => ipcRenderer.invoke('sunday:run-mode'),
   setRunMode: (mode) => ipcRenderer.invoke('sunday:set-run-mode', mode),
