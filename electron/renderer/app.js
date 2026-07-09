@@ -98,8 +98,15 @@ async function waitForDaemon() {
   const check = async () => {
     let healthy = false;
     try {
-      if (window.sunday?.daemonHealth) healthy = (await window.sunday.daemonHealth()).healthy;
-      else healthy = (await fetch(`${DAEMON_HTTP}/v1/health`)).ok;
+      if (window.sunday?.daemonHealth) {
+        const h = await window.sunday.daemonHealth();
+        healthy = h.healthy;
+        // The daemon may have bound a fallback port (default was busy) — follow it
+        // so every subsequent request hits the port it actually came up on.
+        if (healthy && h.http) { DAEMON_HTTP = h.http; DAEMON_WS = h.http.replace(/^http/, 'ws') + '/v1/ws'; }
+      } else {
+        healthy = (await fetch(`${DAEMON_HTTP}/v1/health`)).ok;
+      }
     } catch { healthy = false; }
     if (healthy) { if (overlay) overlay.hidden = true; await startApp(); return; }
     if (Date.now() > deadline) return showBootFailed();
