@@ -232,9 +232,11 @@ async function startEmbeddedDaemon() {
   });
   daemonChild.on('exit', (code) => { console.warn('daemon exited', code); daemonChild = null; });
   daemonChild.on('error', (e) => { console.warn('daemon spawn error', e?.message); daemonChild = null; });
-  // Wait up to ~20s for it to come up AND accept our token.
-  for (let i = 0; i < 40; i++) {
-    await new Promise((r) => setTimeout(r, 500));
+  // Wait up to ~25s for it to come up AND accept our token. Poll tight (250ms) so
+  // we detect readiness the instant the cold-started binary binds, instead of
+  // sitting on a coarse interval after it's already up.
+  for (let i = 0; i < 100; i++) {
+    await new Promise((r) => setTimeout(r, 250));
     if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('embedded daemon healthy'); return true; }
   }
   console.warn('embedded daemon never became healthy');
@@ -348,8 +350,11 @@ async function installServerDaemon() {
   for (let attempt = 0; attempt < 3; attempt++) {
     // bootstrap loads + starts (RunAtLoad); if it's somehow already loaded, kickstart restarts it.
     if (!_launchctl(['bootstrap', domain, plist])) _launchctl(['kickstart', '-k', target]);
-    for (let i = 0; i < 24; i++) {
-      await new Promise((r) => setTimeout(r, 500));
+    // ~25s window (poll 250ms). A first cold-start behind macOS Gatekeeper
+    // verification can take >12s; the old 12s window would give up and bootout a
+    // daemon that was ABOUT to be healthy, then respawn it — doubling the wait.
+    for (let i = 0; i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 250));
       if (await daemonHealthy() && await daemonAcceptsToken(token)) { console.log('launchd daemon healthy'); return true; }
     }
     console.warn(`launchd daemon not healthy (attempt ${attempt + 1}/3) — booting out and retrying`);

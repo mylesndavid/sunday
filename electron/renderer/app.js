@@ -103,7 +103,7 @@ async function waitForDaemon() {
     } catch { healthy = false; }
     if (healthy) { if (overlay) overlay.hidden = true; await startApp(); return; }
     if (Date.now() > deadline) return showBootFailed();
-    setTimeout(check, 700);
+    setTimeout(check, 300);   // tight poll so we grab the daemon the instant it's up
   };
   check();
 }
