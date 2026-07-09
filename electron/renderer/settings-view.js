@@ -1246,10 +1246,23 @@ function moveModelActive(delta) {
 // Instant-save a partial config ({provider, model_name, credentials}). On
 // failure, revert by re-fetching the authoritative config.
 async function saveBrain(body) {
-  const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+  let res;
+  try {
+    res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+  } catch (e) {
+    // Network-level failure (daemon down / wrong port) — log the keys (never the
+    // values, which include API keys) so the debug packet shows what broke.
+    window.sunday?.logError?.(`config save NETWORK error (${Object.keys(body).join(',')}) → ${DAEMON_HTTP}: ${e && e.message}`);
+    throw e;
+  }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const msg = d.error || `HTTP ${res.status}`;
+    window.sunday?.logError?.(`config save FAILED (${Object.keys(body).join(',')}): ${msg}`);
+    throw new Error(msg);
+  }
   return res;
 }
 

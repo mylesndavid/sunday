@@ -248,12 +248,21 @@ async function connectCodex(v) {
 // OpenRouter / OpenAI / Anthropic: set the provider + write the key.
 async function saveKeyProvider(provider, key) {
   const credName = { openrouter: 'OPENROUTER_API_KEY', openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY' }[provider];
-  const res = await fetch(`${chosenDaemonHttp}/v1/config`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
-    body: JSON.stringify({ provider, credentials: { [credName]: key } }),
-  });
+  let res;
+  try {
+    res = await fetch(`${chosenDaemonHttp}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...(await daemonAuthHeaders()) },
+      body: JSON.stringify({ provider, credentials: { [credName]: key } }),
+    });
+  } catch (e) {
+    window.sunday?.logError?.(`onboarding ${provider} save NETWORK error → ${chosenDaemonHttp}: ${e && e.message}`);
+    throw e;
+  }
   const d = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(d.error || `config ${res.status}`);
+  if (!res.ok) {
+    window.sunday?.logError?.(`onboarding ${provider} save FAILED: ${d.error || res.status}`);
+    throw new Error(d.error || `config ${res.status}`);
+  }
 }
 
 $('#onb-save-key')?.addEventListener('click', async () => {

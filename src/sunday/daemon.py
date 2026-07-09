@@ -1759,15 +1759,31 @@ class Daemon:
             saved = []
             for k, v in body["credentials"].items():
                 if isinstance(v, str) and v.strip():
-                    set_credential(k.strip(), v.strip())
-                    saved.append(k.strip())
+                    try:
+                        set_credential(k.strip(), v.strip())
+                        saved.append(k.strip())
+                    except Exception as exc:  # noqa: BLE001
+                        log.error("set_credential failed", key=k.strip(), error=str(exc))
+                        return web.json_response(
+                            {"error": f"could not save {k.strip()}: {exc}"}, status=500)
             applied["credentials"] = saved
+            log.info("config: credentials written", keys=saved)
 
-        # Rebuild the runtime if anything affecting routing changed.
+        # Rebuild the runtime if anything affecting routing changed. Log + surface
+        # a clean error instead of letting an exception become an unlogged 500 (the
+        # "save silently fails and the UI reverts" symptom).
         if any(x in applied for x in ("provider", "credentials")):
             from sunday.runtime import build_runtime
-            self.runtime = build_runtime(self.config)
+            try:
+                self.runtime = build_runtime(self.config)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("build_runtime failed after config change", applied=applied)
+                return web.json_response(
+                    {"error": f"config saved but the model runtime failed to build: {exc}"},
+                    status=500)
 
+        log.info("config POST applied", applied={k: v for k, v in applied.items() if k != "credentials"},
+                 creds=applied.get("credentials", []))
         return web.json_response({"applied": applied, "ok": True})
 
     async def _http_codex_login(self, request: web.Request) -> web.Response:
