@@ -419,35 +419,57 @@ const TS_CLI_CANDIDATES = [
   '/opt/homebrew/bin/tailscale',
   '/usr/bin/tailscale',
 ];
-function tailscaleCli() {
+function tailscaleClis() {
+  const found = [];
   for (const p of TS_CLI_CANDIDATES) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+    try { fs.accessSync(p, fs.constants.X_OK); found.push(p); } catch {}
   }
   try {
-    const found = require('node:child_process')
+    const extra = require('node:child_process')
       .execSync('command -v tailscale', { shell: '/bin/bash', timeout: 3000 }).toString().trim();
-    return found || null;
-  } catch { return null; }
+    if (extra && !found.includes(extra)) found.push(extra);
+  } catch {}
+  return found;
+}
+function _tailscaleStatusFrom(cli) {
+  const out = require('node:child_process')
+    .execFileSync(cli, ['status', '--json'], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 }).toString();
+  const data = JSON.parse(out);
+  const state = (data.BackendState || '').trim();
+  const self = data.Self || {};
+  const current = data.CurrentTailnet || {};
+  return {
+    installed: true,
+    running: state === 'Running',
+    state: state || null,
+    dnsName: (self.DNSName || '').replace(/\.+$/, '') || null,
+    tailnet: current.Name || current.MagicDNSSuffix || null,
+    cli,
+  };
 }
 function tailscaleStatus() {
-  const cli = tailscaleCli();
-  if (!cli) return { installed: false, running: false, dnsName: null, tailnet: null };
-  try {
-    const out = require('node:child_process').execFileSync(cli, ['status', '--json'], { timeout: 8000 }).toString();
-    const data = JSON.parse(out);
-    const state = (data.BackendState || '').trim();
-    const self = data.Self || {};
-    const current = data.CurrentTailnet || {};
-    return {
-      installed: true,
-      running: state === 'Running',
-      state: state || null,
-      dnsName: (self.DNSName || '').replace(/\.+$/, '') || null,
-      tailnet: current.Name || current.MagicDNSSuffix || null,
-    };
-  } catch (e) {
-    return { installed: true, running: false, dnsName: null, tailnet: null, error: e?.message || String(e) };
+  // A Mac can carry more than one tailscale binary (a stale standalone CLI in
+  // /usr/local/bin next to the GUI app's own) and only one talks to the daemon
+  // that's actually running. So: ask every candidate, first one that answers
+  // "Running" wins; otherwise report the best answer we got — WITH the real
+  // error text, so a false "not running" is debuggable from the UI, not a shrug.
+  const clis = tailscaleClis();
+  if (!clis.length) return { installed: false, running: false, dnsName: null, tailnet: null };
+  let best = null;
+  for (const cli of clis) {
+    try {
+      const st = _tailscaleStatusFrom(cli);
+      if (st.running) return st;
+      if (!best || !best.state) best = st;
+    } catch (e) {
+      const stderr = (e?.stderr ? e.stderr.toString() : '').trim();
+      const err = { installed: true, running: false, dnsName: null, tailnet: null, cli,
+                    error: (stderr || e?.message || String(e)).slice(0, 300) };
+      logLine(`tailscale probe failed (${cli}): ${err.error}`);
+      if (!best) best = err;
+    }
   }
+  return best;
 }
 ipcMain.handle('sunday:tailscale-status', () => tailscaleStatus());
 
@@ -456,9 +478,12 @@ ipcMain.handle('sunday:tailscale-status', () => tailscaleStatus());
 // The daemon itself stays bound to 127.0.0.1; Tailscale is the only way in.
 // Idempotent; the webhook Funnel's --set-path mounts are separate and survive.
 function setupServerServe() {
-  const cli = tailscaleCli();
   const ts = tailscaleStatus();
-  if (!cli || !ts.running) return { ok: false, error: ts.installed ? 'Tailscale isn’t running' : 'Tailscale isn’t installed', ...ts };
+  // Configure serve through the SAME binary that answered the status probe —
+  // mixing variants (stale standalone CLI vs. the GUI app's) is how a Mac ends
+  // up "connected" in the menu bar while our commands talk to a dead daemon.
+  const cli = ts.cli || tailscaleClis()[0];
+  if (!cli || !ts.running) return { ok: false, error: ts.installed ? `Tailscale isn’t running${ts.error ? ` — ${ts.error}` : ''}` : 'Tailscale isn’t installed', ...ts };
   try {
     require('node:child_process').execFileSync(cli, ['serve', '--bg', String(LOCAL_PORT)], { timeout: 15000 });
     logLine(`tailscale serve configured → https://${ts.dnsName} → 127.0.0.1:${LOCAL_PORT}`);

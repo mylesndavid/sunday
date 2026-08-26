@@ -103,7 +103,9 @@ async function paintTailscale(el) {
     el.textContent = '✗ Tailscale isn’t installed — satellites connect through it. Get it at tailscale.com/download.';
   } else if (!ts.running) {
     el.dataset.state = 'fail';
-    el.textContent = '✗ Tailscale is installed but not running — open the Tailscale app and sign in.';
+    el.textContent = ts.error
+      ? `✗ Couldn’t read Tailscale’s state (${ts.error}) — if the menu bar says Connected, just continue; the connect test is what counts.`
+      : '✗ Tailscale is installed but not running — open the Tailscale app and sign in.';
   } else {
     el.dataset.state = 'ok';
     el.textContent = `✓ Tailscale is up — this Mac is ${ts.dnsName || 'on your tailnet'}.`;
@@ -153,7 +155,7 @@ async function connectToServer() {
     try { ts = await window.sunday.tailscaleStatus(); } catch {}
     if (ts && !ts.installed) {
       v.textContent = '✗ Tailscale isn’t installed on this Mac — install it from tailscale.com/download, sign in to your tailnet, then hit Connect again.';
-    } else if (ts && !ts.running) {
+    } else if (ts && !ts.running && !ts.error) {
       v.textContent = '✗ Tailscale isn’t running on this Mac — open the Tailscale app and sign in, then hit Connect again.';
     } else {
       v.textContent = `✗ ${err.message} — this Mac is on the tailnet, so check the address, and that Sunday is running on the server.`;
