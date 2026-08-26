@@ -752,24 +752,12 @@ textarea#composer::placeholder { color: var(--text-3); }
 .local-wizard[hidden] { display: none; }
 .local-wizard .set-actions { justify-content: flex-start; margin-top: 10px; }
 
-/* privacy impact line */
-.set-impact { background: var(--bg-2); }
-.set-impact-line { margin: 0; font: 400 13.5px/1.6 var(--font-sans); color: var(--text); }
-
-/* ── Overview page ───────────────────────────────────────────────────────── */
-.ov-card { padding: 4px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); margin-bottom: 16px; }
-.ov-card-h { font: 600 11px/1 var(--font-sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); margin: 16px 0 4px; }
+/* ── settings definition rows + the "Needs attention" banner ─────────────── */
 .ov-rows { margin: 0; padding: 0; }
 .ov-row { display: grid; grid-template-columns: 130px 1fr; gap: 16px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--line); }
 .ov-row:last-child { border-bottom: 0; }
 .ov-row dt { font: 500 13px/1.4 var(--font-sans); color: var(--text-3); margin: 0; }
 .ov-row dd { font: 400 13.5px/1.5 var(--font-sans); color: var(--text); margin: 0; }
-.ov-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
-.ov-action { -webkit-app-region: no-drag; appearance: none; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); padding: 13px 15px; transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease); }
-.ov-action:hover { background: var(--surface-2); border-color: var(--accent-line); }
-.ov-action:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-tint); }
-.ov-action-t { display: block; font: 600 14px/1.2 var(--font-sans); color: var(--text); }
-.ov-action-d { display: block; font: 400 12px/1.4 var(--font-sans); color: var(--text-3); margin-top: 3px; }
 .ov-attention { padding: 14px 16px; margin-bottom: 16px; background: var(--error-tint); border: 1px solid var(--error); border-radius: var(--r-md); }
 .ov-attention[hidden] { display: none; }
 .ov-att-h { font: 650 13px/1.2 var(--font-sans); color: var(--error); margin-bottom: 6px; }
@@ -784,10 +772,6 @@ textarea#composer::placeholder { color: var(--text-3); }
 .instr-confirm[hidden] { display: none; }
 .instr-confirm .set-verify { flex: 1; color: var(--text); }
 
-/* ── memory summary (Behavior & memory) ──────────────────────────────────── */
-.mem-summary { display: flex; align-items: center; gap: 14px; }
-.mem-summary-line { flex: 1; font: 400 13.5px/1.5 var(--font-sans); color: var(--text); }
-
 /* ── browser card state badge (Tools) ────────────────────────────────────── */
 .mcp-bi-state { flex: 0 0 auto; text-align: right; font: 600 11px/1.2 var(--font-sans); }
 .mcp-bi-state[data-state="ok"]   { color: var(--ok); }
@@ -798,11 +782,6 @@ textarea#composer::placeholder { color: var(--text-3); }
 .mcp-add { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 
 /* ── app-styled modal (migrate) ──────────────────────────────────────────── */
-.set-modal-backdrop { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center; background: rgba(20, 16, 8, 0.42); -webkit-app-region: no-drag; animation: pop var(--t-fast) var(--ease-out); }
-.set-modal { width: min(440px, 86vw); padding: 22px 24px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-3); }
-.set-modal h3 { margin: 0 0 8px; font: 650 17px/1.2 var(--font-sans); letter-spacing: -0.01em; color: var(--text); }
-.set-modal-body { margin: 0 0 18px; font: 400 13.5px/1.6 var(--font-sans); color: var(--text-2); }
-.set-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ── OAuth waiting recovery (Tools → setup card) ─────────────────────────── */
 .conn-card-recover { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -1207,10 +1186,6 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 .sys-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; font-size: 13px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
 .sys-grid .k { color: var(--text-3); } .sys-grid .v { color: var(--text); word-break: break-all; }
 .sys-sub { font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 20px 0 10px; }
-.sys-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
-.sys-list li { padding: 9px 0; border-bottom: 1px solid var(--line); }
-.sys-list li:last-child { border-bottom: 0; } .sys-list li.empty { color: var(--text-3); font-style: italic; }
-.sys-list .cap { display: inline-block; background: var(--surface-2); color: var(--text-2); font: 10px/1 var(--font-mono); padding: 3px 7px; border-radius: 6px; margin: 3px 4px 0 0; }
 
 /* ── skills (Behavior & memory) ───────────────────────────────────────── */
 .skill-bar { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; }

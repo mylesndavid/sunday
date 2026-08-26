@@ -3212,42 +3212,6 @@ class Daemon:
             log.warning("models fetch failed", error=str(exc))
             return web.json_response({"models": [], "error": str(exc)})
 
-    # ─── rewind (screen history) — routes to the satellite advertising it ──
-
-    def _rewind_device(self) -> str | None:
-        for d in self.devices.list_devices():
-            if "rewind" in (d.get("capabilities") or []):
-                return d["device_id"]
-        return None
-
-    async def _rewind_call(self, method: str, params: dict) -> dict:
-        did = self._rewind_device()
-        if not did:
-            return {"error": "no Mac with screen history connected"}
-        try:
-            return await self.devices.command(did, method, params, timeout=20)
-        except Exception as exc:  # noqa: BLE001
-            return {"error": str(exc)}
-
-    async def _http_rewind_recent(self, request: web.Request) -> web.Response:
-        try:
-            limit = int(request.query.get("limit", "500"))
-        except ValueError:
-            limit = 500
-        return web.json_response(await self._rewind_call("rewind_recent", {"limit": limit}))
-
-    async def _http_rewind_state(self, request: web.Request) -> web.Response:
-        return web.json_response(await self._rewind_call("rewind_stats", {}))
-
-    async def _http_rewind_toggle(self, request: web.Request) -> web.Response:
-        body = await request.json()
-        on = bool(body.get("on"))
-        if on:
-            interval = body.get("interval_seconds")
-            params = {"interval_seconds": interval} if interval else {}
-            return web.json_response(await self._rewind_call("rewind_start", params))
-        return web.json_response(await self._rewind_call("rewind_stop", {}))
-
     # ─── timeline (semantic activity layer + Wrapped) ─────────────────────
     # The satellite owns capture, frames, segmentation, and storage. The daemon
     # owns the model: it reads DERIVED TEXT (never screenshots) from the
@@ -3972,9 +3936,6 @@ class Daemon:
         app.router.add_get("/v1/mcp", self._http_mcp_get)
         app.router.add_post("/v1/mcp", self._http_mcp_post)
         app.router.add_get("/v1/models", self._http_models)
-        app.router.add_get("/v1/rewind/recent", self._http_rewind_recent)
-        app.router.add_get("/v1/rewind/state", self._http_rewind_state)
-        app.router.add_post("/v1/rewind/toggle", self._http_rewind_toggle)
         app.router.add_get("/v1/timeline/events", self._http_timeline_events)
         app.router.add_get("/v1/timeline/day", self._http_timeline_day)
         app.router.add_get("/v1/timeline/observations", self._http_timeline_observations)

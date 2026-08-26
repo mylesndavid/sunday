@@ -10,21 +10,16 @@ let defaultPrompt = '';
 let sysTimer = null;
 
 // Authoritative live state, refreshed from /v1/config + runMode(). The
-// Overview + Privacy generated sentences read from here.
+// Privacy sentences and the "Needs attention" block read from here.
 let live = {
   local: true,
-  role: 'server',
-  alwaysOn: false,
   provider: 'openrouter',
   model: '',
   voiceProvider: 'openai',
   transcriptionReady: false,
   transcriptionModel: '',
-  browserConnected: false,
-  serviceCount: 0,
   permsGranted: 0,
   permsTotal: 4,
-  memoryFacts: null,
 };
 
 export function init(daemonHttp) {
@@ -89,8 +84,6 @@ function showPage(id) {
 export async function loadAll() {
   const cfg = await window.sunday.getConfig();
   DAEMON_HTTP = cfg.daemonHttp || DAEMON_HTTP;
-  if ($('#set-http')) $('#set-http').value = cfg.daemonHttp || '';
-  if ($('#set-ws')) $('#set-ws').value = cfg.daemonWs || '';
   try {
     const res = await fetch(`${DAEMON_HTTP}/v1/config`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -121,9 +114,8 @@ export async function loadAll() {
   loadPair();
   loadThinking();
   loadDevices();
-  loadMemorySummary();
   loadSkills();
-  updateOverview();
+  renderAttention();
   updatePrivacy();
 }
 
@@ -149,21 +141,8 @@ function exitInstrEdit() {
 }
 function updateChars() { $('#set-prompt-chars').textContent = `${$('#set-prompt').value.length} chars`; }
 
-// ── memory summary (Behavior & memory) ──────────────────────────────────────
-async function loadMemorySummary() {
-  const el = $('#set-mem-summary'); if (!el) return;
-  try {
-    const h = await (await fetch(`${DAEMON_HTTP}/v1/admin/health`)).json();
-    const m = h.memory || {};
-    live.memoryFacts = m.total ?? null;
-    el.textContent = m.available
-      ? `${m.total ?? 0} fact${m.total === 1 ? '' : 's'} remembered.`
-      : 'Memory is not available on this runtime.';
-  } catch { el.textContent = 'Couldn\'t reach memory.'; }
-}
-
-// ── skills (Behavior & memory) ───────────────────────────────────────────────
-// The local library plus a "find online" disclosure. The agent sees these on
+// ── skills (Skills page) ─────────────────────────────────────────────────────
+// One panel: the local library plus the skills.sh search. The agent sees these on
 // the shelf every turn; this surface lets the user read, edit, add, and delete
 // them. Honest painting: list repaints only after a write succeeds, and a row
 // that failed to load offers retry inline.
@@ -377,9 +356,7 @@ async function loadBuiltinConnectors() {
   const wrap = $('#mcp-builtin'); if (!wrap) return;
   let d; try { d = await (await fetch(`${DAEMON_HTTP}/v1/mcp/builtin`)).json(); } catch { return; }
   renderBuiltins(wrap, d.connectors || []);
-  const pw = (d.connectors || []).find((c) => c.id === 'playwright');
-  live.browserConnected = !!(pw && pw.enabled);
-  updateOverview(); updatePrivacy();
+  updatePrivacy();
 }
 function renderBuiltins(wrap, connectors) {
   wrap.innerHTML = connectors.map((c) => {
@@ -418,9 +395,7 @@ function renderBuiltins(wrap, connectors) {
     const d = await r.json();
     if (d.connectors) {
       renderBuiltins(wrap, d.connectors);
-      const pw = (d.connectors || []).find((c) => c.id === 'playwright');
-      live.browserConnected = !!(pw && pw.enabled);
-      updateOverview(); updatePrivacy();
+      updatePrivacy();
     }
     loadMcp();
   };
@@ -671,8 +646,6 @@ async function loadPinnedConnectors() {
     const conns = d.connectors || [];
     document.querySelector('#conn-unconfigured').hidden = true;
     connState.connected = new Set(conns.map((c) => c.provider));
-    live.serviceCount = conns.filter((c) => c.has_tools).length;
-    updateOverview();
     if (!conns.length) {
       ul.innerHTML = '<li class="conn-pinned-empty">No services connected yet. Add one below to start.</li>';
       return;
@@ -1006,9 +979,6 @@ async function refreshRunMode() {
   try {
     const m = await window.sunday.runMode();
     live.local = !!m.local;
-    live.role = m.role || (m.local ? 'server' : 'satellite');
-    live.alwaysOn = !!m.alwaysOn;
-    paintRuntime();
     // ChatGPT (Codex) only works on This Mac — reflect that in the provider row.
     const codexRow = document.querySelector('#set-prov-list [data-provider="codex"]');
     if (codexRow) {
@@ -1018,20 +988,6 @@ async function refreshRunMode() {
     }
     await refreshBrainProvider();
   } catch {}
-}
-
-function paintRuntime() {
-  document.querySelectorAll('#set-runmode .seg-btn').forEach((b) => {
-    const on = (b.dataset.mode === 'local') === live.local;
-    b.classList.toggle('active', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-  const copy = $('#set-runtime-copy');
-  if (copy) copy.textContent = live.local
-    ? 'The daemon, memory, and local tools run inside this app.'
-    : 'Sunday runs on a daemon you host elsewhere; this app is the window into it.';
-  const form = $('#set-remote-form');
-  if (form) form.hidden = live.local;
 }
 
 async function refreshBrainProvider() {
@@ -1121,7 +1077,7 @@ async function applyProvider(provider, currentModel) {
   }
   // Fully-local (Ollama) wizard
   refreshOllamaRow(provider === 'ollama');
-  updateImpact(); updateOverview(); updatePrivacy();
+  renderAttention(); updatePrivacy();
 }
 
 let _ollamaRec = null;
@@ -1280,7 +1236,7 @@ async function pickModel(id) {
     await saveBrain({ provider: selectedProvider, model_name: id });
     live.model = id;
     setProvStatus(selectedProvider, '', '');
-    updateImpact(); updateOverview();
+    renderAttention();
   } catch (err) {
     $('#set-model').value = prev;
     showCurrentModel();
@@ -1302,10 +1258,6 @@ async function refreshSystem() {
       <span class="k">messages</span><span class="v">${d.messages ?? '—'}</span>
       <span class="k">tools</span><span class="v">${d.tools_count ?? '—'}</span>
       <span class="k">uptime</span><span class="v">${d.uptime_s ? uptime(d.uptime_s) : '—'}</span>`;
-    const devs = h.devices || [];
-    if ($('#sys-devices')) $('#sys-devices').innerHTML = devs.length
-      ? devs.map((x) => `<li><strong>${esc(x.device_id)}</strong><div>${(x.capabilities || []).map((c) => `<span class="cap">${esc(c)}</span>`).join('')}</div></li>`).join('')
-      : '<li class="empty">no devices connected</li>';
     const m = h.memory || {};
     if ($('#sys-memory')) $('#sys-memory').innerHTML = `
       <span class="k">available</span><span class="v">${m.available ? 'yes' : 'no'}</span>
@@ -1326,13 +1278,6 @@ function chatDestSentence() {
   return dest ? `Prompts are sent to ${dest}.` : 'Prompts stay on this Mac.';
 }
 
-function updateImpact() {
-  const el = $('#set-impact'); if (!el) return;
-  const runtime = live.local ? 'The daemon runs on this Mac.' : 'The daemon runs on your remote host.';
-  const memory = live.local ? 'Memory is stored on this Mac.' : 'Memory is stored on your remote daemon.';
-  el.textContent = `${runtime} ${chatDestSentence()} ${memory}`;
-}
-
 function voiceConfigured() {
   const vp = live.voiceProvider;
   return keySavedFlag(vp === 'gemini' ? 'voice-gemini' : 'voice-openai');
@@ -1342,29 +1287,12 @@ function voiceSentence() {
   return voiceConfigured() ? `${vp} (configured)` : 'not configured';
 }
 
-function updateOverview() {
-  if (!$('#ov-runtime')) return;
-  $('#ov-role').textContent = live.role === 'server'
-    ? (live.alwaysOn ? 'Server · this Mac is the brain · always-on' : 'Server · this Mac is the brain')
-    : 'Satellite · a window onto the brain';
-  $('#ov-runtime').textContent = live.local ? 'This Mac' : (DAEMON_HTTP || 'remote daemon');
-  $('#ov-thinking').textContent = `${provLabel(live.provider)}${live.model ? ` · ${live.model.split('/').slice(-1)[0]}` : ''}`;
-  $('#ov-datapath').textContent = chatDestSentence();
-  $('#ov-voice').textContent = voiceSentence();
-  const tools = [];
-  tools.push(live.browserConnected ? 'Browser connected' : 'Browser not connected');
-  tools.push(`${live.serviceCount} service${live.serviceCount === 1 ? '' : 's'} always available`);
-  $('#ov-tools').textContent = tools.join(' · ');
-  $('#ov-perms').textContent = `${live.permsGranted} of ${live.permsTotal} allowed`;
-  renderAttention();
-}
-
 // "Needs attention" — only renders when something is actually wrong.
 let _daemonReachable = true;
 function renderAttention() {
   const box = $('#ov-attention'); if (!box) return;
   const items = [];
-  if (!_daemonReachable) items.push('The daemon is unreachable — check the runtime on Model and data path.');
+  if (!_daemonReachable) items.push('The daemon is unreachable — quit and reopen Sunday.');
   if (live.permsGranted < live.permsTotal) items.push(`${live.permsTotal - live.permsGranted} permission${live.permsTotal - live.permsGranted === 1 ? '' : 's'} not granted — some features need them.`);
   if (_updateReady) items.push('An update is ready — restart to apply it.');
   if (!items.length) { box.hidden = true; box.innerHTML = ''; return; }
@@ -1378,7 +1306,7 @@ function updatePrivacy() {
   $('#df-voice').textContent = voiceConfigured() ? `sent to ${live.voiceProvider === 'gemini' ? 'Google (Gemini)' : 'OpenAI'}` : 'not configured';
   $('#df-bg').textContent = live.transcriptionReady ? 'stays on this Mac' : 'OpenAI fallback until on-device transcription is ready';
   $('#df-browser').textContent = 'runs on this Mac';
-  $('#df-memory').textContent = live.local ? 'stays on this Mac' : 'on your remote daemon';
+  $('#df-memory').textContent = 'stays on this Mac';
 }
 
 // ── update state (About) — tracked for the Overview attention block ──────────
@@ -2091,40 +2019,6 @@ function wire() {
   // ── nav ──
   document.querySelectorAll('.set-navitem').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.page)));
   wireTimeline();
-  document.querySelectorAll('.ov-action[data-goto]').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.goto)));
-
-  // ── runtime segmented control + migrate ──
-  document.querySelectorAll('#set-runmode .seg-btn').forEach((b) => b.addEventListener('click', async () => {
-    const mode = b.dataset.mode;
-    const m = await window.sunday.runMode().catch(() => ({}));
-    if (mode === 'local' && !m.local) { openMigrateModal(); return; }
-    if (mode === 'cloud' && m.local) {
-      // Switching This Mac → remote: just flip; main process reloads on success.
-      const r = await window.sunday.setRunMode('cloud');
-      if (r && r.error) { flashError(`Couldn't switch: ${r.error}`); await refreshRunMode(); }
-      return;
-    }
-    // No-op (already in that mode) — re-sync the paint.
-    paintRuntime();
-  }));
-
-  // Remote-daemon form
-  $('#set-conn-test')?.addEventListener('click', async () => {
-    const url = $('#set-http').value.trim().replace(/\/+$/, '');
-    const v = $('#set-conn-verify'); v.dataset.state = ''; v.textContent = `→ ${url}/v1/status …`;
-    try {
-      const res = await fetch(`${url}/v1/status`); if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json();
-      v.dataset.state = 'ok';
-      v.textContent = `${d.version} · ${(d.model || '').split('/').slice(-1)[0]} · ${d.messages} msgs · ${(d.devices || []).length} device`;
-    } catch (err) { v.dataset.state = 'fail'; v.textContent = err.message; }
-  });
-  $('#set-conn-save')?.addEventListener('click', async () => {
-    const http = $('#set-http').value.trim().replace(/\/+$/, '');
-    const ws = $('#set-ws').value.trim() || (http.replace(/^http/, 'ws') + '/v1/ws');
-    await window.sunday.saveConnection({ daemonHttp: http, daemonWs: ws });
-    const v = $('#set-conn-verify'); if (v) { v.dataset.state = 'ok'; v.textContent = 'connection saved'; }
-  });
 
   // ── provider rows ──
   document.querySelectorAll('#set-prov-list .prov-row').forEach((row) => {
@@ -2302,9 +2196,6 @@ function wire() {
     } catch (err) { flashError(`save failed: ${err.message}`); }
   });
 
-  // ── memory: Open Memory tab ──
-  $('#set-mem-open')?.addEventListener('click', () => document.querySelector('.tab[data-view="memory"]')?.click());
-
   // ── skills ──
   $('#skill-search')?.addEventListener('input', renderSkills);
   $('#skill-new')?.addEventListener('click', newSkill);
@@ -2350,7 +2241,7 @@ function wire() {
           ? 'Gemini API key — saves on Enter'
           : 'OpenAI platform key (sk-…) — saves on Enter; the ChatGPT login does not cover realtime');
     }
-    updateOverview(); updatePrivacy();
+    renderAttention(); updatePrivacy();
   }
   document.querySelectorAll('#set-voice-provider .seg-btn').forEach((b) => b.addEventListener('click', () => {
     localStorage.setItem('voiceProvider', b.dataset.vp);
@@ -2367,7 +2258,7 @@ function wire() {
       setKeySaved(cur === 'gemini' ? 'voice-gemini' : 'voice-openai');
       e.target.value = ''; e.target.placeholder = 'key saved — paste a new one to replace it';
       if (note) { note.dataset.state = 'ok'; note.textContent = 'key saved'; }
-      updateOverview(); updatePrivacy();
+      renderAttention(); updatePrivacy();
     } catch (err) { if (note) { note.dataset.state = 'fail'; note.textContent = `key failed — ${err.message}`; } }
   });
   paintVoiceProvider();
@@ -2377,8 +2268,6 @@ function wire() {
 
   // ── transcription status ──
   wireTranscription();
-
-  // proactive check-ins removed (felt bolted-on); wireCheckin() left unused.
 
   // ── developer diagnostics (Argus) ──
   wireArgus();
@@ -2390,7 +2279,7 @@ function wire() {
   wireUpdates();
 
   // Default landing page.
-  showPage('page-overview');
+  showPage('page-account');
 }
 
 // ── Ollama pull (fully-local download with live progress) ───────────────────
@@ -2456,7 +2345,7 @@ async function switchProvider(provider) {
       await applyProvider('codex');
       if (!m.local) { setCodexStatus('ChatGPT runs on This Mac — switch the runtime above first.', 'fail'); return; }
       const s = await (await fetch(`${DAEMON_HTTP}/v1/codex/status`)).json().catch(() => ({}));
-      if (s.connected) { await saveBrain({ provider: 'codex' }); live.provider = 'codex'; updateImpact(); updateOverview(); updatePrivacy(); }
+      if (s.connected) { await saveBrain({ provider: 'codex' }); live.provider = 'codex'; renderAttention(); updatePrivacy(); }
     } catch (err) { setProvStatus('codex', `failed — ${err.message}`, 'fail'); }
     return;
   }
@@ -2471,53 +2360,6 @@ async function switchProvider(provider) {
     await refreshBrainProvider();   // revert visual selection to authoritative state
   }
 }
-
-// ── migrate modal (cloud/remote → This Mac) ─────────────────────────────────
-function openMigrateModal() {
-  let modal = $('#set-migrate-modal');
-  if (modal) modal.remove();
-  modal = document.createElement('div');
-  modal.id = 'set-migrate-modal';
-  modal.className = 'set-modal-backdrop';
-  modal.innerHTML = `
-    <div class="set-modal" role="dialog" aria-modal="true" aria-labelledby="set-migrate-title">
-      <h3 id="set-migrate-title">Move Sunday to this Mac?</h3>
-      <p class="set-modal-body" id="set-migrate-note">Your chat and memory can come along, or you can start clean. The daemon will run inside this app afterwards.</p>
-      <div class="set-modal-actions">
-        <button type="button" class="btn" id="set-migrate-cancel">Cancel</button>
-        <button type="button" class="btn" id="set-migrate-fresh">Start clean</button>
-        <button type="button" class="btn btn-primary" id="set-migrate">Copy chat and memory</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  const close = () => { modal.remove(); paintRuntime(); };
-  $('#set-migrate-cancel').addEventListener('click', close);
-  modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
-  document.addEventListener('keydown', function esc2(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc2); } });
-
-  $('#set-migrate-fresh').addEventListener('click', async () => {
-    const note = $('#set-migrate-note'); note.textContent = 'Switching to this Mac…';
-    disableModalButtons(modal);
-    const r = await window.sunday.setRunMode('local');
-    if (r && r.error) { note.textContent = `Couldn't switch: ${r.error}`; enableModalButtons(modal); await refreshRunMode(); }
-    // On success the main process reloads the window.
-  });
-  $('#set-migrate').addEventListener('click', async () => {
-    const note = $('#set-migrate-note'); note.textContent = 'Copying your chat and memory down…';
-    disableModalButtons(modal);
-    try {
-      const r = await window.sunday.migrateToLocal();
-      note.textContent = r.ok
-        ? `Copied ${(r.files || []).length} databases — now running on this Mac.`
-        : `Failed: ${r.error}`;
-      if (!r.ok) { enableModalButtons(modal); }
-      await refreshRunMode();
-      if (r.ok) setTimeout(close, 1200);
-    } catch (e) { note.textContent = `Failed: ${e.message}`; enableModalButtons(modal); }
-  });
-}
-function disableModalButtons(modal) { modal.querySelectorAll('button').forEach((b) => b.disabled = true); }
-function enableModalButtons(modal) { modal.querySelectorAll('button').forEach((b) => b.disabled = false); }
 
 // ── custom servers: add a server via form ───────────────────────────────────
 async function onMcpAdd(e) {
@@ -2667,38 +2509,6 @@ function wireTranscription() {
 }
 
 // ── developer diagnostics (Argus) ───────────────────────────────────────────
-// ── proactive check-ins ──────────────────────────────────────────────────────
-// Sunday occasionally reaching out first. One obvious toggle; defaults ON but
-// conservative on the daemon side. "stop checking in" in chat also turns it off.
-function wireCheckin() {
-  const statusEl = $('#set-checkin-status');
-  const btn = $('#set-checkin-toggle');
-  if (!btn) return;
-  function paint(s) {
-    const on = !!s.enabled;
-    btn.textContent = on ? 'Turn off' : 'Turn on';
-    statusEl.dataset.state = on ? 'ok' : '';
-    statusEl.textContent = on ? 'On' : 'Off';
-  }
-  async function refresh() {
-    try { paint(await (await fetch(`${DAEMON_HTTP}/v1/checkin/state`)).json()); }
-    catch { statusEl.textContent = ''; }
-  }
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    try {
-      const cur = await (await fetch(`${DAEMON_HTTP}/v1/checkin/state`)).json();
-      const r = await (await fetch(`${DAEMON_HTTP}/v1/checkin/set`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !cur.enabled }),
-      })).json();
-      paint(r);
-    } catch { statusEl.dataset.state = 'fail'; statusEl.textContent = 'failed'; }
-    finally { btn.disabled = false; }
-  });
-  refresh();
-}
-
 function wireArgus() {
   async function refreshArgusUI() {
     const statusEl = $('#set-argus-status');
@@ -2778,7 +2588,7 @@ function wirePermissions() {
       let granted = 0;
       for (const p of PERMS) { applyPerm(p, m); if ((m[p.key] || '') === 'granted') granted++; }
       live.permsGranted = granted; live.permsTotal = PERMS.length;
-      updateOverview();
+      renderAttention();
     } catch {}
   }
   for (const p of PERMS) {

@@ -306,8 +306,7 @@
   <!-- ─── SETTINGS ─────────────────────────────────────────────────── -->
   <section class="view view-settings" id="view-settings">
     <nav class="set-nav" id="set-nav" role="tablist" aria-label="Settings">
-      <button type="button" class="set-navitem active" data-page="page-overview" aria-current="page">Overview</button>
-      <button type="button" class="set-navitem" data-page="page-account">Account</button>
+      <button type="button" class="set-navitem active" data-page="page-account" aria-current="page">Account</button>
       <button type="button" class="set-navitem" data-page="page-model">Model &amp; data path</button>
       <button type="button" class="set-navitem" data-page="page-channels">Channels</button>
       <button type="button" class="set-navitem" data-page="page-tools">Tools</button>
@@ -322,48 +321,10 @@
       <div class="set-inner">
         <span class="set-error" id="set-error" role="alert" hidden></span>
 
-        <!-- ═══ OVERVIEW ═══════════════════════════════════════════════════ -->
-        <section class="set-page active" id="page-overview">
-          <h2>Overview</h2>
-          <p class="set-help">Where Sunday stands right now, at a glance.</p>
-
+        <!-- ═══ ACCOUNT ════════════════════════════════════════════════════ -->
+        <section class="set-page active" id="page-account">
           <div class="ov-attention" id="ov-attention" role="status" aria-live="polite" hidden></div>
 
-          <div class="ov-card">
-            <div class="ov-card-h">Current setup</div>
-            <dl class="ov-rows" id="ov-rows" aria-live="polite">
-              <div class="ov-row"><dt>Role</dt><dd id="ov-role">—</dd></div>
-              <div class="ov-row"><dt>Runtime</dt><dd id="ov-runtime">—</dd></div>
-              <div class="ov-row"><dt>Thinking</dt><dd id="ov-thinking">—</dd></div>
-              <div class="ov-row"><dt>Data path</dt><dd id="ov-datapath">—</dd></div>
-              <div class="ov-row"><dt>Voice</dt><dd id="ov-voice">—</dd></div>
-              <div class="ov-row"><dt>Tools</dt><dd id="ov-tools">—</dd></div>
-              <div class="ov-row"><dt>Permissions</dt><dd id="ov-perms">—</dd></div>
-            </dl>
-          </div>
-
-          <div class="ov-actions">
-            <button type="button" class="ov-action" data-goto="page-model">
-              <span class="ov-action-t">Change model</span>
-              <span class="ov-action-d">Pick a provider and model.</span>
-            </button>
-            <button type="button" class="ov-action" data-goto="page-tools">
-              <span class="ov-action-t">Manage tools</span>
-              <span class="ov-action-d">Browser, services, custom servers.</span>
-            </button>
-            <button type="button" class="ov-action" data-goto="page-privacy">
-              <span class="ov-action-t">Fix permissions</span>
-              <span class="ov-action-d">Microphone, screen, control, disk.</span>
-            </button>
-            <button type="button" class="ov-action" data-goto="page-about">
-              <span class="ov-action-t">Check for updates</span>
-              <span class="ov-action-d">See what version you're on.</span>
-            </button>
-          </div>
-        </section>
-
-        <!-- ═══ MODEL & DATA PATH ══════════════════════════════════════════ -->
-        <section class="set-page" id="page-account">
           <h2>Account</h2>
           <p class="set-help">Sign in to Sunday for a stable account identity and access to Sunday's hosted free models.</p>
 
@@ -405,13 +366,6 @@
         <section class="set-page" id="page-model">
           <h2>Model and data path</h2>
           <p class="set-help">Where Sunday runs, which model it thinks with, and what that means for your data.</p>
-
-          <!-- RUNTIME — local only. Remote/hosted daemon removed: Sunday runs on
-               this Mac, full stop (avoids the "hosted" path that 404'd on setup). -->
-          <div class="set-panel">
-            <div class="brain-label" id="set-runtime-label">Runtime</div>
-            <p class="set-help set-help-tight" id="set-runtime-copy">Sunday runs entirely on <strong>this Mac</strong> — the daemon, memory, and local tools all live inside this app. Nothing is hosted remotely.</p>
-          </div>
 
           <!-- HOW HARD SHE THINKS -->
           <div class="set-panel">
@@ -530,12 +484,6 @@
 
             <input type="text" id="set-model" hidden>
             <input type="text" id="set-provider" hidden>
-          </div>
-
-          <!-- PRIVACY IMPACT -->
-          <div class="set-panel set-impact">
-            <div class="brain-label">Privacy impact</div>
-            <p class="set-impact-line" id="set-impact" aria-live="polite">—</p>
           </div>
         </section>
 
@@ -896,10 +844,10 @@
           <p class="set-help">Reusable procedures Sunday can run. She sees this shelf every turn and loads the one that fits — installs them from the open directory, and writes new ones herself after working something out.</p>
 
           <div class="set-panel">
-            <div class="brain-label">Installed skills</div>
+            <div class="brain-label">Skills</div>
 
             <div class="skill-bar">
-              <input type="text" id="skill-search" class="field" placeholder="Filter skills" autocomplete="off" spellcheck="false" aria-label="Filter skills">
+              <input type="text" id="skill-search" class="field" placeholder="Filter installed skills" autocomplete="off" spellcheck="false" aria-label="Filter installed skills">
               <button type="button" class="btn" id="skill-new">New skill</button>
             </div>
 
@@ -939,14 +887,10 @@
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Find skills online -->
-          <div class="set-panel">
-            <div class="brain-label">Find skills online</div>
-            <p class="set-help set-help-tight">Search the open skills.sh directory and install one with a click.</p>
+            <!-- Find more on the open skills.sh directory, and install with a click. -->
             <div class="skill-bar">
-              <input type="text" id="skill-find-q" class="field" placeholder="e.g. gmail triage, app store, remotion" autocomplete="off" spellcheck="false" aria-label="Search the skills directory">
+              <input type="text" id="skill-find-q" class="field" placeholder="Search skills.sh — e.g. gmail triage, app store, remotion" autocomplete="off" spellcheck="false" aria-label="Search the skills directory">
               <button type="button" class="btn" id="skill-find-go">Search</button>
             </div>
             <div class="skill-status" id="skill-find-status" aria-live="polite" hidden></div>
@@ -1088,20 +1032,6 @@
             </div>
           </div>
 
-          <!-- SKILLS moved to its own top-level page (page-skills). -->
-
-
-          <!-- Proactive check-ins were removed (felt bolted-on). -->
-
-
-          <!-- MEMORY -->
-          <div class="set-panel">
-            <div class="brain-label">Memory</div>
-            <div class="mem-summary">
-              <span class="mem-summary-line" id="set-mem-summary" aria-live="polite">—</span>
-              <button type="button" class="btn" id="set-mem-open">Open Memory</button>
-            </div>
-          </div>
         </section>
 
         <!-- ═══ PRIVACY ════════════════════════════════════════════════════ -->
@@ -1208,8 +1138,6 @@
             <div class="set-panel set-panel-flush">
               <div class="brain-label">System status</div>
               <div class="sys-grid mono" id="sys-grid"></div>
-              <h3 class="sys-sub">Devices</h3>
-              <ul class="sys-list" id="sys-devices"><li class="empty">—</li></ul>
               <h3 class="sys-sub">Memory</h3>
               <div class="sys-grid mono" id="sys-memory"></div>
             </div>
