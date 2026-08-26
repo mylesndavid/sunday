@@ -741,21 +741,30 @@ class Daemon:
         work from anywhere the chat is readable.
 
         The daemon is reachable across the tailnet, so this refuses to be a
-        general file-read primitive: the resolved path must sit inside
-        ~/.sunday. Symlinks are resolved BEFORE the check, so a link planted
-        inside the attachments dir can't reach out of it.
+        general file-read primitive. The resolved path must sit inside one of
+        the MEDIA directories — not ~/.sunday at large, which also holds
+        credentials.env, auth.token and every database. Symlinks are resolved
+        BEFORE the check, so a link planted in the attachments dir can't reach
+        out of it.
         """
+        from sunday.attachments import attachments_dir
         from sunday.paths import sunday_home
         raw = request.query.get("path", "")
         if not raw:
             return web.json_response({"error": "path required"}, status=400)
-        home = Path(sunday_home()).expanduser().resolve()
+        home = Path(sunday_home()).expanduser()
+        roots = []
+        for d in (attachments_dir(), home / "rewind", home / "timeline"):
+            try:
+                roots.append(Path(d).expanduser().resolve())
+            except (OSError, RuntimeError):
+                continue
         try:
             p = Path(raw).expanduser().resolve()
         except (OSError, RuntimeError):
             return web.json_response({"error": "bad path"}, status=400)
-        if not p.is_relative_to(home):
-            return web.json_response({"error": "outside the sunday home"}, status=403)
+        if not any(p.is_relative_to(r) for r in roots):
+            return web.json_response({"error": "not an attachment"}, status=403)
         if not p.is_file():
             return web.json_response({"error": "no such attachment"}, status=404)
         return web.FileResponse(p)
