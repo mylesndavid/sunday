@@ -396,6 +396,32 @@
             <p class="set-help set-help-tight" id="set-runtime-copy">Sunday runs entirely on <strong>this Mac</strong> — the daemon, memory, and local tools all live inside this app. Nothing is hosted remotely.</p>
           </div>
 
+          <!-- HOW HARD SHE THINKS -->
+          <div class="set-panel">
+            <div class="brain-label">How hard she thinks</div>
+            <p class="set-help set-help-tight">More thinking means better multi-step work and tool routing, and a slower first word. Off is snappiest — fine for chat, worse at anything with several steps.</p>
+            <div class="think-row" id="think-row" role="radiogroup" aria-label="Thinking level">
+              <button type="button" class="think-opt" data-think="off"    role="radio" aria-checked="false">Off</button>
+              <button type="button" class="think-opt" data-think="low"    role="radio" aria-checked="false">Low</button>
+              <button type="button" class="think-opt" data-think="medium" role="radio" aria-checked="false">Medium</button>
+              <button type="button" class="think-opt" data-think="high"   role="radio" aria-checked="false">High</button>
+            </div>
+            <div class="set-actions"><span class="set-verify" id="think-status" aria-live="polite"></span></div>
+          </div>
+
+          <!-- CONNECTED SATELLITES -->
+          <div class="set-panel">
+            <div class="brain-label">Devices</div>
+            <p class="set-help set-help-tight">The computers Sunday can actually use right now — screen, shell, iMessage. A satellite that isn't listed here hasn't dialled home, and her device tools will land on a different Mac.</p>
+            <dl class="ov-rows" id="dev-rows" aria-live="polite">
+              <div class="ov-row"><dt>Connected</dt><dd id="dev-list" class="mono">—</dd></div>
+            </dl>
+            <div class="set-actions">
+              <span class="set-verify" id="dev-status" aria-live="polite"></span>
+              <button type="button" class="btn" id="dev-refresh">Refresh</button>
+            </div>
+          </div>
+
           <!-- THINKING MODEL -->
           <div class="set-panel">
             <div class="brain-label" id="set-prov-label-h">Thinking model</div>

@@ -33,18 +33,39 @@ def _devices_manager(ctx: ToolContext):
     return mgr
 
 
+def _norm_device_id(s: str) -> str:
+    """Fold a device id to its comparable core: lowercase, letters+digits only.
+    'Myless-Mac mini-2', 'myless_mac_mini_2' and 'MylessMacMini2' all become
+    'mylessmacmini2'."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
 def _resolve_device(ctx: ToolContext, explicit: str | None = None, capability: str | None = None) -> tuple[str | None, str | None]:
     """Pick the device a tool should target. With an explicit id, validate
     it's connected. Otherwise auto-select the connected device (optionally
     one advertising `capability`). Returns (device_id, error). This is why
     "show me my screen" works without the model first calling device_list
-    and threading an id through — there's almost always exactly one Mac."""
+    and threading an id through — there's almost always exactly one Mac.
+
+    Explicit ids match loosely on purpose. Device ids come from hostnames, so
+    they're full of hyphens and case the model reliably mis-remembers — asking
+    for 'Myless-Mac mini-2' when the device registered as 'Myless-Mac-mini-2'
+    used to hard-fail even though exactly one device obviously matched. We fold
+    both sides to letters+digits and accept an unambiguous hit; a fold that
+    matches several devices still errors rather than guessing between them."""
     mgr = _devices_manager(ctx)
     devices = mgr.list_devices()
     if explicit:
         if any(d["device_id"] == explicit for d in devices):
             return explicit, None
         ids = [d["device_id"] for d in devices]
+        want = _norm_device_id(explicit)
+        near = [d["device_id"] for d in devices if _norm_device_id(d["device_id"]) == want]
+        if len(near) == 1:
+            log.info("device id matched loosely", asked=explicit, matched=near[0])
+            return near[0], None
+        if len(near) > 1:
+            return None, f"'{explicit}' matches more than one connected device: {near}. Use the exact id."
         return None, f"no connected device '{explicit}'. Connected: {ids or 'none'}"
     if capability:
         devices = [d for d in devices if capability in (d.get("capabilities") or [])]

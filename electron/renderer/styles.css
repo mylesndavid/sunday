@@ -1549,3 +1549,17 @@ select.field { appearance: none; -webkit-appearance: none; cursor: pointer; back
 /* Collapsed: the summary shows, everything else in the panel hides. */
 .ch-panel.is-collapsed .ch-form,
 .ch-panel.is-collapsed > .mcp-bi { display: none; }
+
+/* Thinking level — a segmented control. Same visual language as .prov-row
+   (accent border + tint marks the active choice), just laid out in a row. */
+.think-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.think-opt {
+  -webkit-app-region: no-drag; cursor: pointer;
+  flex: 1 1 0; min-width: 72px; padding: 9px 12px;
+  font: 500 13px/1.2 var(--font-sans); color: var(--text-2);
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-md);
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.think-opt:hover { background: var(--surface-2); }
+.think-opt[aria-checked="true"] { border-color: var(--accent); background: var(--accent-tint); color: var(--text); }
+.think-opt:disabled { opacity: 0.5; cursor: default; }

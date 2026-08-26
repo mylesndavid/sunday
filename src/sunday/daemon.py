@@ -716,6 +716,50 @@ class Daemon:
             pass   # best-effort checkpoint; a slightly-behind copy is still fine
         return web.FileResponse(p, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
+    async def _http_devices(self, request: web.Request) -> web.Response:
+        """Which satellites are connected right now.
+
+        Until this existed there was no way to see that a satellite had failed
+        to dial home — you found out when a device tool errored mid-conversation.
+        The app's Settings reads this so 'is my laptop actually connected?' is a
+        glance, not a diagnosis.
+        """
+        try:
+            devices = self.devices.list_devices()
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response({"error": str(exc), "devices": []}, status=500)
+        return web.json_response({"devices": devices, "count": len(devices)})
+
+    async def _http_attachment(self, request: web.Request) -> web.Response:
+        """Serve one attachment file by path.
+
+        Attachments (screenshots, dropped files) live on the SERVER's disk and
+        the message record only carries an absolute local path. A satellite's UI
+        therefore had nothing it could render — `file:///Users/.../x.png` points
+        at a file that doesn't exist on that Mac, which is why remote screenshots
+        came out as broken-image blobs. Serving them over the daemon makes them
+        work from anywhere the chat is readable.
+
+        The daemon is reachable across the tailnet, so this refuses to be a
+        general file-read primitive: the resolved path must sit inside
+        ~/.sunday. Symlinks are resolved BEFORE the check, so a link planted
+        inside the attachments dir can't reach out of it.
+        """
+        from sunday.paths import sunday_home
+        raw = request.query.get("path", "")
+        if not raw:
+            return web.json_response({"error": "path required"}, status=400)
+        home = Path(sunday_home()).expanduser().resolve()
+        try:
+            p = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return web.json_response({"error": "bad path"}, status=400)
+        if not p.is_relative_to(home):
+            return web.json_response({"error": "outside the sunday home"}, status=403)
+        if not p.is_file():
+            return web.json_response({"error": "no such attachment"}, status=404)
+        return web.FileResponse(p)
+
     async def _http_chat_clear(self, request: web.Request) -> web.Response:
         """Wipe the conversation (fresh start). Clears the message log + the
         rolling compaction summary. Durable memory facts are untouched."""
@@ -1497,6 +1541,10 @@ class Daemon:
                 "provider":   self.config.model.provider,
                 "name":       self.config.model.name,
                 "base_url":   self.config.model.base_url,
+                # "off" | "low" | "medium" | "high" — one value for the UI to
+                # bind to, instead of making it derive a level from a bool + enum.
+                "thinking": (self.config.model.reasoning
+                             and self.config.model.reasoning_effort or "off"),
             },
             "identity_prompt": {
                 "effective":      stable_prefix(),
@@ -1587,6 +1635,22 @@ class Daemon:
                     applied["model_name"] = "gpt-5.2"
             self.config.model = replace(self.config.model, provider=prov)
             applied["provider"] = prov
+
+        # Thinking level: "off" | "low" | "medium" | "high". Persisted, since a
+        # setting that silently reverts on restart is worse than no setting.
+        if "thinking" in body:
+            level = str(body["thinking"] or "").strip().lower()
+            if level not in ("off", "low", "medium", "high"):
+                return web.json_response(
+                    {"error": "thinking must be off, low, medium, or high"}, status=400)
+            from dataclasses import replace
+            from sunday.config import save_thinking
+            on = level != "off"
+            self.config.model = replace(
+                self.config.model, reasoning=on,
+                reasoning_effort=(level if on else self.config.model.reasoning_effort))
+            save_thinking(reasoning=on, effort=level if on else None)
+            applied["thinking"] = level
 
         # API keys — write a credential (OPENROUTER_API_KEY, OPENAI_API_KEY, …).
         if isinstance(body.get("credentials"), dict):
@@ -3780,6 +3844,8 @@ class Daemon:
         app.router.add_post("/v1/task/steer", self._http_task_steer)
         app.router.add_post("/v1/chat/clear", self._http_chat_clear)
         app.router.add_get("/v1/export", self._http_export)
+        app.router.add_get("/v1/attachment", self._http_attachment)
+        app.router.add_get("/v1/devices", self._http_devices)
         app.router.add_get("/v1/log", self._http_log)
         app.router.add_get("/v1/threads", self._http_threads_list)
         app.router.add_post("/v1/threads", self._http_thread_create)

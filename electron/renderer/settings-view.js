@@ -119,6 +119,8 @@ export async function loadAll() {
   loadTimeline();
   loadNet();
   loadPair();
+  loadThinking();
+  loadDevices();
   loadMemorySummary();
   loadSkills();
   updateOverview();
@@ -1387,6 +1389,61 @@ let _updateReady = false;
 // brain. Sendblue keys save through the standard saveBrain({credentials}) path,
 // same as Gmail/Cockpit. The webhook URL carries a path secret so Funnel can
 // expose just that one route publicly.
+// ── How hard she thinks ─────────────────────────────────────────────────────
+// One control over the daemon's reasoning level. The daemon collapses its
+// bool + effort pair into a single "thinking" value so this doesn't have to
+// reconstruct a level from two fields.
+function paintThinking(level) {
+  for (const b of document.querySelectorAll('.think-opt')) {
+    b.setAttribute('aria-checked', String(b.dataset.think === level));
+  }
+}
+
+async function loadThinking() {
+  if (!$('#think-row')) return;
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/config`)).json();
+    paintThinking((d.model && d.model.thinking) || 'medium');
+  } catch { /* leave it unpainted; the daemon may still be booting */ }
+}
+
+async function setThinking(level) {
+  const st = $('#think-status');
+  const prev = document.querySelector('.think-opt[aria-checked="true"]')?.dataset.think;
+  paintThinking(level);                     // optimistic — snap, then confirm
+  document.querySelectorAll('.think-opt').forEach((b) => { b.disabled = true; });
+  if (st) st.textContent = 'saving…';
+  try {
+    const r = await fetch(`${DAEMON_HTTP}/v1/config`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thinking: level }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+    if (st) { st.textContent = 'saved'; setTimeout(() => { st.textContent = ''; }, 1600); }
+  } catch (e) {
+    if (prev) paintThinking(prev);          // don't leave a lie on screen
+    if (st) st.textContent = `couldn’t save — ${e.message}`;
+  } finally {
+    document.querySelectorAll('.think-opt').forEach((b) => { b.disabled = false; });
+  }
+}
+
+// ── Devices (which satellites are actually connected) ───────────────────────
+async function loadDevices() {
+  const el = $('#dev-list'); if (!el) return;
+  try {
+    const d = await (await fetch(`${DAEMON_HTTP}/v1/devices`)).json();
+    const ids = (d.devices || []).map((x) => x.device_id);
+    // 'local' is the daemon's own in-process shell, not a satellite — showing
+    // it as a "device" reads as a connected Mac that isn't one.
+    const sats = ids.filter((i) => i !== 'local');
+    el.textContent = sats.length ? sats.join(', ') : 'no satellites connected';
+  } catch {
+    el.textContent = 'unavailable';
+  }
+}
+
 // ── Connect a satellite (server role) ───────────────────────────────────────
 // The server's tailnet address + token ARE satellite onboarding — surface them
 // here so pairing another Mac never requires the terminal. Hidden on satellites
@@ -2177,6 +2234,14 @@ function wire() {
 
   // Texting (Sendblue over Tailscale)
   $('#net-setup')?.addEventListener('click', () => setupTexting());
+  document.querySelectorAll('.think-opt').forEach((b) =>
+    b.addEventListener('click', () => setThinking(b.dataset.think)));
+  $('#dev-refresh')?.addEventListener('click', async () => {
+    const st = $('#dev-status');
+    if (st) st.textContent = 'checking…';
+    await loadDevices();
+    if (st) { st.textContent = ''; }
+  });
   $('#net-step-https')?.addEventListener('click', () => window.sunday.openExternal('https://login.tailscale.com/admin/dns'));
   $('#net-step-acl')?.addEventListener('click', () => window.sunday.openExternal('https://login.tailscale.com/admin/acls'));
   $('#net-acl-copy')?.addEventListener('click', async (e) => {

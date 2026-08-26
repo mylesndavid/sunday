@@ -199,7 +199,8 @@ class CodexProvider:
             body["tools"] = tools
             body["tool_choice"] = "auto"
         if getattr(self.config.model, "reasoning", False):
-            body["reasoning"] = {"summary": "auto"}
+            from sunday.runtime.providers.openai_compat import _reasoning_effort
+            body["reasoning"] = {"summary": "auto", "effort": _reasoning_effort(self.config)}
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []

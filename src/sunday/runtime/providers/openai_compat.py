@@ -29,6 +29,25 @@ def _load_async_openai():
     return AsyncOpenAI
 
 
+_EFFORTS = ("low", "medium", "high")
+
+
+def _reasoning_effort(config: SundayConfig) -> str:
+    """The configured thinking level, floored to something the APIs accept.
+    Anything unrecognised falls back to 'medium' rather than being forwarded —
+    a bad enum is a hard 400 from every provider."""
+    val = str(getattr(config.model, "reasoning_effort", "") or "").strip().lower()
+    return val if val in _EFFORTS else "medium"
+
+
+def _takes_reasoning_effort(model: Any) -> bool:
+    """Does this OpenAI model accept a top-level `reasoning_effort`? True for
+    the reasoning families (gpt-5.x, o1/o3/o4); false for 4o-class chat models,
+    which reject the param outright."""
+    name = str(getattr(model, "name", "") or "").lower()
+    return name.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 class OpenAICompatProvider:
     """OpenAI Chat Completions streaming, configurable base_url.
 
@@ -152,8 +171,13 @@ class OpenAICompatProvider:
             # but was never sent — so the model ran with reasoning off and flailed
             # on multi-step tool routing. OpenRouter's unified param turns it on.
             if getattr(self.config.model, "reasoning", False):
-                extra["reasoning"] = {"enabled": True}
+                extra["reasoning"] = {"enabled": True, "effort": _reasoning_effort(self.config)}
             kwargs["extra_body"] = extra
+        elif getattr(self.config.model, "reasoning", False) and _takes_reasoning_effort(self.config.model):
+            # Direct OpenAI: the effort is a top-level Chat Completions param.
+            # Gated to models known to accept it — sending it to a non-reasoning
+            # model is a 400, and the router would burn a failover on it.
+            kwargs["reasoning_effort"] = _reasoning_effort(self.config)
 
         started = time.monotonic()
         stream = await client.chat.completions.create(**kwargs)

@@ -785,9 +785,33 @@ function friendlyError(s) {
   if (/402|credit|quota|insufficient/i.test(s)) return 'The model provider is out of credit. Check your provider key in Settings.';
   return s;
 }
+// Attachments live on the SERVER's disk and the message record carries an
+// absolute path there. `file://<path>` only resolves when the UI happens to be
+// running on that same Mac — from a satellite it renders as a broken-image
+// blob. So anything path-based is fetched from the daemon (auth-gated, hence
+// fetch + blob rather than a bare src) and works from any machine.
+function loadAttachmentImage(img, p) {
+  const url = `${DAEMON_HTTP}/v1/attachment?path=${encodeURIComponent(p)}`;
+  fetch(url)
+    .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+    .then((b) => { img.src = URL.createObjectURL(b); })
+    .catch(() => {
+      const chip = document.createElement('div');
+      chip.className = 'att';
+      chip.textContent = `${p.split('/').pop() || 'image'} · unavailable`;
+      img.replaceWith(chip);
+    });
+}
+
 function buildAttachment(a) {
   const kind = a.kind || guessKind(a.mime_type || '');
-  if (kind === 'image') { const img = document.createElement('img'); img.src = a.url || (a.path ? `file://${a.path}` : ''); img.alt = a.filename || 'image'; return img; }
+  if (kind === 'image') {
+    const img = document.createElement('img');
+    img.alt = a.filename || 'image';
+    if (a.url) img.src = a.url;
+    else if (a.path) loadAttachmentImage(img, a.path);
+    return img;
+  }
   const c = document.createElement('div'); c.className = 'att';
   c.textContent = `${a.filename || 'attachment'} · ${a.size ? Math.round(a.size / 1024) + 'kb · ' : ''}${a.mime_type || ''}`;
   return c;

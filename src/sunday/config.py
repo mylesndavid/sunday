@@ -40,6 +40,13 @@ class ModelConfig:
     # Reasoning costs latency but cleans up multi-step thinking and tool routing.
     # On by default; turn off for ambient conversational replies if it becomes a problem.
     reasoning: bool = True
+    # How hard she thinks when reasoning is on: "low" | "medium" | "high".
+    # Latency scales with it, so this is the knob you actually feel — low for
+    # snappy chat, high for gnarly multi-step work. Providers spell it
+    # differently (OpenRouter nests it under `reasoning`, OpenAI takes a
+    # top-level `reasoning_effort`, Codex puts it in the reasoning block), so
+    # each provider maps it; `reasoning=False` beats any effort here.
+    reasoning_effort: str = "medium"
     # OpenRouter-only provider pin (ignored unless base_url is OpenRouter). Pins
     # the routing order to tame the TTFT tail when a model is served by many
     # backends of varying speed. Empty -> sort:latency, which is correct for the
@@ -171,6 +178,40 @@ class SundayConfig:
         return self.home
 
 
+def _thinking_store() -> "Path":
+    from sunday.paths import sunday_home
+    return sunday_home() / "thinking.json"
+
+
+def load_thinking() -> dict:
+    """The persisted thinking settings, or {} when unset/corrupt."""
+    import json
+    try:
+        data = json.loads(_thinking_store().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — a bad file must never block startup
+        return {}
+
+
+def save_thinking(*, reasoning: bool | None = None, effort: str | None = None) -> dict:
+    """Persist the thinking level so it survives a daemon restart.
+
+    Model/provider changes are still in-memory only (they revert on restart —
+    a separate gap). This exists because a *setting the user toggles in the UI*
+    silently reverting is its own bug, and thinking level is exactly that.
+    """
+    import json
+    data = load_thinking()
+    if reasoning is not None:
+        data["reasoning"] = bool(reasoning)
+    if effort is not None:
+        data["effort"] = str(effort)
+    p = _thinking_store()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return data
+
+
 def load_config() -> SundayConfig:
     """Return the default config, with a couple of env overrides.
 
@@ -193,6 +234,13 @@ def load_config() -> SundayConfig:
         cfg.imessage_native = True
     if os.environ.get("SUNDAY_IMESSAGE_INDICATORS", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.imessage_indicators = True
+    # Thinking level: overlay ~/.sunday/thinking.json so the UI toggle sticks
+    # across daemon restarts.
+    _think = load_thinking()
+    if isinstance(_think.get("reasoning"), bool):
+        cfg.model.reasoning = _think["reasoning"]
+    if str(_think.get("effort", "")).lower() in ("low", "medium", "high"):
+        cfg.model.reasoning_effort = str(_think["effort"]).lower()
     # Relay: overlay the persisted toggle/url/agent_id from ~/.sunday/relay.json
     # (the dedicated store, since there's no general config-to-disk path yet).
     # This lands BEFORE the env overrides so SUNDAY_RELAY_* still wins. Imported
