@@ -315,10 +315,6 @@ class Daemon:
         # ticks; on a run of silent ticks we close + summarize the window.
         # (Capture happens in Sunday.app on the Mac; transcripts arrive via
         # /v1/observer/tick.)
-        # Meeting recording state — set by the Mac app while a meeting is
-        # being recorded; surfaced in /v1/status so the notch HUD can show
-        # the timer + red dot.
-        self._meeting: dict[str, Any] = {"recording": False, "since": None}
         self._obs_buffer: list[tuple[float, str]] = []   # (ts, transcript)
         self._obs_silent_streak: int = 0
         self._obs_conv_started: float | None = None
@@ -551,10 +547,8 @@ class Daemon:
                 "tools": self.registry.names(),
                 "devices": self.devices.list_devices(),
                 "agents": agents,
-                "meeting": self._meeting,
                 "now": now_text,
                 "since": now_since,
-                "atoms_open": self.atoms.count_working(),
                 "server": {"host": self.config.server.host, "port": self.config.server.port},
             }
 
@@ -825,58 +819,6 @@ class Daemon:
     async def _http_status(self, request: web.Request) -> web.Response:
         return web.json_response(await self._dispatch("status", {}))
 
-    async def _http_atoms_list(self, request: web.Request) -> web.Response:
-        state = request.query.get("state")
-        try:
-            limit = int(request.query.get("limit", "200"))
-        except ValueError:
-            limit = 200
-        return web.json_response({"atoms": self.atoms.list(state=state, limit=limit)})
-
-    async def _http_atoms_add(self, request: web.Request) -> web.Response:
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            return web.json_response({"error": "invalid JSON"}, status=400)
-        text = (body.get("text") or "").strip()
-        if not text:
-            return web.json_response({"error": "'text' is required"}, status=400)
-        aid = self.atoms.add(
-            text,
-            kind=body.get("kind"),
-            state=body.get("state") or "active",
-            owner=body.get("owner"),
-            evidence=body.get("evidence"),
-            source=body.get("source") or "observer",
-            completion_signal=body.get("completion_signal"),
-            confidence=float(body.get("confidence") or 1.0),
-        )
-        return web.json_response({"ok": True, "id": aid})
-
-    async def _http_atoms_update(self, request: web.Request) -> web.Response:
-        """V2 update path. Body: {action, state?, evidence?, confidence?,
-        superseded_by?, source?}. Text is immutable — mutation goes through
-        action=superseded (new atom + link). The store enforces the
-        confidence guard internally."""
-        try:
-            aid = int(request.match_info["id"])
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            return web.json_response({"error": "invalid request"}, status=400)
-        action = body.get("action") or "reinforced"
-        if action not in ("reinforced", "closed", "dropped", "superseded"):
-            return web.json_response({"error": f"invalid action: {action}"}, status=400)
-        result = self.atoms.apply_update(
-            aid,
-            action,
-            state=body.get("state"),
-            evidence=body.get("evidence"),
-            confidence=(float(body["confidence"]) if "confidence" in body and body["confidence"] is not None else None),
-            source=body.get("source") or "observer",
-            superseded_by=body.get("superseded_by"),
-        )
-        return web.json_response(result)
-
     async def _http_conversations_list(self, request: web.Request) -> web.Response:
         try:
             limit = int(request.query.get("limit", "50"))
@@ -960,11 +902,6 @@ class Daemon:
                 until=float(body.get("ended_at") or time.time()),
             )
         return web.json_response({"ok": True, "id": cid, "linked_atoms": linked})
-
-    async def _http_atoms_wipe(self, request: web.Request) -> web.Response:
-        """Clear the store. Used to nuke pre-v2 spike data."""
-        n = self.atoms.wipe()
-        return web.json_response({"ok": True, "deleted": n})
 
     async def _http_observer_now(self, request: web.Request) -> web.Response:
         """Observer (the tick worker on the user's Mac) pushes "what the user
@@ -1485,108 +1422,6 @@ class Daemon:
             "chars": len(transcript),
             "transcript_preview": transcript[-400:],
         })
-
-    async def _http_meeting_hud(self, request: web.Request) -> web.Response:
-        """The Mac app sets meeting-recording state here so the notch HUD
-        (which polls /v1/status) can show the timer + red dot. Body:
-        {recording: bool, since?: float}."""
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-        recording = bool(body.get("recording"))
-        self._meeting = {
-            "recording": recording,
-            "since": float(body["since"]) if recording and body.get("since") else (time.time() if recording else None),
-        }
-        return web.json_response({"ok": True, "meeting": self._meeting})
-
-    async def _http_meeting_done(self, request: web.Request) -> web.Response:
-        """Broadcast a 'summary ready' toast to the notch HUD."""
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-        title = (body.get("title") or "Meeting").strip()
-        await self._broadcast({"type": "toast", "text": f"Meeting notes ready · {title}"})
-        return web.json_response({"ok": True})
-
-    async def _http_meeting_stop_request(self, request: web.Request) -> web.Response:
-        """The notch (or anything) requests the active meeting stop. The Mac
-        app polls meeting state and stops the recorder when it sees this."""
-        if self._meeting.get("recording"):
-            self._meeting["stop_requested"] = True
-        return web.json_response({"ok": True})
-
-    async def _http_meeting_finalize(self, request: web.Request) -> web.Response:
-        """The Mac records + transcribes a meeting locally, then POSTs the
-        speaker-labeled transcript here. We summarize (Granola-style), store
-        it as a high-value Conversation, and turn action items into atoms.
-
-        Body: {transcript, started_at?, ended_at?}
-        Returns the full notes so the app can show them immediately.
-        """
-        from sunday import observer as obs
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            return web.json_response({"error": "invalid json"}, status=400)
-        transcript = (body.get("transcript") or "").strip()
-        # Reject near-empty captures rather than storing a junk "meeting".
-        # If we got this little, audio capture failed (usually system audio
-        # without a Screen Recording grant) — tell the app so, don't store.
-        if len(transcript) < 120:
-            return web.json_response({
-                "error": "no_audio",
-                "detail": "Barely any speech was captured. Make sure Screen Recording is granted to Sunday — system audio (the other people on the call) needs it.",
-            }, status=422)
-        started = float(body.get("started_at") or time.time())
-        ended = float(body.get("ended_at") or time.time())
-
-        notes = await obs.summarize_meeting(transcript, self.config)
-
-        # Store as a Conversation. Build a readable summary body from the
-        # structured notes so the existing Conversations UI renders it well.
-        summary_lines = [notes["tldr"]]
-        if notes["key_points"]:
-            summary_lines.append("\nKey points:\n" + "\n".join(f"• {p}" for p in notes["key_points"]))
-        if notes["decisions"]:
-            summary_lines.append("\nDecisions:\n" + "\n".join(f"• {d}" for d in notes["decisions"]))
-        if notes["action_items"]:
-            summary_lines.append("\nAction items:\n" + "\n".join(
-                f"• [{a.get('owner','?')}] {a.get('task','')}" + (f" (due {a['due']})" if a.get("due") else "")
-                for a in notes["action_items"]))
-        summary_text = "\n".join(summary_lines).strip()
-
-        cid = self.conversations.add(
-            started_at=started, ended_at=ended,
-            title=notes["title"], summary=summary_text,
-            category="meeting", participants=notes["participants"],
-            transcript=transcript, source="meeting",
-        )
-
-        # Action items → tracked atoms (this is the Sunday-over-Granola wedge).
-        atom_ids = []
-        for a in notes["action_items"]:
-            task = (a.get("task") or "").strip()
-            if not task:
-                continue
-            aid = self.atoms.add(
-                text=task,
-                kind="deadline" if a.get("due") else "commitment",
-                owner=a.get("owner") or "you",
-                completion_signal=None,
-                evidence=f"from meeting: {notes['title']}",
-                source="meeting",
-            )
-            if aid:
-                atom_ids.append(aid)
-        if atom_ids:
-            self.atoms.link_to_conversation(cid, since=started, until=ended)
-
-        log.info("meeting finalized", id=cid, title=notes["title"][:50],
-                 action_items=len(notes["action_items"]), atoms=len(atom_ids))
-        return web.json_response({"ok": True, "conversation_id": cid, "notes": notes, "atoms_created": len(atom_ids)})
 
     async def _http_observer_log(self, request: web.Request) -> web.Response:
         """Read the recent raw observer ticks (transcript + decided 'now' +
@@ -3917,6 +3752,28 @@ class Daemon:
 
     def _build_http_app(self) -> web.Application:
         app = web.Application(middlewares=[_auth_middleware])
+
+        # CORS: a satellite's renderer (file:// origin) fetches this daemon over
+        # the tailnet at https://<mini>.ts.net. Auth is the bearer token, not the
+        # origin — so answer CORS openly and let the token be the gate. Preflights
+        # already pass the auth middleware; they just need real headers back.
+        _CORS_HEADERS = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        }
+
+        async def _cors_prepare(_request, response):
+            response.headers.update(_CORS_HEADERS)
+
+        @web.middleware
+        async def _cors_preflight(request, handler):
+            if request.method == "OPTIONS":
+                return web.Response(status=204, headers=_CORS_HEADERS)
+            return await handler(request)
+
+        app.middlewares.insert(0, _cors_preflight)
+        app.on_response_prepare.append(_cors_prepare)
         app.router.add_post("/v1/say", self._http_say)
         app.router.add_post("/v1/message/edit", self._http_message_edit)
         app.router.add_post("/v1/task/stop", self._http_task_stop)
@@ -3936,17 +3793,9 @@ class Daemon:
         app.router.add_post("/v1/observer/tick", self._http_observer_tick)
         app.router.add_get("/v1/observer/log", self._http_observer_log)
         app.router.add_get("/v1/observer/buffer", self._http_observer_buffer)
-        app.router.add_post("/v1/meetings/finalize", self._http_meeting_finalize)
-        app.router.add_post("/v1/meetings/hud", self._http_meeting_hud)
-        app.router.add_post("/v1/meetings/done", self._http_meeting_done)
-        app.router.add_post("/v1/meetings/stop-request", self._http_meeting_stop_request)
         app.router.add_get("/v1/interjections", self._http_interjections_latest)
         app.router.add_post("/v1/interjections/{id}/engage", self._http_interjection_engage)
         app.router.add_post("/v1/interjections/{id}/dismiss", self._http_interjection_dismiss)
-        app.router.add_get("/v1/atoms", self._http_atoms_list)
-        app.router.add_post("/v1/atoms", self._http_atoms_add)
-        app.router.add_post("/v1/atoms/{id:[0-9]+}", self._http_atoms_update)
-        app.router.add_post("/v1/atoms/wipe", self._http_atoms_wipe)
         app.router.add_get("/v1/conversations", self._http_conversations_list)
         app.router.add_get("/v1/conversations/search", self._http_conversations_search)
         app.router.add_get("/v1/conversations/{id:[0-9]+}", self._http_conversations_get)

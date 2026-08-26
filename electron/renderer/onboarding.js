@@ -23,12 +23,17 @@ window.addEventListener('unhandledrejection', (e) => {
 // STEP_TOTAL; 'key' shares its slot with 'mic' so "step 3 of 5" reads right on
 // both branches.
 const STEP_ORDER = ['welcome', 'node', 'mic', 'browser', 'done'];
-const STEP_SLOT = { welcome: 1, node: 2, key: 3, mic: 3, browser: 4, email: 5, phone: 6, done: 7 };
+const STEP_SLOT = { welcome: 1, node: 2, connect: 3, key: 3, mic: 3, browser: 4, email: 5, phone: 6, done: 7 };
+// The satellite path is short — connect, permissions, done. Its pill counts
+// against its own total so "step 3 of 4" reads honestly on both branches.
+const SAT_SLOT = { welcome: 1, node: 2, connect: 3, mic: 4, done: 5 };
 const STEP_TOTAL = 7;
+const SAT_TOTAL = 5;
 
 let chosenDaemonHttp = '';
 let chosenDaemonWs   = '';
 let chosenLabel      = '';
+let chosenRole       = 'server';   // 'server' | 'satellite'
 
 const stepPill = $('#onb-step-pill');
 const verifyEl = $('#onb-verify');
@@ -37,8 +42,9 @@ function showStep(name) {
   $$('.onb-step').forEach((el) => {
     el.hidden = el.dataset.step !== name;
   });
-  const slot = STEP_SLOT[name] || (STEP_ORDER.indexOf(name) + 1);
-  stepPill.textContent = `step ${slot} of ${STEP_TOTAL}`;
+  const sat = chosenRole === 'satellite';
+  const slot = (sat ? SAT_SLOT[name] : STEP_SLOT[name]) || (STEP_ORDER.indexOf(name) + 1);
+  stepPill.textContent = `step ${slot} of ${sat ? SAT_TOTAL : STEP_TOTAL}`;
 }
 
 // ─── step 1 → 2 ────────────────────────────────────────────────────────
@@ -69,7 +75,7 @@ async function refreshDaemonUrl() {
       localURLs = { http, ws };
       // Keep the local (non-custom) selection pointed at the live daemon URL.
       const node = document.querySelector('input[name="node"]:checked')?.value;
-      if (node !== 'custom') { chosenDaemonHttp = localURLs.http; chosenDaemonWs = localURLs.ws; }
+      if (node !== 'satellite') { chosenDaemonHttp = localURLs.http; chosenDaemonWs = localURLs.ws; }
     }
   } catch { /* keep the last-known URL */ }
 }
@@ -84,56 +90,78 @@ $('#onb-debug')?.addEventListener('click', async (e) => {
   if (link) link.textContent = (r && r.ok) ? `Saved to Downloads: ${r.name}` : 'Couldn’t save debug packet';
 });
 
-function resolveDaemonURLs() {
-  const choice = document.querySelector('input[name="node"]:checked').value;
-  if (choice === 'local') {
-    chosenLabel = 'on this Mac';
-    chosenDaemonHttp = localURLs.http;
-    chosenDaemonWs   = localURLs.ws;
-    chosenToken = '';   // filled from the local daemon's file at finish
+// ── Tailscale awareness ────────────────────────────────────────────────
+// The wire between server and satellites. Both roles show its live state up
+// front: installed? running? and (once up) this Mac's tailnet address.
+async function paintTailscale(el) {
+  if (!el || !window.sunday?.tailscaleStatus) return null;
+  let ts = null;
+  try { ts = await window.sunday.tailscaleStatus(); } catch { return null; }
+  el.hidden = false;
+  if (!ts.installed) {
+    el.dataset.state = 'fail';
+    el.textContent = '✗ Tailscale isn’t installed — satellites connect through it. Get it at tailscale.com/download.';
+  } else if (!ts.running) {
+    el.dataset.state = 'fail';
+    el.textContent = '✗ Tailscale is installed but not running — open the Tailscale app and sign in.';
   } else {
-    const custom = $('#onb-custom-url').value.trim().replace(/\/+$/, '');
-    if (!custom) { return null; }
-    chosenLabel = `self-hosted · ${custom}`;
-    chosenDaemonHttp = custom;
-    chosenDaemonWs   = custom.replace(/^http/, 'ws') + '/v1/ws';
-    chosenToken = $('#onb-custom-token').value.trim();
+    el.dataset.state = 'ok';
+    el.textContent = `✓ Tailscale is up — this Mac is ${ts.dnsName || 'on your tailnet'}.`;
   }
-  return chosenDaemonHttp;
+  return ts;
 }
 
-async function testConnection() {
-  const choice = document.querySelector('input[name="node"]:checked').value;
-  const url = resolveDaemonURLs();
-  if (!url) {
-    verifyEl.hidden = false; verifyEl.dataset.state = 'fail';
-    verifyEl.textContent = 'Enter a URL.';
-    return;
-  }
-  if (choice === 'local') {
-    // The embedded daemon is already running locally. Skip straight to the
-    // one thing it needs from the user: an OpenRouter key.
-    showStep('key');
-    return;
-  }
-  // Self-hosted: verify reachable + token works.
-  verifyEl.hidden = false; verifyEl.dataset.state = 'pending';
-  verifyEl.textContent = `→ ${url}/v1/health …`;
-  try {
-    const res = await fetch(`${url}/v1/status`, { headers: chosenToken ? { Authorization: `Bearer ${chosenToken}` } : {} });
-    if (res.status === 401) throw new Error('token rejected — check the auth token');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    verifyEl.dataset.state = 'ok';
-    verifyEl.textContent = `✓ Sunday ${data.version} · ${data.model}`;
-    setTimeout(() => showStep('mic'), 800);
-  } catch (err) {
-    verifyEl.dataset.state = 'fail';
-    verifyEl.textContent = `✗ ${err.message}`;
-  }
+function testConnection() {
+  chosenRole = document.querySelector('input[name="node"]:checked').value === 'satellite' ? 'satellite' : 'server';
+  if (chosenRole === 'satellite') { showStep('connect'); return; }
+  // Server: the embedded daemon is already running on this Mac. Next, its brain.
+  chosenLabel = 'server · this Mac';
+  chosenDaemonHttp = localURLs.http;
+  chosenDaemonWs   = localURLs.ws;
+  chosenToken = '';   // filled from the local daemon's file at finish
+  showStep('key');
 }
 $('#onb-test-conn').addEventListener('click', testConnection);
-$('#onb-custom-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') testConnection(); });
+
+// ── satellite: connect to the server over the tailnet ──────────────────
+async function connectToServer() {
+  const v = $('#onb-sat-verify');
+  const url = ($('#onb-sat-url').value || '').trim().replace(/\/+$/, '');
+  const token = ($('#onb-sat-token').value || '').trim();
+  if (!url) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter your server’s Tailscale address.'; return; }
+  if (!token) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter the auth token shown on the server.'; return; }
+  const full = /^https?:\/\//.test(url) ? url : `https://${url}`;
+  v.hidden = false; v.dataset.state = 'pending';
+  v.textContent = `→ ${full}/v1/status …`;
+  try {
+    const res = await fetch(`${full}/v1/status`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) throw new Error('token rejected — copy it again from the server');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    chosenRole = 'satellite';
+    chosenLabel = `satellite → ${full.replace(/^https?:\/\//, '')}`;
+    chosenDaemonHttp = full;
+    chosenDaemonWs   = full.replace(/^http/, 'ws') + '/v1/ws';
+    chosenToken = token;
+    v.dataset.state = 'ok';
+    v.textContent = `✓ Found your Sunday — ${data.version} · ${data.model}`;
+    setTimeout(() => showStep('mic'), 800);
+  } catch (err) {
+    // Diagnose, don't shrug: the usual culprit is Tailscale on THIS Mac.
+    v.dataset.state = 'fail';
+    let ts = null;
+    try { ts = await window.sunday.tailscaleStatus(); } catch {}
+    if (ts && !ts.installed) {
+      v.textContent = '✗ Tailscale isn’t installed on this Mac — install it from tailscale.com/download, sign in to your tailnet, then hit Connect again.';
+    } else if (ts && !ts.running) {
+      v.textContent = '✗ Tailscale isn’t running on this Mac — open the Tailscale app and sign in, then hit Connect again.';
+    } else {
+      v.textContent = `✗ ${err.message} — this Mac is on the tailnet, so check the address, and that Sunday is running on the server.`;
+    }
+  }
+}
+$('#onb-sat-connect')?.addEventListener('click', connectToServer);
+$('#onb-sat-token')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') connectToServer(); });
 
 // ─── step: give her a brain ───────────────────────────────────────────────
 // Five ways to power the brain — the default is ChatGPT (Codex), which needs no
@@ -478,6 +506,12 @@ fdaBtn.addEventListener('click', openFdaSettings);
 const _origShow = showStep;
 showStep = (name) => {
   _origShow(name);
+  if (name === 'node') {
+    paintTailscale($('#onb-ts-status'));
+  }
+  if (name === 'connect') {
+    paintTailscale($('#onb-sat-ts'));
+  }
   if (name === 'mic') {
     checkMicPermission().then(paintMicStatus);
     checkFda().then(paintFdaStatus);
@@ -490,11 +524,36 @@ showStep = (name) => {
   }
   if (name === 'done') {
     $('#onb-summary').textContent = [
-      `node:  ${chosenLabel}`,
+      `role:  ${chosenLabel}`,
       `URL:   ${chosenDaemonHttp}`,
     ].join('\n');
+    if (chosenRole === 'server') loadPairInfo();
   }
 };
+
+// After the permissions step, a satellite is done — the brain, browser, email,
+// and phone all live on the server. Only a server configures those here.
+$('#onb-mic-continue')?.addEventListener('click', () => {
+  showStep(chosenRole === 'satellite' ? 'done' : 'browser');
+});
+
+// Server finish screen: put the brain on the tailnet and show exactly what to
+// type on the other Macs — address + token. That pair IS satellite onboarding.
+async function loadPairInfo() {
+  const box = $('#onb-pair'); const info = $('#onb-pair-info');
+  if (!box || !info) return;
+  try {
+    const net = await window.sunday.setupServerNetwork();   // idempotent tailscale serve
+    const si  = await window.sunday.serverInfo();
+    if (net.ok && net.url && si.token) {
+      box.hidden = false;
+      info.textContent = `address: ${net.url}\ntoken:   ${si.token}`;
+    } else if (si.tailscale && !si.tailscale.running) {
+      box.hidden = false;
+      info.textContent = 'Tailscale isn’t running on this Mac yet — start it, then find the address + token in Settings.';
+    }
+  } catch { /* pairing info is a bonus — never block finishing */ }
+}
 
 // ─── step: Sunday's own email (AgentMail) — save, verify it reaches an inbox, ──
 // then let the user send themselves a real test. Optional; Skip → phone.
@@ -604,6 +663,7 @@ $('#onb-finish').addEventListener('click', async () => {
     daemonWs:   chosenDaemonWs,
     daemonToken: token,
     label:      chosenLabel,
+    role:       chosenRole,
   });
 });
 

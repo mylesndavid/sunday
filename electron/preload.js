@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('sunday', {
   setRunMode: (mode) => ipcRenderer.invoke('sunday:set-run-mode', mode),
   migrateToLocal: () => ipcRenderer.invoke('sunday:migrate-to-local'),
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
+  tailscaleStatus: () => ipcRenderer.invoke('sunday:tailscale-status'),
+  setupServerNetwork: () => ipcRenderer.invoke('sunday:setup-server-network'),
+  serverInfo: () => ipcRenderer.invoke('sunday:server-info'),
   setOpenRouterKey: (key) => ipcRenderer.invoke('sunday:set-openrouter-key', key),
   localToken: () => ipcRenderer.invoke('sunday:local-token'),
   openSettings: () => ipcRenderer.invoke('sunday:open-settings'),
@@ -52,16 +55,10 @@ contextBridge.exposeInMainWorld('sunday', {
   onSwitchView: (handler) => {
     ipcRenderer.on('sunday:switch-view', (_evt, name) => handler(name));
   },
-  // ambient observer (mic → "what user is doing" → notch HUD + atoms)
+  // ambient observer (mic → "what user is doing" → notch HUD)
   observerStatus: () => ipcRenderer.invoke('sunday:observer-status'),
   observerSet: (on) => ipcRenderer.invoke('sunday:observer-set', !!on),
   transcriptionStatus: () => ipcRenderer.invoke('sunday:transcription-status'),
   installLocalTranscription: () => ipcRenderer.invoke('sunday:install-local-transcription'),
-  meetingBegin: () => ipcRenderer.invoke('sunday:meeting-begin'),
-  meetingChunk: (track, bytes) => ipcRenderer.invoke('sunday:meeting-chunk', track, bytes),
-  meetingFinalize: () => ipcRenderer.invoke('sunday:meeting-finalize-now'),
-  meetingState: () => ipcRenderer.invoke('sunday:meeting-state'),
-  meetingAudio: (cid) => ipcRenderer.invoke('sunday:meeting-audio', cid),
-  onMeetingStopNow: (h) => ipcRenderer.on('sunday:meeting-stop-now', () => h()),
   onInstallLog: (handler) => ipcRenderer.on('sunday:install-log', (_evt, line) => handler(line)),
 });

@@ -1,7 +1,7 @@
 {
   "name": "sunday-desktop",
   "productName": "Sunday",
-  "version": "0.4.168",
+  "version": "0.4.169",
   "description": "Sunday — a personal AI that knows you.",
   "main": "main.js",
   "scripts": {
@@ -30,7 +30,6 @@
       "main.js",
       "preload.js",
       "preload-capture.js",
-      "preload-meeting.js",
       "preload-wake.js",
       "satellite.js",
       "renderer/**/*",
@@ -59,7 +58,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Sunday uses the microphone for voice input, the \"Hey Sunday\" wake word, the ambient observer, and meeting recording. Audio is transcribed on-device.",
+        "NSMicrophoneUsageDescription": "Sunday uses the microphone for voice input, the \"Hey Sunday\" wake word, and the ambient observer. Audio is transcribed on-device.",
         "NSCameraUsageDescription": "Sunday does not use the camera.",
         "ITSAppUsesNonExemptEncryption": false
       },

@@ -190,46 +190,6 @@ async def formulate_proac(ask: str, evidence: str, config: SundayConfig) -> str 
     if not text or text.upper().startswith("PASS"):
         return None
     return text
-
-
-_MEETING_SYSTEM = """You are Sunday, writing meeting notes from a transcript the user recorded. The transcript is speaker-labeled: "You:" is the user, "Others:" is everyone else on the call.
-
-Produce notes the user will actually reread. Be concrete — names, numbers, dates, commitments. No filler, no "the meeting discussed various topics."
-
-Return ONLY JSON:
-{
-  "title": "<6-9 word title naming what this meeting was about>",
-  "tldr": "<2-3 sentence executive summary>",
-  "key_points": ["<the substantive points, decisions, and context — 3 to 8 bullets>"],
-  "action_items": [{"owner": "you"|"<name>", "task": "<one concrete action>", "due": "<when, or null>"}],
-  "decisions": ["<explicit decisions made>"],
-  "participants": ["<names heard>"]
-}
-
-action_items: ONLY real commitments someone made, each one atomic. Empty array if none. decisions: only things actually decided, not topics raised."""
-
-
-async def summarize_meeting(transcript: str, config: SundayConfig) -> dict[str, Any]:
-    """Granola-style structured meeting notes from a speaker-labeled transcript."""
-    from sunday.runtime import build_runtime
-    rt = build_runtime(config)
-    result = await rt.complete(
-        system_prompt=_MEETING_SYSTEM,
-        messages=[{"role": "user", "content": f"Transcript:\n\n{transcript.strip()[:40000]}\n\nMeeting notes JSON:"}],
-        tools_schema=None,
-        purpose="meeting_summary",
-    )
-    out = _parse_json(result.content or "")
-    return {
-        "title": out.get("title") or "Meeting",
-        "tldr": out.get("tldr") or "",
-        "key_points": out.get("key_points") or [],
-        "action_items": out.get("action_items") or [],
-        "decisions": out.get("decisions") or [],
-        "participants": out.get("participants") or [],
-    }
-
-
 async def summarize_conversation(transcript: str, config: SundayConfig) -> dict[str, Any]:
     """Close a conversation: produce title/summary/category/participants."""
     from sunday.runtime import build_runtime

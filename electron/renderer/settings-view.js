@@ -118,6 +118,7 @@ export async function loadAll() {
   loadAgentmailStatus();
   loadTimeline();
   loadNet();
+  loadPair();
   loadMemorySummary();
   loadSkills();
   updateOverview();
@@ -1386,6 +1387,35 @@ let _updateReady = false;
 // brain. Sendblue keys save through the standard saveBrain({credentials}) path,
 // same as Gmail/Cockpit. The webhook URL carries a path secret so Funnel can
 // expose just that one route publicly.
+// ── Connect a satellite (server role) ───────────────────────────────────────
+// The server's tailnet address + token ARE satellite onboarding — surface them
+// here so pairing another Mac never requires the terminal. Hidden on satellites
+// (their server owns this) and until Tailscale is actually up.
+async function loadPair() {
+  const panel = $('#pair-panel'); if (!panel) return;
+  try {
+    const mode = await window.sunday.runMode();
+    if (mode.role !== 'server') { panel.hidden = true; return; }
+    const si = await window.sunday.serverInfo();
+    const ts = si.tailscale || {};
+    if (ts.running && si.url && si.token) {
+      $('#pair-url').textContent = si.url;
+      $('#pair-token').textContent = si.token;
+      panel.hidden = false;
+      const btn = $('#pair-copy');
+      if (btn && !btn._wired) {
+        btn._wired = true;
+        btn.addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(`${si.url}\n${si.token}`); } catch {}
+          const st = $('#pair-status'); if (st) { st.textContent = 'copied'; setTimeout(() => { st.textContent = ''; }, 2000); }
+        });
+      }
+    } else {
+      panel.hidden = true;
+    }
+  } catch { panel.hidden = true; }
+}
+
 let _funnelCapable = null;   // tri-state: true / false / null (unknown) — set by loadNet
 async function loadNet() {
   const tsEl = $('#net-ts'); if (!tsEl) return;

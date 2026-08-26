@@ -1121,9 +1121,6 @@ connBtn.addEventListener('click', (e) => {
   connPopOpen ? closeConnPop() : openConnPop();
 });
 
-// Meeting mode lives in Memory → Meetings now — not the composer, not the
-// main chat. (See memory-view.js.)
-
 connPopQ.addEventListener('input', (e) => renderConnPop(e.target.value));
 
 // Explicit close button (×).

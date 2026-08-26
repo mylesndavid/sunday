@@ -108,9 +108,6 @@
       <button class="mem-subtab" data-mempane="sources" role="tab" aria-selected="false">
         Sources
       </button>
-      <button class="mem-subtab" data-mempane="atoms" role="tab" aria-selected="false">
-        Open loops <span class="mem-subtab-count" id="mem-atoms-count" hidden></span>
-      </button>
     </nav>
 
     <!-- FACTS — the primary pane: everything Sunday knows about you -->
@@ -174,47 +171,14 @@
       </div>
     </div>
 
-    <!-- SOURCES — one chronological feed mixing conversations + meetings -->
+    <!-- SOURCES — chronological feed of captured conversations -->
     <div class="atoms-pane" id="mem-pane-sources" hidden>
-      <!-- Compact record header above the feed -->
-      <div class="mtg-record mtg-record-compact">
-        <div class="mtg-record-info">
-          <div class="mtg-record-title" id="mtg-rec-title">Record a meeting</div>
-          <div class="mtg-record-sub" id="mtg-rec-sub">Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.</div>
-        </div>
-        <button class="btn btn-primary mtg-rec-btn" id="mtg-rec-btn">Start recording</button>
-      </div>
-
       <div class="atoms-empty" id="src-empty" hidden>
         <h2>Nothing recorded yet</h2>
-        <p>Nothing recorded yet — conversations and meetings land here.</p>
+        <p>Nothing recorded yet — conversations land here.</p>
       </div>
 
       <ul class="conv-list" id="src-feed"></ul>
-
-      <!-- Full meeting view, pops over the pane; Exit to close. -->
-      <div class="mtg-view" id="mtg-view" hidden>
-        <div class="mtg-view-bar">
-          <button class="btn mtg-view-exit" id="mtg-view-exit">← Exit</button>
-          <div class="mtg-view-title" id="mtg-view-title"></div>
-          <div class="mtg-view-time" id="mtg-view-time"></div>
-        </div>
-        <div class="mtg-view-body">
-          <audio class="mtg-view-audio" id="mtg-view-audio" controls hidden></audio>
-          <div class="mtg-view-notes" id="mtg-view-notes"></div>
-          <h3 class="mtg-view-h">Transcript</h3>
-          <div class="mtg-view-transcript" id="mtg-view-transcript"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- OPEN LOOPS — the things Sunday is tracking (atoms, renamed for users) -->
-    <div class="atoms-pane" id="mem-pane-atoms" hidden>
-      <div class="atoms-empty" id="atoms-empty" hidden>
-        <h2>No open loops yet</h2>
-        <p>As Sunday observes what you're doing, open threads, commitments, and decisions show up here.</p>
-      </div>
-      <ul class="atoms-list" id="atoms-list"></ul>
     </div>
   </section>
 
@@ -618,6 +582,20 @@
                 <button type="button" class="btn" id="vapi-test-call">Place test call</button>
                 <span class="set-verify" id="vapi-test-status" aria-live="polite"></span>
               </div>
+            </div>
+          </div>
+
+          <!-- ── CONNECT A SATELLITE (server role only) ── -->
+          <div class="set-panel" id="pair-panel" hidden>
+            <div class="brain-label">Connect a satellite</div>
+            <p class="set-help set-help-tight">On any other Mac, open Sunday, choose <strong>Satellite</strong>, and enter this address + token. Both machines have to be on your tailnet.</p>
+            <dl class="ov-rows">
+              <div class="ov-row"><dt>Address</dt><dd id="pair-url" class="mono">—</dd></div>
+              <div class="ov-row"><dt>Token</dt><dd id="pair-token" class="mono">—</dd></div>
+            </dl>
+            <div class="set-actions">
+              <span class="set-verify" id="pair-status" aria-live="polite"></span>
+              <button type="button" class="btn" id="pair-copy">Copy address + token</button>
             </div>
           </div>
 

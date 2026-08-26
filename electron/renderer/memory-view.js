@@ -1,12 +1,10 @@
 // Memory tab — "What Sunday Knows". Facts-first: the primary pane is the flat
 // fact store (everything Sunday remembers about you), with Sources (the
-// Conversations + Meetings she derived them from) and Open loops (things she's
-// tracking) as secondary subtabs.
+// conversations she derived them from) as a secondary subtab.
 //
 // (The old force-directed memory map was removed when memory moved to flat
 // facts + hybrid recall; a map of extracted entities no longer reflected how
-// Sunday actually remembers. "Open loops" is the user-facing name for what the
-// code still calls atoms.)
+// Sunday actually remembers.)
 
 let cfg = null;          // { daemonHttp }
 let els = null;          // dom refs
@@ -15,7 +13,6 @@ export function init(config, refs) {
   cfg = config; els = refs;
   wireSubtabs();
   wireFacts();
-  refreshAtomCount();
   refreshFactCount();
 }
 
@@ -25,13 +22,13 @@ export function refresh() {
   switchSubtab(active ? active.dataset.mempane : 'facts');
 }
 
-// ── Memory sub-tabs (Facts / Sources / Open loops) ────────────────────────
+// ── Memory sub-tabs (Facts / Sources) ─────────────────────────────────────
 function wireSubtabs() {
   const tabs = document.querySelectorAll('.mem-subtab');
   tabs.forEach((t) => t.addEventListener('click', () => switchSubtab(t.dataset.mempane)));
 }
 function switchSubtab(name) {
-  const pane = ['facts', 'sources', 'atoms'].includes(name) ? name : 'facts';
+  const pane = ['facts', 'sources'].includes(name) ? name : 'facts';
   document.querySelectorAll('.mem-subtab').forEach((t) => {
     const selected = t.dataset.mempane === pane;
     t.classList.toggle('active', selected);
@@ -41,15 +38,12 @@ function switchSubtab(name) {
   const panes = {
     facts: document.getElementById('mem-pane-facts'),
     sources: document.getElementById('mem-pane-sources'),
-    atoms: document.getElementById('mem-pane-atoms'),
   };
   Object.values(panes).forEach((el) => { if (el) el.hidden = true; });
   if (pane !== 'facts') closeFactDetail();
-  if (pane !== 'sources') closeMeetingView();
 
   panes[pane].hidden = false;
-  if (pane === 'atoms') loadAtoms();
-  else if (pane === 'sources') loadSources();
+  if (pane === 'sources') loadSources();
   else loadFacts();
 }
 
@@ -143,13 +137,12 @@ function renderFacts() {
 // Normalize the stored source string into one of the known chips.
 function srcKind(source) {
   const s = (source || '').toLowerCase();
-  if (s === 'meeting') return 'meeting';
   if (s === 'chat') return 'chat';
   if (s === 'tool') return 'tool';
   return 'auto';   // 'auto', 'observer', anything else
 }
 function srcLabel(source) {
-  return { chat: 'chat', auto: 'auto', meeting: 'meeting', tool: 'tool' }[srcKind(source)];
+  return { chat: 'chat', auto: 'auto', tool: 'tool' }[srcKind(source)];
 }
 
 function openFactDetail(id) {
@@ -225,61 +218,20 @@ async function refreshFactCount() {
   } catch {}
 }
 
-// ── Sources feed — one chronological list mixing conversations + meetings ──
-let _mtgRecording = false;
-let _mtgTimer = null;
-function fmtElapsed(secs) {
-  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
-  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-}
-
-// Refresh the record header (wire button once, reflect recording state) and
-// reset the meeting overlay. Kept separate from the feed fetch so the merged
-// feed keeps all the recording/finalize plumbing intact.
-async function refreshRecordHeader() {
-  // Always land on the feed — never a stuck detail overlay. The pop-out
-  // (mtg-view) only re-hid itself on its own Exit, so opening one meeting and
-  // switching tabs left it covering the whole pane. Reset it on every entry.
-  const mtgView = document.getElementById('mtg-view');
-  if (mtgView) mtgView.hidden = true;
-  const btn = document.getElementById('mtg-rec-btn');
-  // Wire the record button once.
-  if (btn && !btn.dataset.wired) {
-    btn.dataset.wired = '1';
-    btn.addEventListener('click', () => toggleMeetingRecording());
-  }
-  // Reflect current recording state.
-  try {
-    const st = await window.sunday.meetingState();
-    setMeetingRecordingUI(!!st.recording, st.since);
-  } catch {}
-}
-
+// ── Sources feed — chronological list of captured conversations ───────────
 let _srcShowAll = false;
 async function loadSources() {
-  await refreshRecordHeader();
   const list = document.getElementById('src-feed');
   const empty = document.getElementById('src-empty');
   list.innerHTML = '';
   try {
-    // Two data sources, merged: conversations (observer-captured, noise hidden
-    // by default) and meetings (explicitly recorded, always shown). The plain
-    // conversations list can also surface source=meeting rows, so dedupe by id.
+    // Observer-captured conversations, noise hidden by default.
     const convParam = _srcShowAll ? '&min_value=all' : '';
-    const [convRes, mtgRes] = await Promise.all([
-      fetch(`${cfg.daemonHttp}/v1/conversations?limit=200${convParam}`).then((r) => r.json()),
-      fetch(`${cfg.daemonHttp}/v1/conversations?limit=100&source=meeting&min_value=all`).then((r) => r.json()),
-    ]);
+    const convRes = await fetch(`${cfg.daemonHttp}/v1/conversations?limit=200${convParam}`).then((r) => r.json());
     const hiddenLow = (convRes.hidden && convRes.hidden.low) || 0;
-    const byId = new Map();
-    // Meetings first so their source label wins on any overlapping id.
-    for (const c of (mtgRes.conversations || [])) byId.set(c.id, { ...c, _kind: 'meeting' });
-    for (const c of (convRes.conversations || [])) {
-      const kind = (c.source || '').toLowerCase() === 'meeting' ? 'meeting' : 'conversation';
-      if (byId.has(c.id)) { byId.get(c.id)._kind = byId.get(c.id)._kind || kind; continue; }
-      byId.set(c.id, { ...c, _kind: kind });
-    }
-    const rows = [...byId.values()].sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+    const rows = (convRes.conversations || [])
+      .slice()
+      .sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
 
     if (!rows.length) { empty.hidden = false; return; }
     empty.hidden = true;
@@ -303,10 +255,6 @@ async function loadSources() {
       _srcShowAll = !_srcShowAll;
       loadSources();
     });
-    // Meeting rows open the full meeting view.
-    list.querySelectorAll('.conv-card[data-kind="meeting"]').forEach((card) => {
-      card.addEventListener('click', () => openMeetingView(card.dataset.cid));
-    });
     // Conversation rows keep their lazy transcript disclosure.
     list.querySelectorAll('.conv-card[data-kind="conversation"]').forEach((card) => {
       const d = card.querySelector('details');
@@ -328,22 +276,9 @@ async function loadSources() {
   }
 }
 
-// One row in the merged feed. Meeting rows get a meeting chip + "open" affordance;
-// conversation rows get a conversation chip, category/people meta, and the
+// One row in the feed: a conversation chip, category/people meta, and the
 // lazy-loaded transcript disclosure.
 function srcRowHtml(c) {
-  if (c._kind === 'meeting') {
-    return `
-      <li class="conv-card mtg-card" data-cid="${c.id}" data-kind="meeting">
-        <div class="conv-head">
-          <span class="src-chip" data-kind="meeting">meeting</span>
-          <div class="c-title">${esc(c.title || 'Meeting')}</div>
-          <div class="c-time">${esc(fmtTime(c.started_at))}</div>
-        </div>
-        <div class="conv-summary">${esc((c.summary || '').split('\n')[0])}</div>
-        <div class="mtg-card-open">Open meeting →</div>
-      </li>`;
-  }
   const people = (c.participants || []).join(', ') || '—';
   const valueDot = c.value ? `<span class="conv-value" data-v="${esc(c.value)}" title="${esc(c.value)}"></span>` : '';
   return `
@@ -365,154 +300,6 @@ function srcRowHtml(c) {
       </details>
     </li>`;
 }
-function setMeetingRecordingUI(recording, since) {
-  _mtgRecording = recording;
-  const btn = document.getElementById('mtg-rec-btn');
-  const titleEl = document.getElementById('mtg-rec-title');
-  const subEl = document.getElementById('mtg-rec-sub');
-  if (_mtgTimer) { clearInterval(_mtgTimer); _mtgTimer = null; }
-  if (recording) {
-    btn.textContent = 'Stop recording'; btn.dataset.recording = 'true';
-    const start = since ? since : Date.now();
-    const tick = () => { titleEl.textContent = `● Recording — ${fmtElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)))}`; };
-    tick(); _mtgTimer = setInterval(tick, 1000);
-    subEl.textContent = 'Both sides, on this Mac. Stop when the meeting ends and your notes will appear below.';
-  } else {
-    btn.textContent = 'Start recording'; btn.dataset.recording = 'false';
-    titleEl.textContent = 'Record a meeting';
-    subEl.textContent = 'Captures both sides — you and everyone on the call — on this Mac. A summary, action items, and the full transcript land here when you stop.';
-  }
-}
-// Full meeting view — pops over the tab, Exit to close.
-function closeMeetingView() {
-  const view = document.getElementById('mtg-view');
-  if (view) view.hidden = true;
-}
-async function openMeetingView(cid) {
-  const view = document.getElementById('mtg-view');
-  view.hidden = false;
-  document.getElementById('mtg-view-title').textContent = 'Loading…';
-  document.getElementById('mtg-view-notes').innerHTML = '';
-  document.getElementById('mtg-view-transcript').textContent = '';
-  document.getElementById('mtg-view-exit').onclick = () => { view.hidden = true; };
-  try {
-    const c = await (await fetch(`${cfg.daemonHttp}/v1/conversations/${cid}`)).json();
-    document.getElementById('mtg-view-title').textContent = c.title || 'Meeting';
-    document.getElementById('mtg-view-time').textContent = fmtTime(c.started_at);
-    // Render the structured summary as readable blocks (it was stored with
-    // newlines + bullets).
-    document.getElementById('mtg-view-notes').innerHTML =
-      esc(c.summary || '').replace(/\n/g, '<br>');
-    // Speaker-labeled transcript → styled lines.
-    const tx = c.transcript || '(no transcript)';
-    document.getElementById('mtg-view-transcript').innerHTML = tx.split('\n').map((line) => {
-      const who = line.startsWith('You:') ? 'you' : (line.startsWith('Others:') ? 'others' : '');
-      return `<div class="mtg-line${who ? ' ' + who : ''}">${esc(line)}</div>`;
-    }).join('');
-    // Audio playback if this meeting's recording is still on disk.
-    const audio = document.getElementById('mtg-view-audio');
-    try {
-      const a = await window.sunday.meetingAudio(cid);
-      if (a && a.url) { audio.src = a.url; audio.hidden = false; } else { audio.hidden = true; audio.removeAttribute('src'); }
-    } catch { audio.hidden = true; }
-  } catch (e) {
-    document.getElementById('mtg-view-title').textContent = `Error: ${e.message}`;
-  }
-}
-
-// Capture state lives here in the main renderer — getDisplayMedia (system
-// audio) needs the user gesture from THIS button click, which a hidden
-// window doesn't have.
-let _mtgSysStream = null, _mtgMicStream = null, _mtgSysRec = null, _mtgMicRec = null;
-
-async function toggleMeetingRecording() {
-  const btn = document.getElementById('mtg-rec-btn');
-  const subEl = document.getElementById('mtg-rec-sub');
-  btn.disabled = true;
-  try {
-    if (!_mtgRecording) {
-      // Acquire BOTH streams first (user gesture is live right now).
-      let sysTrack = null, micErr = null, sysErr = null;
-      try {
-        _mtgSysStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-        _mtgSysStream.getVideoTracks().forEach((t) => t.stop());
-        sysTrack = _mtgSysStream.getAudioTracks()[0] || null;
-      } catch (e) { sysErr = e.name || String(e); }
-      try {
-        _mtgMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) { micErr = e.name || String(e); }
-
-      if (!sysTrack && !_mtgMicStream) {
-        subEl.textContent = `Couldn't capture audio (system: ${sysErr || 'none'}, mic: ${micErr || 'none'}). Grant Screen Recording + Microphone in Permissions.`;
-        return;
-      }
-      // Tell main to set up files.
-      const begin = await window.sunday.meetingBegin();
-      if (!begin.ok) { subEl.textContent = `Couldn't start: ${begin.error}`; return; }
-      // Stream each track to main.
-      if (sysTrack) _mtgSysRec = recordTrack(new MediaStream([sysTrack]), 'system');
-      if (_mtgMicStream) _mtgMicRec = recordTrack(_mtgMicStream, 'mic');
-      setMeetingRecordingUI(true, Date.now());
-      if (!sysTrack) subEl.textContent = 'Note: system audio not captured (only your mic). Grant Screen Recording for both sides.';
-    } else {
-      await stopAndFinalizeMeeting();
-    }
-  } finally { btn.disabled = false; }
-}
-
-function recordTrack(stream, label) {
-  let mr;
-  try { mr = new MediaRecorder(stream, { mimeType: 'audio/webm' }); }
-  catch { mr = new MediaRecorder(stream); }
-  mr.ondataavailable = async (e) => {
-    if (!e.data || !e.data.size) return;
-    try { const buf = await e.data.arrayBuffer(); await window.sunday.meetingChunk(label, new Uint8Array(buf)); } catch {}
-  };
-  mr.start(4000);
-  return mr;
-}
-
-async function stopAndFinalizeMeeting() {
-  setMeetingRecordingUI(false);
-  document.getElementById('mtg-rec-title').textContent = 'Writing your notes…';
-  // Stop recorders + tracks, flush.
-  for (const mr of [_mtgSysRec, _mtgMicRec]) { try { mr && mr.state !== 'inactive' && mr.stop(); } catch {} }
-  for (const s of [_mtgSysStream, _mtgMicStream]) { try { s && s.getTracks().forEach((t) => t.stop()); } catch {} }
-  _mtgSysRec = _mtgMicRec = _mtgSysStream = _mtgMicStream = null;
-  await new Promise((r) => setTimeout(r, 700));   // let last chunks land
-  // The finalize IPC can reject (transcription crash, daemon down). Without a
-  // catch, the title sticks on "Writing your notes…" forever. Always reset the
-  // record card; surface the failure in the sub-line.
-  try {
-    const r = await window.sunday.meetingFinalize();
-    document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
-    if (r && r.ok) {
-      // Refresh the feed if the Sources pane is showing, so the new meeting
-      // lands in view; otherwise just leave the record header reset.
-      const srcPane = document.getElementById('mem-pane-sources');
-      if (srcPane && !srcPane.hidden) loadSources();
-    }
-    else { document.getElementById('mtg-rec-sub').textContent = `Stopped — ${(r && r.error) || 'no notes produced'}.`; }
-  } catch (e) {
-    document.getElementById('mtg-rec-title').textContent = 'Record a meeting';
-    document.getElementById('mtg-rec-sub').textContent = `Stopped — couldn't write notes: ${e.message || e}.`;
-  }
-}
-// Tray "Start/Stop meeting" lands here. Main calls this via executeJavaScript
-// with the userGesture flag set, so getDisplayMedia's transient-activation
-// requirement is satisfied even though the click was in the menu bar. Brings
-// the Sources feed forward first so you can see the recording state.
-window.__sundayTrayMeeting = async function () {
-  try { switchSubtab('sources'); } catch {}
-  // Make sure the record button is wired + state is fresh, then toggle.
-  try { await refreshRecordHeader(); } catch {}
-  return toggleMeetingRecording();
-};
-
-// The notch's stop-request comes here.
-if (window.sunday && window.sunday.onMeetingStopNow) {
-  window.sunday.onMeetingStopNow(() => { if (_mtgRecording) stopAndFinalizeMeeting(); });
-}
 
 function fmtTime(ts) {
   if (!ts) return '';
@@ -525,41 +312,6 @@ function fmtTime(ts) {
   if (sameDay) return time;
   if (isYesterday) return `Yesterday ${time}`;
   return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`;
-}
-
-async function loadAtoms() {
-  const ul = document.getElementById('atoms-list');
-  const empty = document.getElementById('atoms-empty');
-  ul.innerHTML = '';
-  try {
-    const r = await fetch(`${cfg.daemonHttp}/v1/atoms?limit=200`);
-    const d = await r.json();
-    const atoms = d.atoms || [];
-    if (!atoms.length) { empty.hidden = false; return; }
-    empty.hidden = true;
-    ul.innerHTML = atoms.map((a) => `
-      <li class="atom">
-        <span class="a-state" data-s="${esc(a.state || 'active')}">${esc(a.state || 'active')}</span>
-        <span class="a-kind">${esc(a.kind || '')}</span>
-        <span class="a-text">${esc(a.text || '')}</span>
-        <span class="a-time">${esc(ago(a.updated_at))}</span>
-      </li>`).join('');
-  } catch (err) {
-    if (empty) empty.hidden = true;   // don't let a stale empty state overlap the error row
-    ul.innerHTML = `<li class="atom"><span class="a-text" style="color:var(--error)">couldn't load atoms: ${esc(err.message)}</span></li>`;
-  }
-}
-
-async function refreshAtomCount() {
-  try {
-    const r = await fetch(`${cfg.daemonHttp}/v1/atoms?state=active&limit=1`);
-    const d = await r.json();
-    const s = document.getElementById('mem-atoms-count');
-    // ask once more for the open count via status (cheaper, includes atoms_open)
-    const st = await (await fetch(`${cfg.daemonHttp}/v1/status`)).json();
-    const n = st.atoms_open ?? (d.atoms || []).length;
-    if (n > 0) { s.textContent = n; s.hidden = false; } else { s.hidden = true; }
-  } catch {}
 }
 
 function esc(s) {

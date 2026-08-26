@@ -408,6 +408,79 @@ function removeServerDaemon() {
   try { fs.unlinkSync(serverDaemonPlistPath()); } catch {}
 }
 
+// ── Tailscale (the wire between server and satellites) ─────────────────
+// The topology is opinionated: the brain lives on an always-on Mac (a mini),
+// satellites reach it over Tailscale. The app reads its own Tailscale identity
+// straight from the CLI so onboarding can say "you're mini.tailnet.ts.net" or
+// "Tailscale isn't running" instead of asking the user to know.
+const TS_CLI_CANDIDATES = [
+  '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+  '/usr/local/bin/tailscale',
+  '/opt/homebrew/bin/tailscale',
+  '/usr/bin/tailscale',
+];
+function tailscaleCli() {
+  for (const p of TS_CLI_CANDIDATES) {
+    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+  }
+  try {
+    const found = require('node:child_process')
+      .execSync('command -v tailscale', { shell: '/bin/bash', timeout: 3000 }).toString().trim();
+    return found || null;
+  } catch { return null; }
+}
+function tailscaleStatus() {
+  const cli = tailscaleCli();
+  if (!cli) return { installed: false, running: false, dnsName: null, tailnet: null };
+  try {
+    const out = require('node:child_process').execFileSync(cli, ['status', '--json'], { timeout: 8000 }).toString();
+    const data = JSON.parse(out);
+    const state = (data.BackendState || '').trim();
+    const self = data.Self || {};
+    const current = data.CurrentTailnet || {};
+    return {
+      installed: true,
+      running: state === 'Running',
+      state: state || null,
+      dnsName: (self.DNSName || '').replace(/\.+$/, '') || null,
+      tailnet: current.Name || current.MagicDNSSuffix || null,
+    };
+  } catch (e) {
+    return { installed: true, running: false, dnsName: null, tailnet: null, error: e?.message || String(e) };
+  }
+}
+ipcMain.handle('sunday:tailscale-status', () => tailscaleStatus());
+
+// Make this server reachable on the tailnet: `tailscale serve` proxies the
+// node's HTTPS (real cert, tailnet-only — never public) to the local daemon.
+// The daemon itself stays bound to 127.0.0.1; Tailscale is the only way in.
+// Idempotent; the webhook Funnel's --set-path mounts are separate and survive.
+function setupServerServe() {
+  const cli = tailscaleCli();
+  const ts = tailscaleStatus();
+  if (!cli || !ts.running) return { ok: false, error: ts.installed ? 'Tailscale isn’t running' : 'Tailscale isn’t installed', ...ts };
+  try {
+    require('node:child_process').execFileSync(cli, ['serve', '--bg', String(LOCAL_PORT)], { timeout: 15000 });
+    logLine(`tailscale serve configured → https://${ts.dnsName} → 127.0.0.1:${LOCAL_PORT}`);
+    return { ok: true, url: ts.dnsName ? `https://${ts.dnsName}` : null, ...ts };
+  } catch (e) {
+    logLine(`tailscale serve failed: ${e?.message}`);
+    return { ok: false, error: e?.message || String(e), ...ts };
+  }
+}
+ipcMain.handle('sunday:setup-server-network', () => setupServerServe());
+
+// What a satellite needs to join this server: the tailnet URL + the token.
+// Shown on the server's onboarding finish screen and in Settings.
+ipcMain.handle('sunday:server-info', () => {
+  const ts = tailscaleStatus();
+  return {
+    tailscale: ts,
+    url: ts.dnsName ? `https://${ts.dnsName}` : null,
+    token: localDaemonToken(),
+  };
+});
+
 // Restart the local daemon to reload credentials / env. Launchd-managed servers
 // are reloaded in place (which rewrites the plist and picks up disk creds);
 // app-child daemons are killed and respawned. Never pkill a launchd daemon.
@@ -674,8 +747,22 @@ ipcMain.handle('sunday:local-token', () => {
   } catch { return { token: '' }; }
 });
 
-ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label, daemonToken }) => {
-  savePrefs({ daemonHttp, daemonWs, daemonToken: daemonToken || '', label, onboarded: true });
+ipcMain.handle('sunday:finish-onboarding', (_evt, { daemonHttp, daemonWs, label, daemonToken, role }) => {
+  const explicitRole = role === 'server' || role === 'satellite' ? role : undefined;
+  savePrefs({ daemonHttp, daemonWs, daemonToken: daemonToken || '', label, onboarded: true,
+              ...(explicitRole ? { role: explicitRole } : {}) });
+  if (explicitRole === 'server') {
+    // Best-effort: put the brain on the tailnet now so satellites can join.
+    // Failure isn't fatal — Settings shows reachability and the fix.
+    setTimeout(() => { try { setupServerServe(); } catch {} }, 0);
+  }
+  if (explicitRole === 'satellite') {
+    // The brain lives elsewhere; give it this machine's hands right away.
+    const prefs = loadPrefs();
+    if (prefs.embeddedSatellite !== false && !satellite.isRunning()) {
+      satellite.start({ ...prefs, daemonToken: resolveDaemon().daemonToken, bundledDaemonBin: bundledDaemonBinary() });
+    }
+  }
   if (!mainWindow) createMainWindow();
   if (onboardingWindow && !onboardingWindow.isDestroyed()) onboardingWindow.close();
   rebuildTrayMenu();
@@ -1035,23 +1122,6 @@ function updateMenuItem() {
   }
 }
 
-// Start (or stop) a meeting straight from the menu bar. getDisplayMedia needs
-// transient activation, which a tray click doesn't give the renderer — so we
-// run the renderer entrypoint via executeJavaScript with userGesture=true,
-// which supplies it. Brings the window forward so the recording state is visible.
-function triggerTrayMeeting() {
-  if (!mainWindow) { createMainWindow(); }
-  try { mainWindow.show(); mainWindow.focus(); } catch { /* window gone */ }
-  switchToView('memory');   // surface the Meetings tab so the state is visible
-  const run = () => {
-    mainWindow.webContents
-      .executeJavaScript('window.__sundayTrayMeeting && window.__sundayTrayMeeting()', true)
-      .catch(() => {});
-  };
-  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', run);
-  else run();
-}
-
 function rebuildTrayMenu() {
   if (!tray) return;
   const { daemonHttp, onboarded } = resolveDaemon();
@@ -1068,9 +1138,6 @@ function rebuildTrayMenu() {
     { label: 'Chat',     accelerator: 'Command+1', click: () => switchToView('chat') },
     { label: 'Memory',   accelerator: 'Command+2', click: () => switchToView('memory') },
     { label: 'Settings…', accelerator: 'Command+,', click: () => switchToView('settings') },
-    { type: 'separator' },
-    { label: meetingRecording ? '■  Stop meeting' : '●  Start a meeting',
-      click: () => triggerTrayMeeting() },
     { type: 'separator' },
     { label: notchHudChild ? 'Hide notch HUD' : 'Show notch HUD', click: () => {
         if (notchHudChild) { stopNotchHud(); savePrefs({ hud: false }); }
@@ -1102,33 +1169,11 @@ function rebuildTrayMenu() {
 
 app.whenReady().then(() => {
   logLine(`app ready — version ${app.getVersion()}`);
-  // Meeting capture: hand getDisplayMedia a screen source + system-audio
-  // loopback so the capture window records the other side of the call. This
-  // is the whole fix — the audio is attributed to Sunday (which has Screen
-  // Recording), not a detached helper that gets silence.
+  // Approve media permission requests for our own renderer (mic for voice
+  // input, wake word, and the ambient observer).
   const { session: electronSession } = require('electron');
-  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      callback({ video: sources[0], audio: 'loopback' });
-    }).catch(() => callback({}));
-  }, { useSystemPicker: false });
-  // Approve media + display-capture permission requests for our own renderer.
   electronSession.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
-    cb(['media', 'display-capture', 'microphone', 'audioCapture'].includes(permission) ? true : true);
-  });
-
-  // Serve meeting recordings to the renderer's <audio> from ~/.sunday/meetings.
-  const { protocol } = require('electron');
-  protocol.handle?.('sunday-audio', async (req) => {
-    try {
-      const u = new URL(req.url);   // sunday-audio://<cid>/<file>
-      const cid = u.hostname;
-      const file = decodeURIComponent(u.pathname.replace(/^\//, ''));
-      if (!/^[\w.-]+$/.test(file)) return new Response('bad', { status: 400 });
-      const p = path.join(os.homedir(), '.sunday', 'meetings', cid, file);
-      const data = fs.readFileSync(p);
-      return new Response(data, { headers: { 'Content-Type': 'audio/wav' } });
-    } catch { return new Response('not found', { status: 404 }); }
+    cb(['media', 'microphone', 'audioCapture'].includes(permission) ? true : true);
   });
 
   // Spawn the embedded daemon first thing (fire-and-forget) so it's coming
@@ -1194,6 +1239,12 @@ app.whenReady().then(() => {
         installLocalTranscription(() => {}).catch(() => {});
       }
     }, 3000);
+  }
+
+  // A server re-asserts its tailnet reachability on every launch — `tailscale
+  // serve` is idempotent, and this heals a mini whose serve config was reset.
+  if (prefs.onboarded && resolveRole() === 'server') {
+    setTimeout(() => { try { setupServerServe(); } catch {} }, 5000);
   }
 
   if (prefs.onboarded && prefs.embeddedSatellite !== false) {
@@ -1291,7 +1342,6 @@ app.on('before-quit', () => {
   stopArgus();
   stopObserver();
   stopEmbeddedDaemon();
-  meetingRecording = false;
 });
 
 // ── ambient observer ──────────────────────────────────────────────────────
@@ -1494,201 +1544,6 @@ async function transcribeChunk(bytes, durationSeconds = 30) {
 }
 
 ipcMain.handle('sunday:transcription-status', () => localTranscriptionStatus());
-
-// ── Meeting mode ────────────────────────────────────────────────────────
-// Explicit, full-fidelity recording of a meeting: both sides (system audio +
-// mic) to two tracks → transcribe each with timestamps → interleave with
-// speaker labels → daemon summarizes (Granola-style) + stores + makes atoms.
-// Meeting capture runs in a hidden Sunday window (getDisplayMedia for system
-// audio, getUserMedia for mic) so both grants are the APP's own — the detached
-// Swift recorder couldn't get the Screen Recording grant and captured silence.
-let meetingWin = null;
-let meetingDir = null;
-let meetingStartedAt = null;
-let meetingStreams = null;   // { system: WriteStream, mic: WriteStream }
-let meetingStopPoll = null;
-let meetingRecording = false;
-
-async function setMeetingHud(recording) {
-  try {
-    const { daemonHttp } = resolveDaemon();
-    await fetch(`${daemonHttp}/v1/meetings/hud`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
-      body: JSON.stringify({ recording, since: recording ? meetingStartedAt / 1000 : null }),
-    });
-  } catch {}
-}
-
-// Capture happens in the MAIN window renderer (where the record-button click
-// provides the user gesture getDisplayMedia requires). Main just owns the
-// files + the finalize. beginMeeting sets up; chunks stream in; finalizeMeeting
-// transcribes + summarizes.
-function beginMeeting() {
-  if (meetingRecording) return { ok: true, already: true };
-  const id = `${Date.now()}`;
-  meetingDir = path.join(os.homedir(), '.sunday', 'meetings', id);
-  fs.mkdirSync(meetingDir, { recursive: true });
-  meetingStartedAt = Date.now();
-  meetingRecording = true;
-  if (tray) rebuildTrayMenu();   // flip the tray item to "Stop meeting"
-  meetingStreams = {
-    system: fs.createWriteStream(path.join(meetingDir, 'system.webm')),
-    mic: fs.createWriteStream(path.join(meetingDir, 'mic.webm')),
-  };
-  setMeetingHud(true);
-  // Stop-request from the notch → tell the renderer to stop capturing.
-  if (meetingStopPoll) clearInterval(meetingStopPoll);
-  meetingStopPoll = setInterval(async () => {
-    if (!meetingRecording) { clearInterval(meetingStopPoll); meetingStopPoll = null; return; }
-    try {
-      const { daemonHttp } = resolveDaemon();
-      const s = await (await fetch(`${daemonHttp}/v1/status`, { headers: { ..._bearer() } })).json();
-      if (s.meeting && s.meeting.stop_requested) {
-        clearInterval(meetingStopPoll); meetingStopPoll = null;
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('sunday:meeting-stop-now', {});
-      }
-    } catch {}
-  }, 2000);
-  return { ok: true, id };
-}
-
-// Chunks from the capturing renderer → append to the per-track webm files.
-ipcMain.handle('sunday:meeting-chunk', (_evt, track, bytes) => {
-  try { meetingStreams && meetingStreams[track] && meetingStreams[track].write(Buffer.from(bytes)); } catch {}
-  return { ok: true };
-});
-ipcMain.handle('sunday:meeting-begin', () => beginMeeting());
-
-// whisper-cli WITH timestamps → [{start, text}] for one wav.
-async function transcribeTrackTimed(wav) {
-  if (!localTranscriptionStatus().ready) return [];
-  return new Promise((resolve) => {
-    const out = [];
-    const p = require('node:child_process').spawn(WHISPER_LOCAL.bin,
-      ['-m', WHISPER_LOCAL.model, '-f', wav, '--language', 'en'],
-      { stdio: ['ignore', 'pipe', 'ignore'] });
-    let buf = '';
-    p.stdout.on('data', (d) => { buf += d.toString(); });
-    p.on('exit', () => {
-      // Lines like: [00:00:01.200 --> 00:00:04.000]   some text
-      const re = /\[(\d\d):(\d\d):(\d\d)\.\d+\s*-->.*?\]\s*(.*)/g;
-      let m;
-      while ((m = re.exec(buf)) !== null) {
-        const start = (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
-        const text = (m[4] || '').trim();
-        if (text) out.push({ start, text });
-      }
-      resolve(out);
-    });
-    p.on('error', () => resolve([]));
-  });
-}
-
-async function finalizeMeeting() {
-  if (!meetingRecording || !meetingDir) { await setMeetingHud(false); return { ok: false, error: 'no meeting running' }; }
-  const dir = meetingDir;
-  const startedAt = meetingStartedAt;
-  meetingRecording = false;
-  if (tray) rebuildTrayMenu();   // flip the tray item back to "Start a meeting"
-  // Close the webm streams (the renderer has already stopped sending chunks).
-  try { meetingStreams.system.end(); meetingStreams.mic.end(); } catch {}
-  await new Promise((r) => setTimeout(r, 500));
-  meetingDir = null; meetingStreams = null;
-  await setMeetingHud(false);
-
-  // Convert each webm track → 16k mono wav for whisper.
-  const webmToMono = async (src) => {
-    if (!fs.existsSync(src) || fs.statSync(src).size < 1000) return null;
-    const dst = src.replace(/\.webm$/, '-16k.wav');
-    try {
-      await new Promise((res, rej) => {
-        const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg, ['-y', '-i', src, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', dst], { stdio: 'ignore' });
-        p.on('exit', (c) => c === 0 ? res() : rej(new Error('ffmpeg')));
-        p.on('error', rej);
-      });
-      return dst;
-    } catch { return null; }
-  };
-
-  const segs = [];
-  const s = await webmToMono(path.join(dir, 'system.webm'));
-  if (s) for (const seg of await transcribeTrackTimed(s)) segs.push({ ...seg, who: 'Others' });
-  const m = await webmToMono(path.join(dir, 'mic.webm'));
-  if (m) for (const seg of await transcribeTrackTimed(m)) segs.push({ ...seg, who: 'You' });
-  segs.sort((a, b) => a.start - b.start);
-  const transcript = segs.map((s) => `${s.who}: ${s.text}`).join('\n');
-
-  if (!transcript.trim()) return { ok: false, error: 'no speech captured' };
-
-  // Daemon summarizes + stores + makes atoms.
-  try {
-    const { daemonHttp } = resolveDaemon();
-    const res = await fetch(`${daemonHttp}/v1/meetings/finalize`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
-      body: JSON.stringify({ transcript, started_at: startedAt / 1000, ended_at: Date.now() / 1000 }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      // 422 no_audio etc. — surface the daemon's detail, don't pretend it worked.
-      return { ok: false, error: data.detail || data.error || `HTTP ${res.status}` };
-    }
-    // Link the recording to its conversation id so the meeting view can play
-    // it back: rename the dir to <conversation_id> + mix the two tracks.
-    try {
-      const cid = data.conversation_id;
-      if (cid) {
-        const linkedDir = path.join(os.homedir(), '.sunday', 'meetings', String(cid));
-        if (dir !== linkedDir) { try { fs.renameSync(dir, linkedDir); } catch {} }
-        const sys = path.join(linkedDir, 'system.webm'), mic = path.join(linkedDir, 'mic.webm');
-        const haveSys = fs.existsSync(sys), haveMic = fs.existsSync(mic);
-        if (haveSys && haveMic) {
-          await new Promise((res) => {
-            const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
-              ['-y', '-i', sys, '-i', mic, '-filter_complex', 'amix=inputs=2:duration=longest', path.join(linkedDir, 'mix.wav')],
-              { stdio: 'ignore' });
-            p.on('exit', res); p.on('error', res);
-          });
-        } else if (haveSys || haveMic) {
-          await new Promise((res) => {
-            const p = require('node:child_process').spawn(WHISPER_LOCAL.ffmpeg,
-              ['-y', '-i', haveSys ? sys : mic, path.join(linkedDir, 'mix.wav')], { stdio: 'ignore' });
-            p.on('exit', res); p.on('error', res);
-          });
-        }
-      }
-    } catch {}
-    // Notify the notch the summary is ready.
-    setMeetingDone(data.notes?.title || 'Meeting');
-    return { ok: true, notes: data.notes, conversation_id: data.conversation_id };
-  } catch (e) {
-    return { ok: false, error: e?.message || String(e) };
-  }
-}
-
-// Tell the notch a meeting summary is ready (it shows a toast).
-async function setMeetingDone(title) {
-  try {
-    const { daemonHttp } = resolveDaemon();
-    await fetch(`${daemonHttp}/v1/meetings/done`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', ..._bearer() },
-      body: JSON.stringify({ title }),
-    });
-  } catch {}
-}
-
-ipcMain.handle('sunday:meeting-finalize-now', () => finalizeMeeting());
-ipcMain.handle('sunday:meeting-state', () => ({ recording: meetingRecording, since: meetingStartedAt }));
-// Playback URL for a meeting's recording, if it's still on disk. Returns a
-// custom-scheme URL the renderer's <audio> can load (registered below).
-ipcMain.handle('sunday:meeting-audio', (_evt, cid) => {
-  try {
-    const dir = path.join(os.homedir(), '.sunday', 'meetings', String(cid));
-    for (const f of ['mix.wav', 'system.wav', 'mic.wav']) {
-      if (fs.existsSync(path.join(dir, f))) return { url: `sunday-audio://${cid}/${f}` };
-    }
-  } catch {}
-  return { url: null };
-});
 
 // One-click install of the local transcription stack. Two pieces:
 //   1. whisper-cpp + ffmpeg via Homebrew (already installed; user has it).

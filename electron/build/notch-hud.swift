@@ -63,9 +63,6 @@ final class KeyablePanel: NSPanel {
 final class BarView: NSView {
     var onClick: (() -> Void)?
     private let countLabel = NSTextField(labelWithString: "")   // right shoulder (idle/agents)
-    private let timerLabel = NSTextField(labelWithString: "")   // left shoulder (meeting timer)
-    private let recDot = NSView()                               // right shoulder (meeting red dot)
-    var meetingMode = false
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -76,43 +73,12 @@ final class BarView: NSView {
         countLabel.textColor = AMBER
         countLabel.isBezeled = false; countLabel.drawsBackground = false; countLabel.alignment = .right
         addSubview(countLabel)
-        // Meeting: timer on the LEFT.
-        timerLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
-        timerLabel.textColor = .white
-        timerLabel.isBezeled = false; timerLabel.drawsBackground = false; timerLabel.alignment = .left
-        timerLabel.isHidden = true
-        addSubview(timerLabel)
-        // Meeting: pulsing red dot on the RIGHT.
-        recDot.wantsLayer = true
-        recDot.layer?.cornerRadius = 5
-        recDot.layer?.backgroundColor = NSColor.systemRed.cgColor
-        recDot.isHidden = true
-        addSubview(recDot)
     }
     required init?(coder: NSCoder) { fatalError() }
     func setStatus(_ text: String) { countLabel.stringValue = text; needsLayout = true }
-    /// Meeting recording: timer text on the left, red dot on the right.
-    func setMeeting(_ on: Bool, timer: String) {
-        meetingMode = on
-        timerLabel.stringValue = timer
-        timerLabel.isHidden = !on
-        recDot.isHidden = !on
-        countLabel.isHidden = on        // hide the idle counter while recording
-        needsLayout = true
-        if on { startPulse() } else { recDot.layer?.removeAllAnimations() }
-    }
-    private func startPulse() {
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0; pulse.toValue = 0.25
-        pulse.duration = 0.9; pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        recDot.layer?.add(pulse, forKey: "pulse")
-    }
     override func layout() {
         super.layout()
         countLabel.frame = NSRect(x: bounds.maxX - 66, y: bounds.midY - 9, width: 56, height: 18)
-        timerLabel.frame = NSRect(x: 14, y: bounds.midY - 9, width: 80, height: 18)
-        recDot.frame     = NSRect(x: bounds.maxX - 22, y: bounds.midY - 5, width: 10, height: 10)
     }
     override func mouseDown(with event: NSEvent) { onClick?() }
 }
@@ -330,9 +296,6 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
     // affordances right in the notch — thumbs + inline reply).
     var interjecting = false
     var interjection: (id: Int, text: String)? = nil
-    // Meeting recording state (from /v1/status.meeting).
-    var meetingRecording = false
-    var meetingSince: Double? = nil
     // "Hey Sunday" was heard — the notch pops to a Listening state until the
     // reply lands (or a timeout, in case only the wake word was spoken).
     var listening = false
@@ -345,14 +308,6 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
         let m = secs / 60
         if m < 60 { return "\(m)m" }
         return "\(m/60)h \(String(format: "%02d", m % 60))m"
-    }
-
-    /// Meeting timer — always mm:ss (or h:mm:ss), monospaced, ticking live.
-    func meetingDurationString() -> String {
-        let since = meetingSince ?? Date().timeIntervalSince1970
-        let secs = max(0, Int(Date().timeIntervalSince1970 - since))
-        let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
-        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
     }
 
     /// Right-shoulder bar text. The observer's "now" line is intentionally
@@ -372,12 +327,7 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
         panel.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         let container = NSView(); container.autoresizesSubviews = false; panel.contentView = container
-        bar.onClick = { [weak self] in
-            guard let self else { return }
-            // Tapping the bar during a meeting stops the recording — the HUD
-            // is the control, not just a readout.
-            if self.meetingRecording { self.requestMeetingStop() } else { self.toggle() }
-        }
+        bar.onClick = { [weak self] in self?.toggle() }
         flare.onClick = { [weak self] in self?.flareClicked() }
         interject.onUp      = { [weak self] in self?.engageInterjection(feedback: "up") }
         interject.onDown    = { [weak self] in self?.engageInterjection(feedback: "down") }
@@ -388,12 +338,6 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
         relayout(); poll(); connectWS()
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in self?.poll() }
-        // Tick the meeting timer once a second while recording (the 1.5s poll
-        // is too coarse for a live mm:ss).
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self, self.meetingRecording, !self.expanded else { return }
-            self.bar.setMeeting(true, timer: self.meetingDurationString())
-        }
     }
 
     func toggle() { expanded.toggle(); layout(animated: true) }
@@ -403,16 +347,6 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
     func activateSunday() {
         NSRunningApplication.runningApplications(withBundleIdentifier: APP_BUNDLE_ID).first?.activate()
     }
-    /// Ask the app to stop the active meeting (the Mac app polls for this).
-    func requestMeetingStop() {
-        guard let url = URL(string: "\(DAEMON)/v1/meetings/stop-request") else { return }
-        var req = authedRequest(url); req.httpMethod = "POST"
-        URLSession.shared.dataTask(with: req).resume()
-        // Optimistically drop the meeting bar; the next poll confirms.
-        meetingRecording = false
-        notify("Wrapping up the meeting…")
-    }
-
     // ── notification: drop a preview from the notch when a reply lands and
     //    Sunday isn't the frontmost app ──
     // ── "Hey Sunday" listening: pop the notch the instant the wake word lands,
@@ -533,7 +467,7 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
                               let text = j["text"] as? String, !text.isEmpty {
                         DispatchQueue.main.async { self.showInterjection(id: id, text: text) }
                     } else if kind == "toast", let text = j["text"] as? String, !text.isEmpty {
-                        DispatchQueue.main.async { self.notify(text) }   // e.g. "Meeting notes ready"
+                        DispatchQueue.main.async { self.notify(text) }
                     } else if kind == "wake_listening" {
                         DispatchQueue.main.async { self.setListening() }  // "Hey Sunday" heard
                     } else if kind == "wake_reply", let text = j["text"] as? String {
@@ -598,21 +532,11 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
                 flare.setWorking(agentCount > 0)
             }
             flare.layoutContent(); flare.needsDisplay = true
-        } else if meetingRecording {
-            // Dynamic-island meeting bar: timer on the left, notch in the
-            // middle, pulsing red dot on the right.
-            let W = nw + 110 + 36, H = nh
-            target = NSRect(x: screen.frame.midX - W / 2, y: screen.frame.maxY - H, width: W, height: H)
-            flare.isHidden = true; bar.isHidden = false; interject.isHidden = true
-            bar.frame = NSRect(x: 0, y: 0, width: W, height: H)
-            bar.autoresizingMask = [.width, .height]
-            bar.setMeeting(true, timer: meetingDurationString())
         } else {
             let status = shoulderText()
             // The compact bar now shows only a short counter (e.g. "27s") or a
             // tiny agent count — so the shoulder is small and never sticks far
             // out past the notch. The full sentence lives in the flash / click.
-            bar.setMeeting(false, timer: "")
             let shoulders: CGFloat = status.isEmpty ? 0 : 74
             let W = nw + shoulders, H = nh
             target = NSRect(x: screen.frame.midX - W / 2, y: screen.frame.maxY - H, width: W, height: H)
@@ -677,19 +601,7 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
                 if let n = j["since"] as? NSNumber { return n.doubleValue }
                 return nil
             }()
-            // Meeting recording state.
-            let mtg = j["meeting"] as? [String: Any]
-            let recording = (mtg?["recording"] as? Bool) ?? false
-            let mtgSince: Double? = {
-                if let d = mtg?["since"] as? Double { return d }
-                if let n = mtg?["since"] as? NSNumber { return n.doubleValue }
-                return nil
-            }()
             DispatchQueue.main.async {
-                let recChanged = recording != self.meetingRecording
-                self.meetingRecording = recording
-                self.meetingSince = mtgSince
-                if recChanged { self.relayout() }
                 let prevNow = self.nowText ?? ""
                 let newNow = (nowFromServer?.isEmpty ?? true) ? "" : (nowFromServer ?? "")
                 let changed = (agents.count != self.agentCount)
@@ -703,7 +615,7 @@ final class NotchHUD: NSObject, NSApplicationDelegate {
                 // Per user feedback: the notch no longer auto-flashes the
                 // observer's "what you're doing" detection. The data is still
                 // captured + used internally (sticky conversations, proac
-                // trigger, atoms) — just no longer surfaced as UI noise.
+                // trigger) — just no longer surfaced as UI noise.
                 // The notch stays quiet until Sunday actually has something
                 // to say (an interjection) or there's an active sub-agent.
                 if changed || self.expanded {

@@ -24,37 +24,65 @@
         desktop app, iMessage, voice calls, your browser, and any computer you give her as a satellite.
       </p>
       <p class="lede">
-        This setup takes a couple of minutes. We'll pick which Sunday daemon you're connecting to,
-        grant microphone access for voice, hand her your browser, then drop you into the chat.
+        She lives on one always-on Mac — your server — and every other computer connects to it
+        as a satellite over Tailscale. This setup takes a couple of minutes: pick this Mac's
+        role, wire it up, and drop into the chat.
       </p>
       <div class="onb-actions">
         <button class="onb-btn primary" data-go="node">Let's go</button>
       </div>
     </section>
 
-    <!-- Step 2: pick node -->
+    <!-- Step 2: pick a role — server or satellite -->
     <section class="onb-step" data-step="node" hidden>
-      <h1>Where does Sunday live?</h1>
+      <h1>Is this Mac Sunday's home?</h1>
       <p class="lede">
-        Sunday's brain — chat, memory, everything — runs <strong>entirely on this Mac</strong>,
-        built right into the app. Nothing about you goes to anyone else's server.
+        Sunday lives on <strong>one always-on Mac</strong> — a Mac mini is perfect. That's the
+        server: it runs her brain, owns the one chat, and never sleeps. Every other computer is a
+        <strong>satellite</strong> — the same app, connected to your server over Tailscale.
       </p>
 
       <fieldset class="onb-choices">
         <label class="onb-choice">
-          <input type="radio" name="node" value="local" checked>
+          <input type="radio" name="node" value="server" checked>
           <div>
-            <div class="t">On this Mac</div>
-            <div class="m">Runs locally, private by default. No servers, no accounts.</div>
+            <div class="t">This Mac is the server</div>
+            <div class="m">Sunday runs here, always on. Pick this on your Mac mini (or whatever stays awake).</div>
+          </div>
+        </label>
+        <label class="onb-choice">
+          <input type="radio" name="node" value="satellite">
+          <div>
+            <div class="t">Satellite — my Sunday lives on another Mac</div>
+            <div class="m">Connect to your server over Tailscale. Same chat, and Sunday can use this computer too.</div>
           </div>
         </label>
       </fieldset>
 
+      <div class="onb-verify" id="onb-ts-status" hidden></div>
       <div class="onb-verify" id="onb-verify" hidden></div>
 
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="welcome">Back</button>
         <button class="onb-btn primary" id="onb-test-conn">Continue</button>
+      </div>
+    </section>
+
+    <!-- Step: satellite — connect to the server over Tailscale -->
+    <section class="onb-step" data-step="connect" hidden>
+      <h1>Connect to your server.</h1>
+      <p class="lede">
+        On the server Mac, the last step of setup (or Settings) shows its
+        <strong>Tailscale address</strong> and <strong>auth token</strong>. Enter them here —
+        both Macs need to be on the same tailnet.
+      </p>
+      <div class="onb-verify" id="onb-sat-ts" hidden></div>
+      <input type="text" id="onb-sat-url" placeholder="https://mac-mini.your-tailnet.ts.net" class="onb-input" autocomplete="off" spellcheck="false">
+      <input type="password" id="onb-sat-token" placeholder="auth token from the server" class="onb-input" style="margin-top:8px" autocomplete="off" spellcheck="false">
+      <div class="onb-verify" id="onb-sat-verify" hidden></div>
+      <div class="onb-actions">
+        <button class="onb-btn ghost" data-back="node">Back</button>
+        <button class="onb-btn primary" id="onb-sat-connect">Connect</button>
       </div>
     </section>
 
@@ -160,7 +188,7 @@
 
       <div class="onb-actions">
         <button class="onb-btn ghost" data-back="node">Back</button>
-        <button class="onb-btn primary" data-go="browser">Continue</button>
+        <button class="onb-btn primary" id="onb-mic-continue">Continue</button>
       </div>
     </section>
 
@@ -252,6 +280,11 @@
         satellites, memory, and recent activity.
       </p>
       <p class="lede summary" id="onb-summary"></p>
+      <div id="onb-pair" hidden>
+        <p class="lede"><strong>Connect your other computers.</strong> Open Sunday on your MacBook,
+        choose <em>Satellite</em>, and enter:</p>
+        <p class="lede summary" id="onb-pair-info">—</p>
+      </div>
       <div class="onb-actions">
         <button class="onb-btn primary big" id="onb-finish">Open Sunday</button>
       </div>
