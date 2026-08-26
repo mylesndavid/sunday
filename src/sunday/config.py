@@ -178,35 +178,68 @@ class SundayConfig:
         return self.home
 
 
-def _thinking_store() -> "Path":
+def _model_store() -> "Path":
     from sunday.paths import sunday_home
-    return sunday_home() / "thinking.json"
+    return sunday_home() / "model.json"
 
 
-def load_thinking() -> dict:
-    """The persisted thinking settings, or {} when unset/corrupt."""
-    import json
-    try:
-        data = json.loads(_thinking_store().read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:  # noqa: BLE001 — a bad file must never block startup
-        return {}
+# How many recently-used models the composer picker offers.
+_RECENT_MAX = 6
 
 
-def save_thinking(*, reasoning: bool | None = None, effort: str | None = None) -> dict:
-    """Persist the thinking level so it survives a daemon restart.
+def load_model_prefs() -> dict:
+    """Persisted model/provider/thinking choices, or {} when unset/corrupt.
 
-    Model/provider changes are still in-memory only (they revert on restart —
-    a separate gap). This exists because a *setting the user toggles in the UI*
-    silently reverting is its own bug, and thinking level is exactly that.
+    Reads the legacy thinking-only store as a fallback so a box set up before
+    model persistence existed keeps its thinking level.
     """
     import json
-    data = load_thinking()
+    from sunday.paths import sunday_home
+    for p in (_model_store(), sunday_home() / "thinking.json"):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:  # noqa: BLE001 — a bad file must never block startup
+            continue
+    return {}
+
+
+def save_model_prefs(
+    *,
+    name: str | None = None,
+    provider: str | None = None,
+    base_url: str | None = None,
+    reasoning: bool | None = None,
+    effort: str | None = None,
+) -> dict:
+    """Persist what the user picked so it survives a daemon restart.
+
+    Everything here is a choice made in the UI. A setting that silently reverts
+    on the next restart is worse than no setting — which is exactly what model
+    and provider used to do (they lived only in the daemon's memory, so every
+    restart snapped back to the built-in default).
+
+    Switching models also maintains a most-recently-used list, which is what
+    the composer's picker offers — so the menu reflects the models this person
+    actually uses instead of a hardcoded list that would go stale.
+    """
+    import json
+    data = load_model_prefs()
+    if name is not None:
+        name = str(name).strip()
+        data["name"] = name
+        recent = [m for m in data.get("recent", []) if isinstance(m, str) and m != name]
+        data["recent"] = ([name] + recent)[:_RECENT_MAX]
+    if provider is not None:
+        data["provider"] = str(provider)
+    if base_url is not None:
+        data["base_url"] = str(base_url)
     if reasoning is not None:
         data["reasoning"] = bool(reasoning)
     if effort is not None:
         data["effort"] = str(effort)
-    p = _thinking_store()
+    p = _model_store()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
@@ -234,13 +267,33 @@ def load_config() -> SundayConfig:
         cfg.imessage_native = True
     if os.environ.get("SUNDAY_IMESSAGE_INDICATORS", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.imessage_indicators = True
-    # Thinking level: overlay ~/.sunday/thinking.json so the UI toggle sticks
-    # across daemon restarts.
-    _think = load_thinking()
-    if isinstance(_think.get("reasoning"), bool):
-        cfg.model.reasoning = _think["reasoning"]
-    if str(_think.get("effort", "")).lower() in ("low", "medium", "high"):
-        cfg.model.reasoning_effort = str(_think["effort"]).lower()
+    # Overlay the user's saved model / provider / thinking choices
+    # (~/.sunday/model.json) so what they picked in the UI is still true after
+    # a restart.
+    _prefs = load_model_prefs()
+    if isinstance(_prefs.get("reasoning"), bool):
+        cfg.model.reasoning = _prefs["reasoning"]
+    if str(_prefs.get("effort", "")).lower() in ("low", "medium", "high"):
+        cfg.model.reasoning_effort = str(_prefs["effort"]).lower()
+    if isinstance(_prefs.get("name"), str) and _prefs["name"].strip():
+        cfg.model.name = _prefs["name"].strip()
+    if isinstance(_prefs.get("base_url"), str) and _prefs["base_url"].strip():
+        cfg.model.base_url = _prefs["base_url"].strip()
+    _prov = _prefs.get("provider")
+    if isinstance(_prov, str) and _prov in ("openrouter", "openai", "anthropic",
+                                            "deepseek-direct", "codex", "ollama", "sunday"):
+        # Codex depends on a login on THIS host (~/.codex). Restoring it on a
+        # box that isn't signed in would boot the daemon straight into a broken
+        # runtime, so fall back to the built-in default instead of stranding it.
+        ok = True
+        if _prov == "codex":
+            try:
+                from sunday.runtime.providers.codex import codex_available
+                ok = codex_available()
+            except Exception:  # noqa: BLE001
+                ok = False
+        if ok:
+            cfg.model.provider = _prov
     # Relay: overlay the persisted toggle/url/agent_id from ~/.sunday/relay.json
     # (the dedicated store, since there's no general config-to-disk path yet).
     # This lands BEFORE the env overrides so SUNDAY_RELAY_* still wins. Imported

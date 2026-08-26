@@ -148,6 +148,19 @@ _CHECKIN_NOUNS = ("check in", "check-in", "checking in", "checkin", "reaching ou
                   "messaging me first", "the pings", "unprompted")
 
 
+def _recent_models(current: str | None = None) -> list[str]:
+    """Recently-used model ids, current one first. Never raises — the picker
+    degrades to just the current model rather than breaking /v1/config."""
+    try:
+        from sunday.config import load_model_prefs
+        recent = [m for m in (load_model_prefs().get("recent") or []) if isinstance(m, str) and m.strip()]
+    except Exception:  # noqa: BLE001
+        recent = []
+    if current:
+        recent = [current] + [m for m in recent if m != current]
+    return recent[:6]
+
+
 def _wants_to_stop_checkins(text: str) -> bool:
     t = (text or "").lower()
     if not any(n in t for n in _CHECKIN_NOUNS):
@@ -1554,6 +1567,10 @@ class Daemon:
                 # bind to, instead of making it derive a level from a bool + enum.
                 "thinking": (self.config.model.reasoning
                              and self.config.model.reasoning_effort or "off"),
+                # Most-recently-used models — what the composer's picker offers,
+                # so the menu is the models this person actually uses rather
+                # than a hardcoded list that drifts out of date.
+                "recent": _recent_models(self.config.model.name),
             },
             "identity_prompt": {
                 "effective":      stable_prefix(),
@@ -1599,9 +1616,13 @@ class Daemon:
             if not isinstance(new_name, str) or not new_name.strip():
                 return web.json_response({"error": "model_name must be a non-empty string"}, status=400)
             from dataclasses import replace
+            from sunday.config import save_model_prefs
             self.config.model = replace(self.config.model, name=new_name.strip())
             # Invalidate the runtime cache so the next call rebuilds with the new model.
             # The router caches Provider instances per provider_name; we patch in-place.
+            # Persist it too — this used to live only in memory, so every daemon
+            # restart silently snapped back to the built-in default model.
+            save_model_prefs(name=new_name.strip())
             applied["model_name"] = new_name.strip()
 
         # Provider swap (e.g. "codex" to use your ChatGPT subscription). Rebuilds
@@ -1643,6 +1664,11 @@ class Daemon:
                     self.config.model = replace(self.config.model, name="gpt-5.2")
                     applied["model_name"] = "gpt-5.2"
             self.config.model = replace(self.config.model, provider=prov)
+            # Persist provider + whatever base_url/model the branches above
+            # settled on, so the choice survives a restart like the model does.
+            from sunday.config import save_model_prefs
+            save_model_prefs(provider=prov, base_url=self.config.model.base_url,
+                             name=applied.get("model_name"))
             applied["provider"] = prov
 
         # Thinking level: "off" | "low" | "medium" | "high". Persisted, since a

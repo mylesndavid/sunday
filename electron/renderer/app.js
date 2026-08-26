@@ -190,6 +190,9 @@ async function refreshStatus() {
     const d = await res.json();
     statusEl.textContent = `${(d.model || '').split('/').slice(-1)[0]} · ${d.messages} msgs`;
     setOnline('online');
+    // Composer pills track the daemon's real model/thinking state; refreshStatus
+    // is what runs on boot and on every reconnect, so hang the repaint here.
+    refreshComposerPills();
   } catch { setOnline('offline'); }
 }
 
@@ -1210,9 +1213,220 @@ $('#voice-mode-btn')?.addEventListener('click', async () => {
 // Settings → Voice "Open voice mode" forwards to the same pill.
 $('#set-voice-open')?.addEventListener('click', () => $('#voice-mode-btn')?.click());
 
+// ─── composer controls: model + thinking pills ─────────────────────────
+// Both pills are painted purely from the daemon's /v1/config. We never invent
+// model ids — only `model.name` and `model.recent` are ever shown, because a
+// made-up id would offer the user a model their provider doesn't have.
+const modelPill      = $('#model-pill');
+const modelPillLabel = $('#model-pill-label');
+const modelMenu      = $('#model-menu');
+const thinkPill      = $('#thinking-pill');
+const thinkPillLabel = $('#thinking-pill-label');
+const thinkMenu      = $('#thinking-menu');
+const ctrlErrEl      = $('#composer-controls-err');
+
+const THINKING_LEVELS = ['off', 'low', 'medium', 'high'];
+let modelState = { name: '', thinking: 'off', recent: [] };
+let openCMenu = null;          // 'model' | 'thinking' | null
+let ctrlErrTimer = null;
+
+// Keep the meaningful tail: "anthropic/claude-x" → "claude-x". Very long tails
+// get an ellipsis on the left so the distinguishing suffix survives.
+function shortModelId(id) {
+  const s = String(id || '').trim();
+  if (!s) return 'Model';
+  const tail = s.split('/').filter(Boolean).pop() || s;
+  return tail.length > 26 ? `…${tail.slice(-25)}` : tail;
+}
+
+function paintComposerPills() {
+  const level = THINKING_LEVELS.includes(modelState.thinking) ? modelState.thinking : 'off';
+  modelPillLabel.textContent = shortModelId(modelState.name);
+  modelPill.title = modelState.name || 'No model selected';
+  thinkPillLabel.textContent = `Thinking: ${level}`;
+  thinkPill.title = `Thinking level: ${level}`;
+}
+
+function flashCtrlError(msg) {
+  ctrlErrEl.textContent = msg;
+  ctrlErrEl.hidden = false;
+  clearTimeout(ctrlErrTimer);
+  ctrlErrTimer = setTimeout(() => { ctrlErrEl.hidden = true; ctrlErrEl.textContent = ''; }, 4500);
+}
+
+async function refreshComposerPills() {
+  try {
+    const res = await fetch(`${DAEMON_HTTP}/v1/config`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    const m = (d && d.model) || {};
+    modelState = {
+      name: typeof m.name === 'string' ? m.name : '',
+      thinking: THINKING_LEVELS.includes(m.thinking) ? m.thinking : 'off',
+      recent: Array.isArray(m.recent) ? m.recent.filter((x) => typeof x === 'string' && x.trim()) : [],
+    };
+    paintComposerPills();
+    if (openCMenu === 'model') renderModelMenu();
+    if (openCMenu === 'thinking') renderThinkingMenu();
+  } catch (err) {
+    console.warn('config load failed:', err);
+  }
+}
+
+async function postConfig(patch) {
+  const res = await fetch(`${DAEMON_HTTP}/v1/config`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON error body */ }
+  if (!res.ok || (body && body.error)) throw new Error((body && body.error) || `HTTP ${res.status}`);
+  return body || {};
+}
+
+// Optimistic: repaint first, revert on failure. A pill must never show a value
+// the daemon didn't actually apply.
+async function applyModel(id) {
+  if (!id || id === modelState.name) return;
+  const prev = modelState.name;
+  modelState.name = id;
+  paintComposerPills();
+  try {
+    await postConfig({ model_name: id });
+    modelState.recent = [id, ...modelState.recent.filter((r) => r !== id)].slice(0, 8);
+    refreshStatus();
+  } catch (err) {
+    modelState.name = prev;
+    paintComposerPills();
+    flashCtrlError(`Couldn't switch model: ${err.message}`);
+  }
+}
+
+async function applyThinking(level) {
+  if (!THINKING_LEVELS.includes(level) || level === modelState.thinking) return;
+  const prev = modelState.thinking;
+  modelState.thinking = level;
+  paintComposerPills();
+  try {
+    await postConfig({ thinking: level });
+  } catch (err) {
+    modelState.thinking = prev;
+    paintComposerPills();
+    flashCtrlError(`Couldn't set thinking: ${err.message}`);
+  }
+}
+
+function cmenuRow({ label, title, checked, role }) {
+  return `<button type="button" class="cmenu-item" role="${role}" aria-checked="${checked ? 'true' : 'false'}" title="${esc(title || label)}">`
+       + `<span class="cmenu-check" aria-hidden="true">${checked ? '✓' : ''}</span>`
+       + `<span class="cmenu-label">${esc(label)}</span></button>`;
+}
+
+function renderModelMenu() {
+  const ids = [];
+  for (const id of [modelState.name, ...modelState.recent]) {
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  const rows = ids.map((id) =>
+    cmenuRow({ label: shortModelId(id), title: id, checked: id === modelState.name, role: 'menuitemradio' }),
+  ).join('');
+  modelMenu.innerHTML =
+    (rows || '<div class="cmenu-empty">No model reported by the daemon yet.</div>')
+    + '<div class="cmenu-sep" role="separator"></div>'
+    + '<button type="button" class="cmenu-item" role="menuitem" id="model-menu-more">'
+    + '<span class="cmenu-check" aria-hidden="true"></span>'
+    + '<span class="cmenu-label">More models…</span></button>';
+  [...modelMenu.querySelectorAll('[role="menuitemradio"]')].forEach((b, i) => {
+    b.addEventListener('click', () => { closeCMenu(true); applyModel(ids[i]); });
+  });
+  $('#model-menu-more').addEventListener('click', () => {
+    closeCMenu(false);
+    switchView('settings');
+  });
+}
+
+function renderThinkingMenu() {
+  const level = THINKING_LEVELS.includes(modelState.thinking) ? modelState.thinking : 'off';
+  thinkMenu.innerHTML = THINKING_LEVELS.map((l) => cmenuRow({
+    label: l === 'off' ? 'Off' : l[0].toUpperCase() + l.slice(1),
+    title: `Thinking: ${l}`, checked: l === level, role: 'menuitemradio',
+  })).join('');
+  [...thinkMenu.querySelectorAll('[role="menuitemradio"]')].forEach((b, i) => {
+    b.addEventListener('click', () => { closeCMenu(true); applyThinking(THINKING_LEVELS[i]); });
+  });
+}
+
+function positionCMenu(pill, menu) {
+  const r = pill.getBoundingClientRect();
+  const w = menu.offsetWidth || 200;
+  const left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - w - 8));
+  menu.style.left = `${left}px`;
+  menu.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
+}
+
+function cmenuParts(which) {
+  return which === 'model' ? { pill: modelPill, menu: modelMenu } : { pill: thinkPill, menu: thinkMenu };
+}
+
+function openCMenuFor(which) {
+  closeCMenu(false);
+  if (which === 'model') renderModelMenu(); else renderThinkingMenu();
+  const { pill, menu } = cmenuParts(which);
+  menu.hidden = false;
+  positionCMenu(pill, menu);
+  pill.setAttribute('aria-expanded', 'true');
+  openCMenu = which;
+  const first = menu.querySelector('[aria-checked="true"]') || menu.querySelector('.cmenu-item');
+  setTimeout(() => first?.focus(), 0);
+}
+
+function closeCMenu(refocus) {
+  if (!openCMenu) return;
+  const { pill, menu } = cmenuParts(openCMenu);
+  menu.hidden = true;
+  pill.setAttribute('aria-expanded', 'false');
+  openCMenu = null;
+  if (refocus) pill.focus();
+}
+
+modelPill.addEventListener('click', (e) => { e.stopPropagation(); openCMenu === 'model' ? closeCMenu(true) : openCMenuFor('model'); });
+thinkPill.addEventListener('click', (e) => { e.stopPropagation(); openCMenu === 'thinking' ? closeCMenu(true) : openCMenuFor('thinking'); });
+
+// Outside click closes. (The pills stopPropagation above, so their own clicks
+// never reach this.)
+document.addEventListener('click', (e) => {
+  if (!openCMenu) return;
+  const { pill, menu } = cmenuParts(openCMenu);
+  if (!menu.contains(e.target) && !pill.contains(e.target)) closeCMenu(false);
+});
+
+// Capture phase so Escape closes the menu before the app-level Escape handler
+// (which would otherwise close the thread view out from under it).
+document.addEventListener('keydown', (e) => {
+  if (!openCMenu) return;
+  const { menu } = cmenuParts(openCMenu);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCMenu(true); return; }
+  if (e.key === 'Tab') { closeCMenu(false); return; }
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  e.preventDefault();
+  const items = [...menu.querySelectorAll('.cmenu-item')];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  const next = e.key === 'ArrowDown'
+    ? (i + 1) % items.length
+    : (i <= 0 ? items.length - 1 : i - 1);
+  items[next].focus();
+}, true);
+
+window.addEventListener('resize', () => {
+  if (!openCMenu) return;
+  const { pill, menu } = cmenuParts(openCMenu);
+  positionCMenu(pill, menu);
+});
+
 // ─── tabs ──────────────────────────────────────────────────────────────
 function switchView(name) {
   if (!['chat', 'memory', 'inbox', 'timeline', 'settings'].includes(name)) return;
+  closeCMenu(false);   // a composer menu must not survive leaving the chat view
   // Leaving for a real tab while a thread view is open tears its state down so
   // nothing lingers (e.g. a click on Memory from inside a thread).
   if (openThread && name !== 'chat') { openThread = null; threadComposer.value = ''; showThreadStop(false); }
@@ -1223,7 +1437,7 @@ function switchView(name) {
   if (name === 'inbox') inboxView.load();
   if (name === 'timeline') timelineView.load();
   if (name === 'settings') { settingsView.loadAll(); settingsView.startSystemPolling(); } else { settingsView.stopSystemPolling(); }
-  if (name === 'chat') scrollToEnd();
+  if (name === 'chat') { scrollToEnd(); refreshComposerPills(); }
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchView(t.dataset.view)));
 

@@ -65,6 +65,23 @@
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
         </button>
       </div>
+      <!-- Model + thinking pickers, one click from where you type. Labels are
+           painted from the daemon's /v1/config — never from a hardcoded list. -->
+      <div class="composer-controls" id="composer-controls">
+        <button type="button" id="model-pill" class="composer-pill" aria-haspopup="menu" aria-expanded="false" aria-controls="model-menu" title="Model">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 4v10l-7 4-7-4V7z"/><path d="M12 12l7-4M12 12v9M12 12L5 8"/></svg>
+          <span id="model-pill-label">…</span>
+        </button>
+        <button type="button" id="thinking-pill" class="composer-pill" aria-haspopup="menu" aria-expanded="false" aria-controls="thinking-menu" title="Thinking level">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.5.4.8 1 .8 1.6v.5h5.4v-.5c0-.6.3-1.2.8-1.6A6 6 0 0 0 12 3z"/></svg>
+          <span id="thinking-pill-label">Thinking: …</span>
+        </button>
+        <span class="composer-pill-err" id="composer-controls-err" hidden></span>
+      </div>
+      <!-- Both menus are position:fixed, so living inside the composer wrap
+           doesn't clip them. Contents are rendered by app.js. -->
+      <div class="cmenu" id="model-menu" role="menu" aria-label="Model" hidden></div>
+      <div class="cmenu" id="thinking-menu" role="menu" aria-label="Thinking level" hidden></div>
     </div>
   </section>
 
