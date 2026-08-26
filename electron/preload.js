@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('sunday', {
   migrateToLocal: () => ipcRenderer.invoke('sunday:migrate-to-local'),
   finishOnboarding: (config) => ipcRenderer.invoke('sunday:finish-onboarding', config),
   tailscaleStatus: () => ipcRenderer.invoke('sunday:tailscale-status'),
+  tailscaleResolve: (host) => ipcRenderer.invoke('sunday:tailscale-resolve', host),
   setupServerNetwork: () => ipcRenderer.invoke('sunday:setup-server-network'),
   serverInfo: () => ipcRenderer.invoke('sunday:server-info'),
   setOpenRouterKey: (key) => ipcRenderer.invoke('sunday:set-openrouter-key', key),

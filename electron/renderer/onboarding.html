@@ -72,12 +72,13 @@
     <section class="onb-step" data-step="connect" hidden>
       <h1>Connect to your server.</h1>
       <p class="lede">
-        On the server Mac, the last step of setup (or Settings) shows its
-        <strong>Tailscale address</strong> and <strong>auth token</strong>. Enter them here —
-        both Macs need to be on the same tailnet.
+        On the server Mac, Settings → <strong>Connect a satellite</strong> shows its
+        <strong>address</strong> and <strong>auth token</strong>. Enter them here — the machine
+        name, the full <code>ts.net</code> address, or its <code>100.x</code> Tailscale IP all
+        work. Both Macs need to be on the same tailnet.
       </p>
       <div class="onb-verify" id="onb-sat-ts" hidden></div>
-      <input type="text" id="onb-sat-url" placeholder="https://mac-mini.your-tailnet.ts.net" class="onb-input" autocomplete="off" spellcheck="false">
+      <input type="text" id="onb-sat-url" placeholder="mac-mini.your-tailnet.ts.net — or its 100.x Tailscale IP" class="onb-input" autocomplete="off" spellcheck="false">
       <input type="password" id="onb-sat-token" placeholder="auth token from the server" class="onb-input" style="margin-top:8px" autocomplete="off" spellcheck="false">
       <div class="onb-verify" id="onb-sat-verify" hidden></div>
       <div class="onb-actions">

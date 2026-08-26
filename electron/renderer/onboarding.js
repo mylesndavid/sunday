@@ -132,9 +132,17 @@ async function connectToServer() {
   const token = ($('#onb-sat-token').value || '').trim();
   if (!url) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter your server’s Tailscale address.'; return; }
   if (!token) { v.hidden = false; v.dataset.state = 'fail'; v.textContent = 'Enter the auth token shown on the server.'; return; }
-  const full = /^https?:\/\//.test(url) ? url : `https://${url}`;
+  // Accept a tailnet IP, a short machine name, or the full MagicDNS name —
+  // resolve it to the name Tailscale's cert is actually issued for, otherwise
+  // an IP fails the TLS handshake before it ever reaches the daemon.
+  let full = /^https?:\/\//.test(url) ? url : `https://${url}`;
+  let resolved = null;
+  try { resolved = await window.sunday.tailscaleResolve(url); } catch { /* fall back to the literal input */ }
+  if (resolved && resolved.ok && resolved.url) full = resolved.url;
   v.hidden = false; v.dataset.state = 'pending';
-  v.textContent = `→ ${full}/v1/status …`;
+  v.textContent = resolved && resolved.rewrote
+    ? `→ ${url} is ${resolved.dnsName} — connecting…`
+    : `→ ${full}/v1/status …`;
   try {
     const res = await fetch(`${full}/v1/status`, { headers: { Authorization: `Bearer ${token}` } });
     if (res.status === 401) throw new Error('token rejected — copy it again from the server');
@@ -157,6 +165,10 @@ async function connectToServer() {
       v.textContent = '✗ Tailscale isn’t installed on this Mac — install it from tailscale.com/download, sign in to your tailnet, then hit Connect again.';
     } else if (ts && !ts.running && !ts.error) {
       v.textContent = '✗ Tailscale isn’t running on this Mac — open the Tailscale app and sign in, then hit Connect again.';
+    } else if (resolved && resolved.unknown) {
+      v.textContent = `✗ No device called “${url}” on your tailnet — check the name or IP in the Tailscale menu bar on your server.`;
+    } else if (resolved && resolved.online === false) {
+      v.textContent = `✗ ${resolved.dnsName} is offline on your tailnet — wake the server Mac and hit Connect again.`;
     } else {
       v.textContent = `✗ ${err.message} — this Mac is on the tailnet, so check the address, and that Sunday is running on the server.`;
     }

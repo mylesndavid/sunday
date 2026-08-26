@@ -447,6 +447,68 @@ function _tailscaleStatusFrom(cli) {
     cli,
   };
 }
+// The raw `tailscale status --json` from whichever CLI answers, so we can look
+// through the peer list (which tailscaleStatus() flattens away).
+function tailscaleRaw() {
+  for (const cli of tailscaleClis()) {
+    try {
+      const out = require('node:child_process')
+        .execFileSync(cli, ['status', '--json'], { timeout: 8000, maxBuffer: 8 * 1024 * 1024 }).toString();
+      const data = JSON.parse(out);
+      if ((data.BackendState || '').trim() === 'Running') return data;
+    } catch { /* try the next binary */ }
+  }
+  return null;
+}
+
+// Turn whatever the user typed — a tailnet IP, a short machine name, a full
+// MagicDNS name, with or without a scheme — into the URL that actually works.
+//
+// Why this exists: Tailscale issues its HTTPS cert for the node's MagicDNS
+// NAME. Connecting to the same machine by its 100.x IP presents a cert that
+// doesn't match, so TLS fails before we ever reach the daemon. Typing the IP
+// is a completely reasonable thing to do, so we look it up in the peer list
+// and rewrite it to the name instead of failing.
+function tailscaleResolveHost(input) {
+  let raw = String(input || '').trim();
+  if (!raw) return { ok: false, error: 'empty' };
+  raw = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')   // drop any scheme
+           .replace(/\/.*$/, '')                       // drop any path
+           .replace(/\.+$/, '');                       // drop a trailing dot
+  let port = '';
+  const withPort = raw.match(/^\[?([^\][]+)\]?:(\d+)$/);
+  if (withPort) { raw = withPort[1]; port = withPort[2]; }
+  const suffix = port ? `:${port}` : '';
+
+  const data = tailscaleRaw();
+  if (!data) return { ok: true, url: `https://${raw}${suffix}`, dnsName: raw, rewrote: false };
+
+  const nodes = [data.Self, ...Object.values(data.Peer || {})].filter(Boolean);
+  const needle = raw.toLowerCase();
+  const match = nodes.find((n) => {
+    const dns = (n.DNSName || '').replace(/\.+$/, '').toLowerCase();
+    if (!dns) return false;
+    if (dns === needle) return true;
+    if (dns.split('.')[0] === needle) return true;                     // short name
+    return (n.TailscaleIPs || []).some((ip) => ip.toLowerCase() === needle);
+  });
+  if (!match) {
+    // Unknown to this tailnet — hand it back unchanged rather than blocking;
+    // the connect attempt itself will produce the real error.
+    return { ok: true, url: `https://${raw}${suffix}`, dnsName: raw, rewrote: false, unknown: true };
+  }
+  const dnsName = (match.DNSName || '').replace(/\.+$/, '');
+  return {
+    ok: true,
+    url: `https://${dnsName}${suffix}`,
+    dnsName,
+    rewrote: dnsName.toLowerCase() !== needle,
+    online: match.Online !== false,
+    self: match === data.Self,
+  };
+}
+ipcMain.handle('sunday:tailscale-resolve', (_evt, input) => tailscaleResolveHost(input));
+
 function tailscaleStatus() {
   // A Mac can carry more than one tailscale binary (a stale standalone CLI in
   // /usr/local/bin next to the GUI app's own) and only one talks to the daemon
