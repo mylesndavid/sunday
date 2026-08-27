@@ -152,6 +152,7 @@ let _appStarted = false;
 async function startApp() {
   if (_appStarted) return;          // health check can fire twice; init once
   _appStarted = true;
+  trackComposerHeight();            // keep the thread clear of the composer
   memoryView.init({ daemonHttp: DAEMON_HTTP }, {});
   settingsView.init(DAEMON_HTTP);
   timelineView.init({ daemonHttp: DAEMON_HTTP }, {
@@ -926,6 +927,27 @@ function fmtClock(e) { return new Date(e * 1000).toLocaleTimeString([], { hour: 
 function fmtFull(e) { return new Date(e * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit', second: '2-digit' }); }
 function fmtRel(e) { const d = Date.now() / 1000 - e; if (d < 45) return 'just now'; if (d < 3600) return `${Math.round(d / 60)}m ago`; if (d < 86400) return `${Math.round(d / 3600)}h ago`; return `${Math.round(d / 86400)}d ago`; }
 function fmtDur(s) { if (s < 1) return `${Math.round(s * 1000)}ms`; if (s < 60) return `${s.toFixed(1)}s`; return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`; }
+
+// The composer is absolutely positioned over the thread, so the scroll area
+// reserves its height as bottom padding (--composer-h, consumed by .thread in
+// styles.css). Measure it rather than hardcoding: the composer changes height
+// when the draft wraps to several lines, when attachments appear, and when the
+// model/thinking pills are present — each of which used to clip the last
+// message behind it. Anyone sitting at the bottom stays pinned there as it
+// grows, so a wrapping draft doesn't push the message they're reading away.
+function trackComposerHeight() {
+  for (const wrap of document.querySelectorAll('.composer-wrap')) {
+    const host = wrap.parentElement;
+    if (!host) continue;
+    const apply = () => {
+      const pinned = nearBottom();
+      host.style.setProperty('--composer-h', `${Math.ceil(wrap.getBoundingClientRect().height)}px`);
+      if (pinned) scrollToEnd();
+    };
+    apply();
+    if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(wrap);
+  }
+}
 
 // scroll
 function nearBottom() { return chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 90; }

@@ -47,7 +47,14 @@ body { display: flex; flex-direction: column; }
 .thread {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 22px clamp(16px, 7vw, 90px) 92px;
+  /* The composer floats over the thread (position:absolute), so the scroll
+     area has to reserve its height or the last message hides behind it. This
+     used to be a flat 92px, which was only ever right for an empty
+     single-line composer — a multi-line draft (it grows to 160px), an
+     attachment row, or the model/thinking pills all pushed the composer past
+     it and clipped the bottom message. --composer-h is measured live in
+     app.js; the literal is just the pre-measurement fallback. */
+  padding: 22px clamp(16px, 7vw, 90px) calc(var(--composer-h, 92px) + 20px);
   display: flex; flex-direction: column; gap: 2px;
   scroll-behavior: smooth;
 }
